@@ -107,7 +107,7 @@ def load_datasets() -> None:
     # DS1: abhishekgodara/symptoms-to-diseases
     try:
         for fname in ['final_symptoms_to_disease.csv', 'data.csv']:
-            p = f'/kaggle/input/symptoms-to-diseases/{fname}'
+            p = f'/kaggle/input/datasets/abhishekgodara/symptoms-to-diseases/{fname}'
             r = pd.read_csv(p)
             r.columns = [c.strip().lower() for c in r.columns]
             dc = next((c for c in r.columns if 'disease' in c), r.columns[0])
@@ -120,7 +120,7 @@ def load_datasets() -> None:
 
     # DS2: itachi9604/disease-symptom-description-dataset
     try:
-        r2 = pd.read_csv('/kaggle/input/disease-symptom-description-dataset/dataset.csv')
+        r2 = pd.read_csv('/kaggle/input/datasets/itachi9604/disease-symptom-description-dataset/dataset.csv')
         r2.columns = [c.strip().lower() for c in r2.columns]
         dc = next((c for c in r2.columns if 'disease' in c), r2.columns[0])
         sc = [c for c in r2.columns if 'symptom' in c]
@@ -134,7 +134,7 @@ def load_datasets() -> None:
 
     # DS3: dhivyeshrk/diseases-and-symptoms-dataset
     try:
-        r3 = pd.read_csv('/kaggle/input/diseases-and-symptoms-dataset/Final_Augmented_dataset_Diseases_and_Symptoms.csv')
+        r3 = pd.read_csv('/kaggle/input/datasets/dhivyeshrk/diseases-and-symptoms-dataset/Final_Augmented_dataset_Diseases_and_Symptoms.csv')
         r3.columns = [c.strip().lower() for c in r3.columns]
         dc = next((c for c in r3.columns if c in ('disease', 'diseases', 'name')), r3.columns[0])
         frames.append(_join_onehot(r3, dc))
@@ -144,7 +144,7 @@ def load_datasets() -> None:
 
     # DS4: kaushil268/disease-prediction-using-machine-learning
     try:
-        r4 = pd.read_csv('/kaggle/input/disease-prediction-using-machine-learning/Training.csv')
+        r4 = pd.read_csv('/kaggle/input/datasets/kaushil268/disease-prediction-using-machine-learning/Training.csv')
         r4.columns = [c.strip().lower() for c in r4.columns]
         df4 = _join_onehot(r4, 'prognosis')
         df4.columns = ['diseases', 'symptom_text']
@@ -155,7 +155,7 @@ def load_datasets() -> None:
 
     # DS5: manncodes/drug-prescription-to-disease-dataset
     try:
-        r5 = pd.read_csv('/kaggle/input/drug-prescription-to-disease-dataset/final.csv')
+        r5 = pd.read_csv('/kaggle/input/datasets/manncodes/drug-prescription-to-disease-dataset/final.csv')
         r5.columns = [c.strip().lower() for c in r5.columns]
         dc = next((c for c in r5.columns if 'disease' in c or 'condition' in c), r5.columns[0])
         sc = next((c for c in r5.columns if any(k in c for k in ('drug', 'medicine', 'symptom', 'description', 'text'))), r5.columns[1])
@@ -167,7 +167,7 @@ def load_datasets() -> None:
 
     # DS6: uom190346a/disease-symptoms-and-patient-profile-dataset
     try:
-        r6 = pd.read_csv('/kaggle/input/disease-symptoms-and-patient-profile-dataset/Disease_symptom_and_patient_profile_dataset.csv')
+        r6 = pd.read_csv('/kaggle/input/datasets/uom190346a/disease-symptoms-and-patient-profile-dataset/Disease_symptom_and_patient_profile_dataset.csv')
         r6.columns = [c.strip().lower() for c in r6.columns]
         dc = next((c for c in r6.columns if 'disease' in c), r6.columns[0])
         sym_cols = [c for c in r6.columns if c != dc]
@@ -183,7 +183,7 @@ def load_datasets() -> None:
 
     # DS7: choongqianzheng/disease-and-symptoms-dataset
     try:
-        r7 = pd.read_csv('/kaggle/input/disease-and-symptoms-dataset/DiseaseAndSymptoms.csv')
+        r7 = pd.read_csv('/kaggle/input/datasets/choongqianzheng/disease-and-symptoms-dataset/DiseaseAndSymptoms.csv')
         r7.columns = [c.strip().lower() for c in r7.columns]
         dc = next((c for c in r7.columns if 'disease' in c), r7.columns[0])
         sc = [c for c in r7.columns if 'symptom' in c]
@@ -200,7 +200,7 @@ def load_datasets() -> None:
         r8 = None
         for enc in ['latin-1', 'iso-8859-1', 'utf-8']:
             try:
-                r8 = pd.read_csv('/kaggle/input/disease-prediction-using-symptoms/trainings.csv', encoding=enc)
+                r8 = pd.read_csv('/kaggle/input/datasets/nautiyalayush/disease-prediction-using-symptoms/trainings.csv', encoding=enc)
                 break
             except Exception:
                 continue
@@ -216,7 +216,7 @@ def load_datasets() -> None:
 
     # DS9: shobhit043/diseases-and-their-symptoms
     try:
-        r9 = pd.read_csv('/kaggle/input/diseases-and-their-symptoms/FInal_Train_Data.csv')
+        r9 = pd.read_csv('/kaggle/input/datasets/shobhit043/diseases-and-their-symptoms/FInal_Train_Data.csv')
         r9.columns = [c.strip().lower() for c in r9.columns]
         dc = next((c for c in r9.columns if 'disease' in c or 'label' in c), r9.columns[0])
         df9 = _join_onehot(r9, dc)
