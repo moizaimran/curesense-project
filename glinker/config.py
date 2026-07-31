@@ -11,9 +11,24 @@
 # ==============================================================================
 
 # ── Shared runtime instances (set by main.ipynb after loading secrets) ────────
-openai_client = None
-gliner_model  = None
-whisper_model = None
+openai_client   = None
+gliner_model    = None
+whisper_model   = None
+embedding_model = None   # SentenceTransformer, loaded on first use by get_embed_model()
+
+# ── Embedding (local, free, GPU-accelerated) ──────────────────────────────────
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"   # 384-dim, trained for retrieval
+
+def get_embed_model():
+    """Load (or return cached) SentenceTransformer embedding model."""
+    global embedding_model
+    if embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        embedding_model = SentenceTransformer(EMBEDDING_MODEL, device=device)
+        print(f"Embedding model ({EMBEDDING_MODEL}) loaded on {device}")
+    return embedding_model
 
 # ── File-system paths (Kaggle working directory) ──────────────────────────────
 RAG_INDEX_DIR = '/kaggle/working/rag_index'

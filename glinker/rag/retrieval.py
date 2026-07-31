@@ -57,11 +57,9 @@ def retrieve_context(rag_query: str, k: int = 4) -> list[dict]:
     if not RAG_READY:
         return []
     try:
-        resp  = config.openai_client.embeddings.create(
-            model="text-embedding-3-small", input=[rag_query]
-        )
-        q_vec = np.array([resp.data[0].embedding], dtype="float32")
-        faiss.normalize_L2(q_vec)
+        model = config.get_embed_model()
+        q_vec = model.encode([rag_query], normalize_embeddings=True)
+        q_vec = np.array(q_vec, dtype="float32")
 
         scores, indices = _rag_index.search(q_vec, k * 3)   # over-fetch then filter
 

@@ -16,7 +16,6 @@
 import os
 import json
 import re
-import time
 
 import numpy as np
 import faiss
@@ -140,37 +139,19 @@ def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
 
 # ── Embedding ─────────────────────────────────────────────────────────────────
 
-def _embed_batch_with_retry(batch: list[str], max_retries: int = 6) -> list:
-    """Embed one batch with exponential backoff on rate-limit errors."""
-    delay = 5
-    for attempt in range(max_retries):
-        try:
-            resp = config.openai_client.embeddings.create(
-                model="text-embedding-3-small", input=batch
-            )
-            return [e.embedding for e in resp.data]
-        except Exception as e:
-            if "429" in str(e) or "rate_limit" in str(e).lower():
-                print(f"  Rate limit hit — waiting {delay}s (attempt {attempt+1}/{max_retries})")
-                time.sleep(delay)
-                delay = min(delay * 2, 60)
-            else:
-                raise
-    raise RuntimeError(f"Embedding failed after {max_retries} retries")
-
-
-def _embed_chunks(chunks: list[dict], batch_size: int = 50) -> np.ndarray:
-    """Embed all chunk texts with text-embedding-3-small. Returns float32 matrix."""
-    texts    = [c["text"] for c in chunks]
+def _embed_chunks(chunks: list[dict], batch_size: int = 512) -> np.ndarray:
+    """Embed all chunks locally with sentence-transformers (free, GPU-accelerated)."""
+    model  = config.get_embed_model()
+    texts  = [c["text"] for c in chunks]
+    total  = len(texts)
     all_vecs = []
-    total    = len(texts)
     for i in range(0, total, batch_size):
         batch = texts[i : i + batch_size]
-        all_vecs.extend(_embed_batch_with_retry(batch))
+        vecs  = model.encode(batch, show_progress_bar=False, normalize_embeddings=True)
+        all_vecs.extend(vecs.tolist())
         done = min(i + batch_size, total)
-        if done % 1000 == 0 or done == total:
+        if done % 2000 == 0 or done == total:
             print(f"  Embedded {done:,}/{total:,} chunks")
-        time.sleep(0.3)   # ~30K tokens/batch × 3 batches/sec ≈ 90K TPM, well under 1M limit
     return np.array(all_vecs, dtype="float32")
 
 
