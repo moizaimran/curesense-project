@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Secrets and credentials — NEVER commit these
+.env
+*.key
+kaggle.json
+
+# Generated at runtime on Kaggle (FAISS index, cached corpus)
+rag_corpus/
+rag_index/
+
+# macOS
+.DS_Store

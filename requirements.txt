@@ -1,0 +1,13 @@
+flask
+flask-cors
+pyngrok
+openai-whisper
+gliner
+openai
+faiss-cpu
+tiktoken
+datasets
+pdfplumber
+pandas
+scikit-learn
+numpy
