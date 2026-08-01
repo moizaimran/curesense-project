@@ -21,7 +21,7 @@ import faiss
 from glinker import config
 from glinker.rag.corpus import fetch_openfda
 
-SIMILARITY_THRESHOLD = 0.25   # minimum cosine score (0-1) to include a chunk
+SIMILARITY_THRESHOLD = 0.45   # minimum cosine score — raised to filter out weak drug-ADR matches
 
 # ── Module-level state (populated by load_index()) ────────────────────────────
 _rag_index    = None
@@ -61,7 +61,7 @@ def retrieve_context(rag_query: str, k: int = 4) -> list[dict]:
         q_vec = model.encode([rag_query], normalize_embeddings=True)
         q_vec = np.array(q_vec, dtype="float32")
 
-        scores, indices = _rag_index.search(q_vec, k * 3)   # over-fetch then filter
+        scores, indices = _rag_index.search(q_vec, k * 5)   # over-fetch then filter by threshold
 
         results = []
         for score, idx in zip(scores[0], indices[0]):

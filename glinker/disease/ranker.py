@@ -265,22 +265,21 @@ def rank_diseases(verified_entities: list[dict], clinical_summary: str, top_k: i
     if not DISEASE_RANKER_READY:
         return []
 
-    symptom_cats = {"symptom", "medical condition", "trigger", "body part"}
+    # Only use presenting complaint entities — exclude medication/condition to avoid
+    # medication-driven bias (e.g. Losartan skewing results toward kidney disease)
+    symptom_cats = {"symptom", "trigger", "body part", "severity", "duration"}
     symptom_kws  = [e["keyword"].lower() for e in verified_entities if e.get("category") in symptom_cats]
 
-    med_kws = []
-    for e in verified_entities:
-        if e.get("category") == "medication":
-            med    = e["keyword"].lower()
-            mapped = next((v for k, v in MEDICINE_DISEASE_MAP.items() if k in med or med in k), None)
-            if mapped:
-                med_kws.append(mapped)
-
-    all_kws = symptom_kws + med_kws
-    if not all_kws:
+    if not symptom_kws:
         return []
 
-    query     = ' '.join(all_kws) + ' ' + clinical_summary[:300]
+    # Build query from symptoms only; strip medication/condition sentences from summary
+    summary_sentences = [s for s in clinical_summary.split('.') if not any(
+        w in s.lower() for w in ('mg', 'milligram', 'medication', 'drug', 'losartan',
+                                  'blood pressure', ' bp', 'allerg', 'dose', 'daily')
+    )]
+    symptom_summary = '. '.join(summary_sentences[:4])
+    query     = ' '.join(symptom_kws) + ' ' + symptom_summary
     query_vec = _vectorizer.transform([query.lower()])
     sims      = cosine_similarity(query_vec, _tfidf_matrix)[0]
     top_idx   = sims.argsort()[-25:][::-1]
