@@ -30,6 +30,7 @@ def summarize_for_patient(
 
     fallback = {
         "whatWeHeard"    : "We received your description of your symptoms.",
+        "specialty"      : "General Medicine",
         "whatToExpect"   : [],
         "yourMedications": [],
     }

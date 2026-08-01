@@ -14,7 +14,7 @@ import json
 FINALIZE_PROMPT = (
     "You receive a completed patient intake transcript (already spelling-corrected) and "
     "a list of entities (category + keyword + ner_confidence 0-1) an NLP model extracted "
-    "from it. You do FOUR jobs in one pass, and return all four as JSON:\n"
+    "from it. You do TWO jobs in one pass, and return both as JSON:\n"
     "\n"
     "JOB 1 — VERIFY ENTITIES. Valid categories: symptom, medical condition, body part, "
     "severity, duration, medication, dosage, frequency, allergy, trigger.\n"
@@ -50,24 +50,13 @@ FINALIZE_PROMPT = (
     "WHERE a symptom is) set it to the exact keyword of the symptom/medication it belongs "
     "to.\n"
     "\n"
-    "JOB 2 — SUMMARY. Write a short (2-4 sentence) clinical summary: chief complaint, "
-    "key history, relevant meds/allergies. Plain professional tone, no bullet points.\n"
-    "\n"
-    "JOB 3 — SPECIALTY ROUTING. Pick the single specialty a GP would most likely refer "
-    "this patient to first. If multiple systems are involved, pick the one tied to the "
-    "primary complaint or the most urgent finding. Default: \"General Medicine\".\n"
-    "\n"
-    "JOB 4 — RAG QUERY. Write a dense, retrieval-optimized clinical search string for "
+    "JOB 2 — RAG QUERY. Write a dense, retrieval-optimized clinical search string for "
     "this case and put it in \"ragQuery\". NOT prose — compact clinical keyword sequence: "
     "chief complaint + anatomical site + character + duration + severity + associated "
     "features + relevant medications.\n"
     "  Good: \"right-sided throbbing headache photophobia nausea 6/10 two days "
     "losartan hypertension\"\n"
     "  Bad:  \"Patient has had a headache on the right side since yesterday.\"\n"
-    "\n"
-    "RANKED DISEASE CANDIDATES: if a \"rankedDiseases\" list is present in the input, "
-    "use it as supporting evidence when picking the specialty. It is a grounded signal, "
-    "not a diagnosis.\n"
     "\n"
     "Never call a tool. Return only the JSON object the schema requires — no extra text."
 )
@@ -91,9 +80,6 @@ FINALIZE_SCHEMA = {
                     "additionalProperties": False,
                 },
             },
-            "summary"       : {"type": "string"},
-            "specialty"     : {"type": "string"},
-            "specialtyReason": {"type": "string"},
             "ragQuery"      : {"type": "string"},
             "rankedDiseases": {
                 "type": "array",
@@ -108,7 +94,7 @@ FINALIZE_SCHEMA = {
                 },
             },
         },
-        "required"            : ["entities", "summary", "specialty", "specialtyReason", "ragQuery", "rankedDiseases"],
+        "required"            : ["entities", "ragQuery", "rankedDiseases"],
         "additionalProperties": False,
     },
 }
@@ -164,17 +150,6 @@ FINALIZE_FEWSHOT = [
                 {"category": "frequency",         "keyword": "one time every day", "relates_to": "Losartan"},
                 {"category": "medical condition", "keyword": "blood pressure",     "relates_to": ""},
             ],
-            "summary": (
-                "Patient reports a two-day history of right-sided, throbbing headache "
-                "(6/10) with mild nausea, worsened by bright light and not radiating. "
-                "No known drug allergies. Currently takes Losartan 50 mg once daily for "
-                "blood pressure."
-            ),
-            "specialty"     : "Neurology",
-            "specialtyReason": (
-                "The primary complaint is a persistent right-sided throbbing headache "
-                "with photophobia and nausea, a typical neurological symptom pattern."
-            ),
             "ragQuery": (
                 "right-sided throbbing headache photophobia nausea 6/10 two days "
                 "losartan 50mg daily hypertension"
@@ -286,18 +261,22 @@ PATIENT_SUMMARY_PROMPT = (
     "(3) reference chunks from medical textbooks and guidelines, "
     "(4) medication information from drug labels (may be empty).\n"
     "\n"
-    "You have THREE jobs:\n"
+    "You have FOUR jobs:\n"
     "\n"
     "JOB 1 — WHAT WE HEARD. In 2-3 plain sentences, summarise what the patient described "
     "using everyday language (not medical jargon). Do NOT include speculation or diagnosis.\n"
     "\n"
-    "JOB 2 — WHAT TO EXPECT. In 2-4 bullet points, based ONLY on the retrieved reference "
+    "JOB 2 — SPECIALTY. Based on the transcript and entities provided, state the single "
+    "medical specialty the patient is most likely to be referred to (e.g. 'Neurology', "
+    "'Cardiology', 'General Medicine'). One word or short phrase only.\n"
+    "\n"
+    "JOB 3 — WHAT TO EXPECT. In 2-4 bullet points, based ONLY on the retrieved reference "
     "material, explain what typically happens next for this type of complaint — what the "
     "doctor might ask, what they might check, or what to watch for. Attribute to 'general "
     "guidance' or a source name. Omit this section (empty array) if no relevant material "
     "was retrieved.\n"
     "\n"
-    "JOB 3 — YOUR MEDICATIONS. For each medication the patient mentioned, provide one "
+    "JOB 4 — YOUR MEDICATIONS. For each medication the patient mentioned, provide one "
     "plain-language sentence about what it is typically used for and any important notes "
     "from the drug label (e.g. 'don't take on an empty stomach'). Use the openFDA data "
     "provided. Empty array if no medications reported.\n"
@@ -314,7 +293,8 @@ PATIENT_SUMMARY_SCHEMA = {
     "schema": {
         "type": "object",
         "properties": {
-            "whatWeHeard"   : {"type": "string"},
+            "whatWeHeard": {"type": "string"},
+            "specialty"  : {"type": "string"},
             "whatToExpect"  : {
                 "type" : "array",
                 "items": {
@@ -340,7 +320,7 @@ PATIENT_SUMMARY_SCHEMA = {
                 },
             },
         },
-        "required"            : ["whatWeHeard", "whatToExpect", "yourMedications"],
+        "required"            : ["whatWeHeard", "specialty", "whatToExpect", "yourMedications"],
         "additionalProperties": False,
     },
 }

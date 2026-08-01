@@ -69,10 +69,7 @@ def run_clinical_pipeline(interview) -> dict:
         "transcript"      : transcript_text,
         "rawEntities"     : gliner_entities,
         "verifiedEntities": report["entities"],
-        "summary"         : report["summary"],
         "ragQuery"        : rag_query,
-        "specialty"       : report["specialty"],
-        "specialtyReason" : report["specialtyReason"],
         "rankedDiseases"  : report["rankedDiseases"],
         "retrievedSources": retrieved_chunks,
         "medicationInfo"  : medication_info,
@@ -91,10 +88,6 @@ def print_clinical_report(report: dict) -> None:
     for e in report["verifiedEntities"]:
         relates = f" (-> {e['relates_to']})" if e.get("relates_to") else ""
         print(f"  {e['keyword']!r:25} -> {e['category']}{relates}")
-
-    print(f"\nSummary: {report['summary']}")
-    print(f"\nSuggested specialty: {report['specialty']}")
-    print(f"Reason: {report['specialtyReason']}")
 
     if report.get("ragQuery"):
         print(f"\nRAG Query: {report['ragQuery']}")
@@ -145,6 +138,8 @@ def print_clinical_report(report: dict) -> None:
         print("\n" + "=" * 60)
         print("PATIENT-FACING SUMMARY")
         print("=" * 60)
+        if ps.get("specialty"):
+            print(f"Suggested specialty: {ps['specialty']}")
         print(ps.get("whatWeHeard", ""))
         if ps.get("whatToExpect"):
             print("\nWhat to expect:")

@@ -26,7 +26,7 @@ def run_interview_turn(history_messages: list[dict], patient_message: str) -> di
 
     fallback = {
         "status"              : "continue",
-        "message"             : raw.strip() if raw else "Could you tell me more about that?",
+        "message"             : raw.strip() if raw else "Sorry! I didn't get a response from the LLM",
         "correctedPatientText": patient_message,
     }
     return parse_json_response(raw, finish_reason, fallback, "run_interview_turn")
