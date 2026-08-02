@@ -8,7 +8,6 @@ faiss-cpu
 tiktoken
 datasets
 sentence-transformers
-pdfplumber
 pandas
 scikit-learn
 numpy
