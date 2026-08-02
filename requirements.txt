@@ -7,7 +7,7 @@ openai
 faiss-cpu
 tiktoken
 datasets
-sentence-transformers
+sentence-transformers==2.7.0
 pandas
 scikit-learn
 numpy
