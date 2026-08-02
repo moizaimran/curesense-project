@@ -19,7 +19,9 @@
 - No OpenAI API for embedding — zero cost, no rate limits
 
 **Speech-to-Text**
-- Model: `openai/whisper-base` on CUDA (optional — only for voice input)
+- Model: `openai/whisper-large` on CUDA
+- `task="translate"` — transcribes any language directly to English
+- Runs only on voice turns before the LLM spelling-correction pass
 
 ---
 
@@ -40,6 +42,41 @@
 - **Data:** 9 Kaggle symptom-disease CSV datasets · 359,632 rows · 2,127 unique diseases
 - **Query:** symptom + body part + trigger + severity + duration entities only (medications excluded to prevent bias)
 - **Output:** top-5 ranked diseases with confidence scores
+
+---
+
+## System Architecture
+
+```
+React Frontend
+      ↓
+Express / Node.js  (port 5000)
+      ↓                    ↓
+MongoDB Atlas         Flask + Ngrok  (Kaggle T4 GPU)
+                      AI microservice only — no DB access
+```
+
+The AI notebook is a **stateless microservice**. Express owns all persistence. Every request to Flask is self-contained — no in-memory session state, no turn counters inside Flask.
+
+---
+
+## Flask API (AI Microservice)
+
+**POST /interview/turn**
+- Input: `{ turn_number, history, patient_text }` or `{ turn_number, history, patient_audio_url }`
+- Voice path: Whisper `task="translate"` → raw English text → LLM spelling-correction pass
+- Express supplies full live history each call; Flask prepends system prompt + few-shots internally
+- Cap check: if `turn_number ≥ 12` returns closing message without making an LLM call
+- Output: `{ status, message, rawPatientText, correctedPatientText }`
+  - `rawPatientText` — Whisper output (voice) or echoed input (text), before LLM correction
+  - `correctedPatientText` — after LLM spelling-correction pass
+
+**POST /pipeline/finalize**
+- Input: `{ full_transcript_text }`
+- Runs full 6-step pipeline: GLiNER → finalize → RAG → openFDA → doctor report → patient summary
+- Output: `{ verifiedEntities, rankedDiseases, ragQuery, retrievedSources, medicationInfo, doctorReport, patientSummary }`
+
+**Launch:** `api/app.launch(port=5001)` — Flask runs in daemon thread, Ngrok tunnels it, returns public URL
 
 ---
 
@@ -77,39 +114,96 @@ Patient speaks / types
 
 ---
 
+## MongoDB Collections
+
+**patients**
+`name · dob · gender · contact{phone,email} · allergies[] · current_medications[]`
+
+**sessions**
+`patient_id · started_at · completed_at · last_activity_at · turn_count`
+`status: in_progress | completed | failed | abandoned`
+`transcript[]: { turn_number, patient_raw, patient_corrected, assistant_message, voice_message_url }`
+`entities[] · disease_ranking[] · rag_query` ← populated on finalize
+
+**reports**
+`session_id (unique) · patient_id (denorm) · specialty · rag_query`
+`retrieved_chunks[] · openfda_results · doctor_report · patient_summary`
+
+**Indexes:** `sessions.patient_id` · `reports.patient_id` · `reports.session_id` (unique)
+
+---
+
+## Express Backend — Session Turn Flow
+
+```
+POST /api/sessions/:id/turn
+  1. Fetch session — 404 if missing
+  2. If status completed/failed/abandoned → 409
+  3. If last_activity_at > 48 h → mark abandoned → 410
+  4. If voice: upload to Cloudinary (resource_type:"auto") → get URL
+  5. Build history from transcript[].patient_corrected (flatMap user/assistant pairs)
+  6. POST Flask /interview/turn → { status, message, rawPatientText, correctedPatientText }
+  7. Push turn to transcript · increment turn_count · last_activity_at refreshed by pre-save hook
+  8. If status "complete":
+       POST Flask /pipeline/finalize with joined correctedPatientText
+       Save entities/disease_ranking/rag_query → session
+       Create Report document → return report_id
+```
+
+---
+
 ## Folder Structure
 
 ```
-CureSense_AI_Modules/
-├── pipeline.py              # orchestrates all 8 steps
-├── requirements.txt
+CureSense_AI_Modules/          ← git repo root (hassan-branch)
+├── pipeline.py
+├── requirements.txt           # flask, pyngrok, gliner, whisper, faiss-cpu, ...
 ├── PROGRESS.md
 │
+├── api/
+│   └── app.py                 # Flask stateless API + launch() for Ngrok
+│
 ├── glinker/
-│   ├── config.py            # shared model slots + LLM config
-│   ├── utils.py             # defensive JSON parser
-│   │
+│   ├── config.py
+│   ├── utils.py
 │   ├── interview/
-│   │   ├── prompts.py       # SOCRATES system prompt + JSON schema
-│   │   └── session.py       # per-turn LLM call + PatientInterview class
-│   │
+│   │   ├── prompts.py
+│   │   └── session.py
 │   ├── diagnosis/
-│   │   ├── prompts.py       # all 3 prompts + schemas (finalize/doctor/patient)
-│   │   ├── finalize.py      # GLiNER runner + entity verification LLM
-│   │   ├── doctor_report.py # clinician-facing grounded report
-│   │   └── patient_summary.py # plain-language patient output
-│   │
+│   │   ├── prompts.py
+│   │   ├── finalize.py
+│   │   ├── doctor_report.py
+│   │   └── patient_summary.py
 │   ├── rag/
-│   │   ├── corpus.py        # openFDA live API caller
-│   │   ├── ingestion.py     # one-time FAISS index builder
-│   │   └── retrieval.py     # runtime semantic search
-│   │
+│   │   ├── corpus.py
+│   │   ├── ingestion.py
+│   │   └── retrieval.py
 │   └── disease/
-│       └── ranker.py        # TF-IDF disease ranking from 9 datasets
+│       └── ranker.py
 │
 └── tests/
-    ├── simulated_patient.py # LLM-powered fake patient for testing
-    └── test_run.py          # end-to-end test runner + HEADACHE_CASE / KNEE_CASE
+    ├── simulated_patient.py
+    └── test_run.py
+
+Backend/                       ← Node/Express (separate from AI repo)
+├── server.js
+├── package.json
+├── .env                       # MONGODB_URI, AI_SERVICE_URL, CLOUDINARY_*
+├── config/
+│   ├── db.js                  # Mongoose Atlas connection
+│   └── cloudinary.js          # Cloudinary v2 client
+├── models/
+│   ├── Patient.js
+│   ├── Session.js
+│   └── Report.js
+├── controllers/
+│   ├── patientController.js
+│   ├── sessionController.js   # processTurn — orchestrates Flask + DB writes
+│   └── reportController.js
+└── routes/
+    ├── patientRoutes.js
+    ├── sessionRoutes.js       # POST /:id/turn
+    └── reportRoutes.js
 ```
 
 ---
@@ -128,7 +222,8 @@ Two outputs generated per patient visit:
 ## Kaggle Setup
 
 - GPU: T4 x2 · Python 3.12
-- Secrets: `OPENAI_API_KEY` via `UserSecretsClient`
-- RAG index persisted as Kaggle Dataset `uresense-rag-index` (92 MB zip)
-- 9 disease datasets added via Kaggle "Add Data" — auto-mounted at `/kaggle/input/datasets/{username}/{name}/`
+- Secrets: `OpenAI Key` + `Ngrok Key` via `UserSecretsClient`
+- RAG index: loaded from `uresense-rag-index` Kaggle dataset if attached (seconds); built from scratch only if missing (20-40 min)
+- 9 disease datasets added via Kaggle "Add Data"
+- Cell 8 launches Flask + Ngrok → prints `AI_SERVICE_URL` to paste into Express `.env`
 - GitHub repo: `https://github.com/moizaimran/curesense-project` · branch: `hassan-branch`
