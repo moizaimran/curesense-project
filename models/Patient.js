@@ -10,7 +10,7 @@ const PatientSchema = new mongoose.Schema(
     gender:  { type: String, required: true },
     contact: {
       phone: { type: String, default: "" },
-      email: { type: String, default: "" },
+      email: { type: String, required: true },
     },
     allergies:           { type: [String], default: [] },
     current_medications: { type: [String], default: [] },

@@ -15,23 +15,6 @@ const TurnSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const EntitySchema = new mongoose.Schema(
-  {
-    category:   { type: String, required: true },
-    keyword:    { type: String, required: true },
-    relates_to: { type: String, default: "" },
-  },
-  { _id: false }
-);
-
-const DiseaseRankSchema = new mongoose.Schema(
-  {
-    disease:    { type: String, required: true },
-    confidence: { type: Number, required: true },
-  },
-  { _id: false }
-);
-
 const SessionSchema = new mongoose.Schema(
   {
     patient_id:       { type: mongoose.Schema.Types.ObjectId, ref: "Patient", required: true },
@@ -44,11 +27,7 @@ const SessionSchema = new mongoose.Schema(
       default: "in_progress",
     },
     turn_count:      { type: Number, default: 0 },
-    transcript:      { type: [TurnSchema],        default: [] },
-    // populated only after /pipeline/finalize completes
-    entities:        { type: [EntitySchema],      default: [] },
-    disease_ranking: { type: [DiseaseRankSchema], default: [] },
-    rag_query:       { type: String, default: "" },
+    transcript:      { type: [TurnSchema], default: [] },
   },
   { timestamps: false }
 );

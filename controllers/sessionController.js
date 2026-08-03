@@ -114,11 +114,8 @@ const processTurn = async (req, res) => {
       );
       const result = finalizeResp.data;
 
-      session.status          = "completed";
-      session.completed_at    = new Date();
-      session.entities        = result.verifiedEntities || [];
-      session.disease_ranking = result.rankedDiseases   || [];
-      session.rag_query       = result.ragQuery         || "";
+      session.status       = "completed";
+      session.completed_at = new Date();
       await session.save();
 
       const report = await Report.create({
@@ -127,6 +124,8 @@ const processTurn = async (req, res) => {
         generated_at:     new Date(),
         specialty:        result.doctorReport?.specialtyRecommendation || "",
         rag_query:        result.ragQuery         || "",
+        entities:         result.verifiedEntities || [],
+        disease_ranking:  result.rankedDiseases   || [],
         retrieved_chunks: result.retrievedSources || [],
         openfda_results:  result.medicationInfo   || {},
         doctor_report:    result.doctorReport     || {},

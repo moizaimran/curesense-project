@@ -3,6 +3,23 @@
 // =============================================================================
 const mongoose = require("mongoose");
 
+const EntitySchema = new mongoose.Schema(
+  {
+    category:   { type: String, required: true },
+    keyword:    { type: String, required: true },
+    relates_to: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
+const DiseaseRankSchema = new mongoose.Schema(
+  {
+    disease:    { type: String, required: true },
+    confidence: { type: Number, required: true },
+  },
+  { _id: false }
+);
+
 const RetrievedChunkSchema = new mongoose.Schema(
   {
     source: { type: String, default: "" },
@@ -62,6 +79,8 @@ const ReportSchema = new mongoose.Schema(
     generated_at:     { type: Date,   default: Date.now },
     specialty:        { type: String, default: "" },
     rag_query:        { type: String, default: "" },
+    entities:         { type: [EntitySchema],         default: [] },
+    disease_ranking:  { type: [DiseaseRankSchema],    default: [] },
     retrieved_chunks: { type: [RetrievedChunkSchema], default: [] },
     openfda_results:  { type: mongoose.Schema.Types.Mixed, default: {} },
     doctor_report: {
