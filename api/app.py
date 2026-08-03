@@ -166,6 +166,10 @@ def pipeline_finalize():
         report.get("rankedDiseases", []),
     )
 
+    # Add shared fields to doctor report (no extra LLM call)
+    doctor_report["topDiagnoses"]            = patient_summary.get("topDiagnoses", [])
+    doctor_report["patientComplaintSummary"] = patient_summary.get("patientComplaintSummary", "")
+
     return jsonify({
         "verifiedEntities": report["entities"],
         "rankedDiseases"  : report.get("rankedDiseases", []),
