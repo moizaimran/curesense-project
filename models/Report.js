@@ -95,14 +95,16 @@ const ReportSchema = new mongoose.Schema(
     openfda_results:  { type: mongoose.Schema.Types.Mixed, default: {} },
 
     doctor_report: {
-      interviewClinicalSummary:      { type: String, default: "" },
-      retrievalAndMedicationSummary: { type: String, default: "" },
-      recommendedSpecialty:          { type: String, default: "" },
-      specialtyReasoning:            { type: String, default: "" },
+      patientComplaintSummary:       { type: String,                         default: "" },
+      topDiagnoses:                  { type: [TopDiagnosisSchema],           default: [] },
+      interviewClinicalSummary:      { type: String,                         default: "" },
+      retrievalAndMedicationSummary: { type: String,                         default: "" },
+      recommendedSpecialty:          { type: String,                         default: "" },
+      specialtyReasoning:            { type: String,                         default: "" },
       guidelineConsiderations:       { type: [GuidelineConsiderationSchema], default: [] },
       medicationFlags:               { type: [MedicationFlagSchema],         default: [] },
-      retrievalStatus:               { type: String, default: "" },
-      confidenceNote:                { type: String, default: "" },
+      retrievalStatus:               { type: String,                         default: "" },
+      confidenceNote:                { type: String,                         default: "" },
     },
 
     patient_summary: {
