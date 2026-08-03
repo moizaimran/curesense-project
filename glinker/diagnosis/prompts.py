@@ -1,11 +1,10 @@
 # ==============================================================================
 # glinker/diagnosis/prompts.py
 #
-# Prompts, JSON schemas, and few-shot examples for the two post-interview LLM
-# calls:
-#   • finalize  — verify entities, write summary, route specialty, build ragQuery
-#   • diagnose  — doctor-facing grounded report (uses retrieved chunks + FDA data)
-#   • patient   — plain-language patient summary (uses same retrieved data)
+# Prompts, JSON schemas, and few-shot examples for the post-interview LLM calls:
+#   • finalize       — verify entities, build ragQuery, pass through rankedDiseases
+#   • doctor_report  — doctor-facing grounded report (retrieved chunks + FDA data)
+#   • patient_summary — plain-language patient-facing summary
 # ==============================================================================
 import json
 
@@ -164,9 +163,9 @@ FINALIZE_FEWSHOT = [
 ]
 
 
-# ── DIAGNOSE (doctor-facing) ──────────────────────────────────────────────────
+# ── DOCTOR REPORT ─────────────────────────────────────────────────────────────
 
-DIAGNOSE_PROMPT = (
+DOCTOR_REPORT_PROMPT = (
     "You are a clinical decision support tool generating a doctor-facing pre-consultation "
     "report. Your output is for the CLINICIAN, not the patient — write as if briefing a "
     "doctor before they see this patient.\n"
@@ -175,23 +174,35 @@ DIAGNOSE_PROMPT = (
     "(3) reference chunks retrieved from medical textbooks and clinical guidelines, "
     "(4) medication information from openFDA drug labels (may be empty).\n"
     "\n"
-    "You have FOUR jobs:\n"
+    "You have SIX jobs:\n"
     "\n"
-    "JOB 1 — SPECIALTY RECOMMENDATION. Recommend the single specialty most appropriate "
+    "JOB 1 — INTERVIEW CLINICAL SUMMARY. In 2-3 sentences, write a concise technical "
+    "summary of the clinical picture from the interview for the clinician. Cover: chief "
+    "complaint, key symptom features (site, character, severity, duration, onset), "
+    "associated symptoms, relevant medications and allergies. This is the doctor's "
+    "quick-read of the case before the detailed findings.\n"
+    "\n"
+    "JOB 2 — RETRIEVAL AND MEDICATION SUMMARY. In 1-2 sentences, briefly state what the "
+    "retrieved reference material covers and what openFDA returned. For example: "
+    "'Retrieved 4 chunks from NICE headache guidelines covering migraine, cluster headache, "
+    "and atypical aura. Ibuprofen openFDA label retrieved — GI risk and medication overuse "
+    "flagged.' If nothing was retrieved or no medications exist, state that clearly.\n"
+    "\n"
+    "JOB 3 — RECOMMENDED SPECIALTY. Recommend the single specialty most appropriate "
     "for referral, explicitly grounded in the retrieved reference material where available.\n"
     "\n"
-    "JOB 2 — CLINICAL CONSIDERATIONS. List 2-5 relevant points the retrieved reference "
+    "JOB 4 — GUIDELINE CONSIDERATIONS. List 2-5 relevant points the retrieved reference "
     "material associates with this symptom pattern. Each point must include a citation "
     "string naming the source. Frame as 'the guideline states...' or 'the reference "
     "material notes...' — never as your own clinical judgment. Empty array if no "
     "retrieved material is relevant.\n"
     "\n"
-    "JOB 3 — MEDICATION FLAGS. For each medication the patient is taking, surface any "
+    "JOB 5 — MEDICATION FLAGS. For each medication the patient is taking, surface any "
     "relevant indications, contraindications, interactions, or dosage notes from the "
     "provided openFDA drug-label data. Each flag must cite its source. Empty array if "
     "no drug-label data was provided or the patient takes no medications.\n"
     "\n"
-    "JOB 4 — RETRIEVAL STATUS. Set retrievalStatus to:\n"
+    "JOB 6 — RETRIEVAL STATUS. Set retrievalStatus to:\n"
     "  'grounded'             — retrieved material directly informed the recommendation\n"
     "  'partial'              — retrieved material is loosely related\n"
     "  'no_relevant_content'  — nothing above relevance threshold; route from symptoms only\n"
@@ -202,15 +213,17 @@ DIAGNOSE_PROMPT = (
     "Return only the JSON object the schema requires — no extra text."
 )
 
-DIAGNOSE_SCHEMA = {
+DOCTOR_REPORT_SCHEMA = {
     "name"  : "doctor_report",
     "strict": True,
     "schema": {
         "type": "object",
         "properties": {
-            "specialtyRecommendation": {"type": "string"},
-            "specialtyReasoning"     : {"type": "string"},
-            "clinicalConsiderations" : {
+            "interviewClinicalSummary"     : {"type": "string"},
+            "retrievalAndMedicationSummary": {"type": "string"},
+            "recommendedSpecialty"         : {"type": "string"},
+            "specialtyReasoning"           : {"type": "string"},
+            "guidelineConsiderations": {
                 "type" : "array",
                 "items": {
                     "type"      : "object",
@@ -242,8 +255,9 @@ DIAGNOSE_SCHEMA = {
             "confidenceNote": {"type": "string"},
         },
         "required": [
-            "specialtyRecommendation", "specialtyReasoning",
-            "clinicalConsiderations", "medicationFlags",
+            "interviewClinicalSummary", "retrievalAndMedicationSummary",
+            "recommendedSpecialty", "specialtyReasoning",
+            "guidelineConsiderations", "medicationFlags",
             "retrievalStatus", "confidenceNote",
         ],
         "additionalProperties": False,
@@ -261,22 +275,23 @@ PATIENT_SUMMARY_PROMPT = (
     "(3) reference chunks from medical textbooks and guidelines, "
     "(4) medication information from drug labels (may be empty).\n"
     "\n"
-    "You have FOUR jobs:\n"
+    "You have THREE jobs:\n"
     "\n"
-    "JOB 1 — WHAT WE HEARD. In 2-3 plain sentences, summarise what the patient described "
-    "using everyday language (not medical jargon). Do NOT include speculation or diagnosis.\n"
+    "JOB 1 — PATIENT COMPLAINT SUMMARY. In 2-3 plain sentences, summarise what the "
+    "patient described using everyday language (not medical jargon). Do NOT include "
+    "speculation or diagnosis.\n"
     "\n"
-    "JOB 2 — SPECIALTY. Based on the transcript and entities provided, state the single "
-    "medical specialty the patient is most likely to be referred to (e.g. 'Neurology', "
-    "'Cardiology', 'General Medicine'). One word or short phrase only.\n"
+    "JOB 2 — REFERRAL SPECIALTY. Based on the transcript and entities provided, state "
+    "the single medical specialty the patient is most likely to be referred to (e.g. "
+    "'Neurology', 'Cardiology', 'General Medicine'). One word or short phrase only.\n"
     "\n"
-    "JOB 3 — WHAT TO EXPECT. In 2-4 bullet points, based ONLY on the retrieved reference "
-    "material, explain what typically happens next for this type of complaint — what the "
-    "doctor might ask, what they might check, or what to watch for. Attribute to 'general "
-    "guidance' or a source name. Omit this section (empty array) if no relevant material "
-    "was retrieved.\n"
+    "JOB 3 — APPOINTMENT GUIDANCE. In 2-4 bullet points, based ONLY on the retrieved "
+    "reference material, explain what typically happens next for this type of complaint — "
+    "what the doctor might ask, what they might check, or what to watch for. Attribute "
+    "to 'general guidance' or a source name. Omit this section (empty array) if no "
+    "relevant material was retrieved.\n"
     "\n"
-    "JOB 4 — YOUR MEDICATIONS. For each medication the patient mentioned, provide one "
+    "JOB 4 — MEDICATION NOTES. For each medication the patient mentioned, provide one "
     "plain-language sentence about what it is typically used for and any important notes "
     "from the drug label (e.g. 'don't take on an empty stomach'). Use the openFDA data "
     "provided. Empty array if no medications reported.\n"
@@ -293,9 +308,9 @@ PATIENT_SUMMARY_SCHEMA = {
     "schema": {
         "type": "object",
         "properties": {
-            "whatWeHeard": {"type": "string"},
-            "specialty"  : {"type": "string"},
-            "whatToExpect"  : {
+            "patientComplaintSummary": {"type": "string"},
+            "referralSpecialty"      : {"type": "string"},
+            "appointmentGuidance": {
                 "type" : "array",
                 "items": {
                     "type"      : "object",
@@ -307,7 +322,7 @@ PATIENT_SUMMARY_SCHEMA = {
                     "additionalProperties": False,
                 },
             },
-            "yourMedications": {
+            "medicationNotes": {
                 "type" : "array",
                 "items": {
                     "type"      : "object",
@@ -320,7 +335,12 @@ PATIENT_SUMMARY_SCHEMA = {
                 },
             },
         },
-        "required"            : ["whatWeHeard", "specialty", "whatToExpect", "yourMedications"],
+        "required"            : ["patientComplaintSummary", "referralSpecialty", "appointmentGuidance", "medicationNotes"],
         "additionalProperties": False,
     },
 }
+
+
+# Keep legacy aliases so old import references don't break during transition
+DIAGNOSE_PROMPT = DOCTOR_REPORT_PROMPT
+DIAGNOSE_SCHEMA = DOCTOR_REPORT_SCHEMA

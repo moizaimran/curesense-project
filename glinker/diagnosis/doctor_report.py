@@ -4,10 +4,10 @@
 import json
 from glinker import config
 from glinker.utils import parse_json_response
-from glinker.diagnosis.prompts import DIAGNOSE_PROMPT, DIAGNOSE_SCHEMA
+from glinker.diagnosis.prompts import DOCTOR_REPORT_PROMPT, DOCTOR_REPORT_SCHEMA
 
 
-def _format_chunks(retrieved_chunks: list[dict]) -> str:
+def _format_retrieved_chunks(retrieved_chunks: list[dict]) -> str:
     if not retrieved_chunks:
         return (
             "No relevant reference material was retrieved above the similarity threshold. "
@@ -16,13 +16,14 @@ def _format_chunks(retrieved_chunks: list[dict]) -> str:
     parts = []
     for c in retrieved_chunks:
         label = f"Source: {c['source']}"
-        if c.get("title"):  label += f" | {c['title']}"
+        if c.get("title"):
+            label += f" | {c['title']}"
         label += f" | Score: {c['score']}"
         parts.append(f"[{label}]\n{c['text']}")
     return "\n\n".join(parts)
 
 
-def _format_med_info(medication_info: dict[str, dict]) -> str:
+def _format_medication_info(medication_info: dict[str, dict]) -> str:
     if not medication_info:
         return "No medication label data provided."
     parts = []
@@ -35,7 +36,7 @@ def _format_med_info(medication_info: dict[str, dict]) -> str:
     return "\n\n".join(parts)
 
 
-def diagnose_for_doctor(
+def generate_doctor_report(
     transcript_text: str,
     verified_entities: list[dict],
     retrieved_chunks: list[dict],
@@ -45,23 +46,24 @@ def diagnose_for_doctor(
     Doctor-facing report grounded in retrieved textbook/guideline chunks and
     openFDA medication data. Degrades gracefully when either is empty.
 
-    retrieved_chunks  : from retrieval.retrieve_context()
-    medication_info   : from retrieval.get_medication_info() — may be {}
+    Returns a dict with keys matching DOCTOR_REPORT_SCHEMA.
     """
     payload = json.dumps({
         "transcript"      : transcript_text,
         "verifiedEntities": verified_entities,
-        "retrievedChunks" : _format_chunks(retrieved_chunks),
-        "medicationInfo"  : _format_med_info(medication_info),
+        "retrievedChunks" : _format_retrieved_chunks(retrieved_chunks),
+        "medicationInfo"  : _format_medication_info(medication_info),
     })
 
     fallback = {
-        "specialtyRecommendation": "General Medicine",
-        "specialtyReasoning"     : "Doctor report generation failed — defaulted.",
-        "clinicalConsiderations" : [],
-        "medicationFlags"        : [],
-        "retrievalStatus"        : "no_relevant_content",
-        "confidenceNote"         : "diagnose_for_doctor call failed.",
+        "interviewClinicalSummary"     : "Doctor report generation failed.",
+        "retrievalAndMedicationSummary": "No retrieval summary available.",
+        "recommendedSpecialty"         : "General Medicine",
+        "specialtyReasoning"           : "Defaulted due to generation failure.",
+        "guidelineConsiderations"      : [],
+        "medicationFlags"              : [],
+        "retrievalStatus"              : "no_relevant_content",
+        "confidenceNote"               : "generate_doctor_report call failed.",
     }
 
     try:
@@ -70,15 +72,15 @@ def diagnose_for_doctor(
             max_completion_tokens=config.LLM_CONFIG["diagnose_max_tokens"],
             reasoning_effort=config.LLM_CONFIG["reasoning_effort"],
             messages=[
-                {"role": "system", "content": DIAGNOSE_PROMPT},
+                {"role": "system", "content": DOCTOR_REPORT_PROMPT},
                 {"role": "user",   "content": payload},
             ],
-            response_format={"type": "json_schema", "json_schema": DIAGNOSE_SCHEMA},
+            response_format={"type": "json_schema", "json_schema": DOCTOR_REPORT_SCHEMA},
         )
         raw           = response.choices[0].message.content
         finish_reason = response.choices[0].finish_reason
-        return parse_json_response(raw, finish_reason, fallback, "diagnose_for_doctor")
+        return parse_json_response(raw, finish_reason, fallback, "generate_doctor_report")
     except Exception as e:
-        print(f"[diagnose_for_doctor] ERROR: {e}")
+        print(f"[generate_doctor_report] ERROR: {e}")
         fallback["confidenceNote"] = f"Error: {e}"
         return fallback

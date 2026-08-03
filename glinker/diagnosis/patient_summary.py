@@ -5,34 +5,35 @@ import json
 from glinker import config
 from glinker.utils import parse_json_response
 from glinker.diagnosis.prompts import PATIENT_SUMMARY_PROMPT, PATIENT_SUMMARY_SCHEMA
-from glinker.diagnosis.doctor_report import _format_chunks, _format_med_info
+from glinker.diagnosis.doctor_report import _format_retrieved_chunks, _format_medication_info
 
 
-def summarize_for_patient(
+def generate_patient_summary(
     transcript_text: str,
     verified_entities: list[dict],
     retrieved_chunks: list[dict],
     medication_info: dict[str, dict],
+    ranked_diseases: list[dict],
 ) -> dict:
     """
     Plain-language summary for the patient. Uses the same retrieved content
     as the doctor report but reframes everything in everyday language.
 
-    retrieved_chunks : from retrieval.retrieve_context()
-    medication_info  : from retrieval.get_medication_info() — may be {}
+    ranked_diseases : top-5 list from the disease ranking module — appended
+                      directly to the result without going through the LLM.
     """
     payload = json.dumps({
         "transcript"      : transcript_text,
         "verifiedEntities": verified_entities,
-        "retrievedChunks" : _format_chunks(retrieved_chunks),
-        "medicationInfo"  : _format_med_info(medication_info),
+        "retrievedChunks" : _format_retrieved_chunks(retrieved_chunks),
+        "medicationInfo"  : _format_medication_info(medication_info),
     })
 
     fallback = {
-        "whatWeHeard"    : "We received your description of your symptoms.",
-        "specialty"      : "General Medicine",
-        "whatToExpect"   : [],
-        "yourMedications": [],
+        "patientComplaintSummary": "We received your description of your symptoms.",
+        "referralSpecialty"      : "General Medicine",
+        "appointmentGuidance"    : [],
+        "medicationNotes"        : [],
     }
 
     try:
@@ -48,7 +49,12 @@ def summarize_for_patient(
         )
         raw           = response.choices[0].message.content
         finish_reason = response.choices[0].finish_reason
-        return parse_json_response(raw, finish_reason, fallback, "summarize_for_patient")
+        result = parse_json_response(raw, finish_reason, fallback, "generate_patient_summary")
     except Exception as e:
-        print(f"[summarize_for_patient] ERROR: {e}")
-        return fallback
+        print(f"[generate_patient_summary] ERROR: {e}")
+        result = fallback
+
+    # Top 5 diagnoses from the disease ranking module — added here, not via LLM
+    result["topDiagnoses"] = ranked_diseases[:5]
+
+    return result
