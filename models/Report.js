@@ -30,7 +30,8 @@ const RetrievedChunkSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const ClinicalConsiderationSchema = new mongoose.Schema(
+// Doctor report sub-schemas
+const GuidelineConsiderationSchema = new mongoose.Schema(
   {
     point:    { type: String, default: "" },
     citation: { type: String, default: "" },
@@ -47,7 +48,16 @@ const MedicationFlagSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const WhatToExpectSchema = new mongoose.Schema(
+// Patient summary sub-schemas
+const TopDiagnosisSchema = new mongoose.Schema(
+  {
+    disease:    { type: String, default: "" },
+    confidence: { type: Number, default: 0  },
+  },
+  { _id: false }
+);
+
+const AppointmentGuidanceItemSchema = new mongoose.Schema(
   {
     point:  { type: String, default: "" },
     source: { type: String, default: "" },
@@ -55,7 +65,7 @@ const WhatToExpectSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const YourMedicationsSchema = new mongoose.Schema(
+const MedicationNoteSchema = new mongoose.Schema(
   {
     drug: { type: String, default: "" },
     note: { type: String, default: "" },
@@ -69,7 +79,7 @@ const ReportSchema = new mongoose.Schema(
       type:     mongoose.Schema.Types.ObjectId,
       ref:      "Session",
       required: true,
-      unique:   true,   // one report per session — enforced at DB level
+      unique:   true,
     },
     patient_id: {
       type:     mongoose.Schema.Types.ObjectId,
@@ -83,25 +93,29 @@ const ReportSchema = new mongoose.Schema(
     disease_ranking:  { type: [DiseaseRankSchema],    default: [] },
     retrieved_chunks: { type: [RetrievedChunkSchema], default: [] },
     openfda_results:  { type: mongoose.Schema.Types.Mixed, default: {} },
+
     doctor_report: {
-      specialtyRecommendation: { type: String, default: "" },
-      specialtyReasoning:      { type: String, default: "" },
-      clinicalConsiderations:  { type: [ClinicalConsiderationSchema], default: [] },
-      medicationFlags:         { type: [MedicationFlagSchema],        default: [] },
-      retrievalStatus:         { type: String, default: "" },
-      confidenceNote:          { type: String, default: "" },
+      interviewClinicalSummary:      { type: String, default: "" },
+      retrievalAndMedicationSummary: { type: String, default: "" },
+      recommendedSpecialty:          { type: String, default: "" },
+      specialtyReasoning:            { type: String, default: "" },
+      guidelineConsiderations:       { type: [GuidelineConsiderationSchema], default: [] },
+      medicationFlags:               { type: [MedicationFlagSchema],         default: [] },
+      retrievalStatus:               { type: String, default: "" },
+      confidenceNote:                { type: String, default: "" },
     },
+
     patient_summary: {
-      whatWeHeard:     { type: String,              default: "" },
-      specialty:       { type: String,              default: "" },
-      whatToExpect:    { type: [WhatToExpectSchema],    default: [] },
-      yourMedications: { type: [YourMedicationsSchema], default: [] },
+      patientComplaintSummary: { type: String,                         default: "" },
+      referralSpecialty:       { type: String,                         default: "" },
+      topDiagnoses:            { type: [TopDiagnosisSchema],           default: [] },
+      appointmentGuidance:     { type: [AppointmentGuidanceItemSchema],default: [] },
+      medicationNotes:         { type: [MedicationNoteSchema],         default: [] },
     },
   },
   { timestamps: false }
 );
 
-// Speeds up get_reports_for_patient lookups
 ReportSchema.index({ patient_id: 1 });
 
 module.exports = mongoose.model("Report", ReportSchema);

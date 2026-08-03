@@ -122,7 +122,7 @@ const processTurn = async (req, res) => {
         session_id:       session._id,
         patient_id:       session.patient_id,
         generated_at:     new Date(),
-        specialty:        result.doctorReport?.specialtyRecommendation || "",
+        specialty:        result.doctorReport?.recommendedSpecialty || "",
         rag_query:        result.ragQuery         || "",
         entities:         result.verifiedEntities || [],
         disease_ranking:  result.rankedDiseases   || [],
