@@ -40,8 +40,24 @@ INTERVIEW_PROMPT = (
     "not pad with redundant questions. If the patient signals they are done after all "
     "dimensions are covered, also complete.\n"
     "\n"
-    "Put your question (or, if complete, a brief closing line) in \"message\". Never call "
-    "a tool or function. Return only the JSON object the schema requires — no extra text."
+    "Put your question (or, if complete, a brief closing line) in \"message\".\n"
+    "\n"
+    "JOB 3 — QUESTION TYPE: for every turn where status is \"continue\", classify the "
+    "expected response type and put it in \"questionType\":\n"
+    "  \"yes_no\"  — binary yes/no question (e.g. 'Does it spread anywhere?')\n"
+    "  \"mcq\"     — question with a clear set of predefined answer choices. Populate "
+    "\"options\" with 3–6 specific, descriptive choices the patient can tap. Each option "
+    "should be a full phrase, not a single word. Example for character: ['Sharp or "
+    "stabbing', 'Dull or aching', 'Burning or stinging', 'Tight or squeezing', "
+    "'Throbbing or pulsating', 'Cramping or colicky']. The patient may also add free text.\n"
+    "  \"scale\"   — intensity/severity questions expecting a numeric 1–10 response "
+    "(e.g. 'How severe is the pain on a scale of 1–10?')\n"
+    "  \"text\"    — open-ended question expecting a free-form answer\n"
+    "  \"number\"  — expects a specific count or numeric value (e.g. 'How many days?')\n"
+    "For \"mcq\" populate \"options\"; for all other types set \"options\" to [].\n"
+    "When status is \"complete\", set questionType to \"text\" and options to [].\n"
+    "\n"
+    "Never call a tool or function. Return only the JSON object the schema requires — no extra text."
 )
 
 INTERVIEW_SCHEMA = {
@@ -53,21 +69,31 @@ INTERVIEW_SCHEMA = {
             "status"              : {"type": "string", "enum": ["continue", "complete"]},
             "message"             : {"type": "string"},
             "correctedPatientText": {"type": "string"},
+            "questionType"        : {"type": "string", "enum": ["yes_no", "mcq", "scale", "text", "number"]},
+            "options"             : {"type": "array", "items": {"type": "string"}},
         },
-        "required"            : ["status", "message", "correctedPatientText"],
+        "required"            : ["status", "message", "correctedPatientText", "questionType", "options"],
         "additionalProperties": False,
     },
 }
 
 INTERVIEW_FEWSHOT = [
-    # Turn 1 — patient volunteers onset; assistant asks about site
+    # Turn 1 — patient volunteers onset; assistant asks about site (MCQ)
     {"role": "user", "content": "I ve had a bad hedache since yestarday."},
     {
         "role": "assistant",
         "content": json.dumps({
             "status"              : "continue",
-            "message"             : "Sorry to hear that. Is the headache on one side of your head, or all over?",
+            "message"             : "Sorry to hear that. Where exactly is the headache located?",
             "correctedPatientText": "I've had a bad headache since yesterday.",
+            "questionType"        : "mcq",
+            "options"             : [
+                "One side of the head only",
+                "Both sides / all over the head",
+                "Front of the head or forehead",
+                "Back of the head or neck",
+                "Around or behind the eyes",
+            ],
         }),
     },
     # Turn 2 — patient covers site, character, severity, associated, meds, allergies
@@ -77,8 +103,10 @@ INTERVIEW_FEWSHOT = [
         "role": "assistant",
         "content": json.dumps({
             "status"              : "continue",
-            "message"             : "Got it. Does the pain spread anywhere — like to your neck, eye, or jaw?",
+            "message"             : "Got it. Does the pain spread anywhere else — for example to your neck, eye, or jaw?",
             "correctedPatientText": "Mostly on the right side, it's a sharp pain, 7 out of 10. Nothing else, no meds, no allergies.",
+            "questionType"        : "yes_no",
+            "options"             : [],
         }),
     },
     # Turn 3 — patient answers radiation (R); still missing T and E
@@ -87,8 +115,10 @@ INTERVIEW_FEWSHOT = [
         "role": "assistant",
         "content": json.dumps({
             "status"              : "continue",
-            "message"             : "Has it been there constantly since yesterday, and does anything make it better or worse?",
+            "message"             : "Has it been constant since yesterday, or does it come and go? And does anything make it better or worse?",
             "correctedPatientText": "No, it stays on the right side.",
+            "questionType"        : "text",
+            "options"             : [],
         }),
     },
     # Turn 4 — patient answers time course (T) and exacerbating/relieving (E)
@@ -100,6 +130,8 @@ INTERVIEW_FEWSHOT = [
             "status"              : "complete",
             "message"             : "Thanks, that's everything I need for now. The clinician will review this shortly.",
             "correctedPatientText": "Yes it's constant, bright light makes it much worse, lying down in a dark room helps.",
+            "questionType"        : "text",
+            "options"             : [],
         }),
     },
 ]

@@ -116,6 +116,8 @@ def interview_turn():
             ),
             "rawPatientText"      : raw_patient_text,
             "correctedPatientText": patient_text,
+            "questionType"        : "text",
+            "options"             : [],
         })
 
     # ── Normal turn — run interview logic with history supplied by Express ─────
