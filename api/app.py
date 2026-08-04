@@ -34,8 +34,7 @@ from glinker.interview.prompts  import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT
 from glinker.diagnosis.finalize        import run_gliner, finalize_report
 from glinker.rag.retrieval             import retrieve_context, get_medication_info
 from glinker.disease.ranker            import rank_diseases
-from glinker.diagnosis.doctor_report   import generate_doctor_report
-from glinker.diagnosis.patient_summary import generate_patient_summary
+from glinker.diagnosis.combined_report import generate_combined_report
 
 app = Flask(__name__)
 
@@ -165,31 +164,29 @@ def pipeline_finalize():
         except Exception as e:
             print(f"[openFDA] get_medication_info failed: {e} — continuing without drug data.")
 
-    # ── 6. Doctor report ──────────────────────────────────────────────────────
-    doctor_report = generate_doctor_report(
+    # ── 6. Combined report — one LLM call for doctor + patient + diagnoses ────
+    combined = generate_combined_report(
         transcript_text, report["entities"], retrieved_chunks, medication_info,
         ranked_diseases,
     )
 
-    # ── 7. Patient summary ────────────────────────────────────────────────────
-    patient_summary = generate_patient_summary(
-        transcript_text, report["entities"], retrieved_chunks, medication_info,
-        ranked_diseases,
-    )
+    doctor_report         = combined.get("doctorReport", {})
+    patient_summary       = combined.get("patientSummary", {})
+    interpreted_diagnoses = combined.get("interpretedDiagnoses", [])
 
-    # Shared fields promoted to doctor report (no extra LLM call)
-    doctor_report["topDiagnoses"]            = patient_summary.get("topDiagnoses", [])
+    # Promote patientComplaintSummary to doctor report (no extra LLM call)
     doctor_report["patientComplaintSummary"] = patient_summary.get("patientComplaintSummary", "")
 
     return jsonify({
-        "verifiedEntities": report["entities"],
-        "rankedDiseases"  : ranked_diseases,
-        "ragQuery"        : rag_query,
-        "diagnosticQuery" : diagnostic_query,
-        "retrievedSources": retrieved_chunks,
-        "medicationInfo"  : medication_info,
-        "doctorReport"    : doctor_report,
-        "patientSummary"  : patient_summary,
+        "verifiedEntities"    : report["entities"],
+        "rankedDiseases"      : ranked_diseases,
+        "ragQuery"            : rag_query,
+        "diagnosticQuery"     : diagnostic_query,
+        "retrievedSources"    : retrieved_chunks,
+        "medicationInfo"      : medication_info,
+        "doctorReport"        : doctor_report,
+        "patientSummary"      : patient_summary,
+        "interpretedDiagnoses": interpreted_diagnoses,
     })
 
 
