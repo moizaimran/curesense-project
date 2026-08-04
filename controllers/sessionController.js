@@ -129,8 +129,9 @@ const processTurn = async (req, res) => {
         disease_ranking:  result.rankedDiseases   || [],
         retrieved_chunks: result.retrievedSources || [],
         openfda_results:  result.medicationInfo   || {},
-        doctor_report:    result.doctorReport     || {},
-        patient_summary:  result.patientSummary   || {},
+        doctor_report:         result.doctorReport         || {},
+        patient_summary:       result.patientSummary       || {},
+        interpreted_diagnoses: result.interpretedDiagnoses || [],
       });
 
       return res.json({ status: "complete", message, correctedPatientText, report_id: report._id });

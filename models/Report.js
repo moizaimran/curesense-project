@@ -48,11 +48,13 @@ const MedicationFlagSchema = new mongoose.Schema(
   { _id: false }
 );
 
-// Patient summary sub-schemas
-const TopDiagnosisSchema = new mongoose.Schema(
+// Interpreted diagnosis — LLM-evaluated, shared by doctor and patient dashboards
+const InterpretedDiagnosisSchema = new mongoose.Schema(
   {
-    disease:    { type: String, default: "" },
-    confidence: { type: Number, default: 0  },
+    disease:        { type: String, default: "" },
+    plausibility:   { type: String, enum: ["likely", "possible", "unlikely"], default: "possible" },
+    clinicalReason: { type: String, default: "" },
+    patientNote:    { type: String, default: "" },
   },
   { _id: false }
 );
@@ -97,7 +99,6 @@ const ReportSchema = new mongoose.Schema(
 
     doctor_report: {
       patientComplaintSummary:       { type: String,                         default: "" },
-      topDiagnoses:                  { type: [TopDiagnosisSchema],           default: [] },
       interviewClinicalSummary:      { type: String,                         default: "" },
       retrievalAndMedicationSummary: { type: String,                         default: "" },
       recommendedSpecialty:          { type: String,                         default: "" },
@@ -109,12 +110,16 @@ const ReportSchema = new mongoose.Schema(
     },
 
     patient_summary: {
-      patientComplaintSummary: { type: String,                         default: "" },
-      referralSpecialty:       { type: String,                         default: "" },
-      topDiagnoses:            { type: [TopDiagnosisSchema],           default: [] },
-      appointmentGuidance:     { type: [AppointmentGuidanceItemSchema],default: [] },
-      medicationNotes:         { type: [MedicationNoteSchema],         default: [] },
+      patientComplaintSummary: { type: String,                          default: "" },
+      referralSpecialty:       { type: String,                          default: "" },
+      appointmentGuidance:     { type: [AppointmentGuidanceItemSchema], default: [] },
+      medicationNotes:         { type: [MedicationNoteSchema],          default: [] },
     },
+
+    // LLM-evaluated disease candidates — single source for both dashboards.
+    // Doctor sees all entries (including unlikely). Patient sees only
+    // likely/possible entries via patientNote (patientNote is "" for unlikely).
+    interpreted_diagnoses: { type: [InterpretedDiagnosisSchema], default: [] },
   },
   { timestamps: false }
 );
