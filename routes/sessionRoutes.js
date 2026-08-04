@@ -9,11 +9,15 @@ const {
   processTurn,
   getSession,
   getSessionsForPatient,
+  getLatestSession,
+  softDeleteSession,
 } = require("../controllers/sessionController");
 
-router.post("/",                  protect, authorize("patient"),                    createSession);
-router.post("/:id/turn",          protect, authorize("patient"),                    processTurn);
-router.get("/:id",                protect,                                          getSession);
-router.get("/patient/:patientId", protect, authorize("patient", "doctor", "admin"), getSessionsForPatient);
+router.post("/",                           protect, authorize("patient"),                    createSession);
+router.post("/:id/turn",                   protect, authorize("patient"),                    processTurn);
+router.get("/patient/:patientId/latest",   protect, authorize("patient", "doctor", "admin"), getLatestSession);
+router.get("/patient/:patientId",          protect, authorize("patient", "doctor", "admin"), getSessionsForPatient);
+router.get("/:id",                         protect,                                          getSession);
+router.patch("/:id/delete",               protect,                                          softDeleteSession);
 
 module.exports = router;

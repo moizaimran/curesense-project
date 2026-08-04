@@ -20,7 +20,7 @@ const getReportsForPatient = asyncHandler(async (req, res) => {
   if (!canAccessPatient(req.user, req.params.patientId)) {
     return res.status(403).json({ error: "Access denied" });
   }
-  const reports = await Report.find({ patient_id: req.params.patientId });
+  const reports = await Report.find({ patient_id: req.params.patientId, is_deleted: { $ne: true } });
   res.json(reports);
 });
 

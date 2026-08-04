@@ -28,6 +28,7 @@ const SessionSchema = new mongoose.Schema(
     },
     turn_count:      { type: Number, default: 0 },
     transcript:      { type: [TurnSchema], default: [] },
+    is_deleted:      { type: Boolean, default: false },
   },
   { timestamps: false }
 );

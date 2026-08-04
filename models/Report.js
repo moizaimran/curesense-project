@@ -118,6 +118,7 @@ const ReportSchema = new mongoose.Schema(
     // Doctor sees all entries (including unlikely). Patient sees only
     // likely/possible entries via patientNote (patientNote is "" for unlikely).
     interpreted_diagnoses: { type: [InterpretedDiagnosisSchema], default: [] },
+    is_deleted:            { type: Boolean, default: false },
   },
   { timestamps: false }
 );

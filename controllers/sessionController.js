@@ -12,6 +12,7 @@ const axios              = require("axios");
 const cloudinary         = require("../config/cloudinary");
 const Session            = require("../models/Session");
 const Report             = require("../models/Report");
+
 const asyncHandler       = require("../utils/asyncHandler");
 const { canAccessPatient } = require("../middleware/auth");
 
@@ -165,7 +166,7 @@ const processTurn = async (req, res) => {
 // ── GET /api/sessions/:id ─────────────────────────────────────────────────────
 const getSession = asyncHandler(async (req, res) => {
   const session = await Session.findById(req.params.id);
-  if (!session) return res.status(404).json({ error: "Session not found" });
+  if (!session || session.is_deleted) return res.status(404).json({ error: "Session not found" });
   if (!canAccessPatient(req.user, session.patient_id)) {
     return res.status(403).json({ error: "Access denied" });
   }
@@ -177,8 +178,35 @@ const getSessionsForPatient = asyncHandler(async (req, res) => {
   if (!canAccessPatient(req.user, req.params.patientId)) {
     return res.status(403).json({ error: "Access denied" });
   }
-  const sessions = await Session.find({ patient_id: req.params.patientId });
+  const sessions = await Session.find({ patient_id: req.params.patientId, is_deleted: { $ne: true } })
+    .sort({ started_at: -1 });
   res.json(sessions);
 });
 
-module.exports = { createSession, processTurn, getSession, getSessionsForPatient };
+// ── GET /api/sessions/patient/:patientId/latest ───────────────────────────────
+const getLatestSession = asyncHandler(async (req, res) => {
+  if (!canAccessPatient(req.user, req.params.patientId)) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const session = await Session.findOne({
+    patient_id: req.params.patientId,
+    is_deleted: { $ne: true },
+  }).sort({ started_at: -1 });
+  res.json(session ?? null);
+});
+
+// ── PATCH /api/sessions/:id/delete  (soft delete) ────────────────────────────
+const softDeleteSession = asyncHandler(async (req, res) => {
+  const session = await Session.findById(req.params.id);
+  if (!session || session.is_deleted) return res.status(404).json({ error: "Session not found" });
+  if (!canAccessPatient(req.user, session.patient_id)) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  session.is_deleted = true;
+  await session.save();
+  // Cascade soft-delete to the associated report
+  await Report.updateOne({ session_id: session._id }, { is_deleted: true });
+  res.json({ message: "Session removed successfully" });
+});
+
+module.exports = { createSession, processTurn, getSession, getSessionsForPatient, getLatestSession, softDeleteSession };
