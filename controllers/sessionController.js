@@ -103,7 +103,7 @@ const processTurn = async (req, res) => {
       turnPayload,
       60_000
     );
-    const { status, message, correctedPatientText, rawPatientText } = aiResp.data;
+    const { status, message, correctedPatientText, rawPatientText, questionType, options } = aiResp.data;
 
     // ── Save turn (pair) to session ───────────────────────────────────────────
     session.transcript.push({
@@ -148,11 +148,11 @@ const processTurn = async (req, res) => {
         interpreted_diagnoses: result.interpretedDiagnoses || [],
       });
 
-      return res.json({ status: "complete", message, correctedPatientText, report_id: report._id });
+      return res.json({ status: "complete", message, correctedPatientText, questionType: questionType ?? "text", options: options ?? [], report_id: report._id });
     }
 
     await session.save();
-    return res.json({ status, message, correctedPatientText });
+    return res.json({ status, message, correctedPatientText, questionType: questionType ?? "text", options: options ?? [] });
 
   } catch (err) {
     if (err.response) {
