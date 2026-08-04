@@ -89,7 +89,6 @@ const ReportSchema = new mongoose.Schema(
       required: true,
     },
     generated_at:     { type: Date,   default: Date.now },
-    specialty:        { type: String, default: "" },
     rag_query:        { type: String, default: "" },
     diagnostic_query: { type: String, default: "" },
     entities:         { type: [EntitySchema],         default: [] },
@@ -98,7 +97,6 @@ const ReportSchema = new mongoose.Schema(
     openfda_results:  { type: mongoose.Schema.Types.Mixed, default: {} },
 
     doctor_report: {
-      patientComplaintSummary:       { type: String,                         default: "" },
       interviewClinicalSummary:      { type: String,                         default: "" },
       retrievalAndMedicationSummary: { type: String,                         default: "" },
       recommendedSpecialty:          { type: String,                         default: "" },

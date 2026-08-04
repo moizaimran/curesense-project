@@ -8,25 +8,33 @@
 //   · calls Flask /interview/turn, saves the exchange to the session
 //   · on status:"complete" calls Flask /pipeline/finalize, saves the report
 // =============================================================================
-const axios      = require("axios");
-const cloudinary = require("../config/cloudinary");
-const Session    = require("../models/Session");
-const Report     = require("../models/Report");
+const axios        = require("axios");
+const cloudinary   = require("../config/cloudinary");
+const Session      = require("../models/Session");
+const Report       = require("../models/Report");
+const asyncHandler = require("../utils/asyncHandler");
+
+// One automatic retry on network-level failures (Ngrok hiccups).
+// Does NOT retry HTTP errors from Flask — those are logic errors, not transient.
+async function callAI(url, payload, timeout) {
+  try {
+    return await axios.post(url, payload, { timeout });
+  } catch (err) {
+    if (err.response) throw err;
+    await new Promise(r => setTimeout(r, 2000));
+    return await axios.post(url, payload, { timeout });
+  }
+}
 
 const ABANDONED_AFTER_HOURS = 48;
 
 // ── POST /api/sessions ────────────────────────────────────────────────────────
-const createSession = async (req, res) => {
-  try {
-    const { patient_id } = req.body;
-    if (!patient_id) return res.status(400).json({ error: "patient_id is required" });
-
-    const session = await Session.create({ patient_id });
-    res.status(201).json(session);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-};
+const createSession = asyncHandler(async (req, res) => {
+  const { patient_id } = req.body;
+  if (!patient_id) return res.status(400).json({ error: "patient_id is required" });
+  const session = await Session.create({ patient_id });
+  res.status(201).json(session);
+});
 
 // ── POST /api/sessions/:id/turn ───────────────────────────────────────────────
 const processTurn = async (req, res) => {
@@ -83,10 +91,10 @@ const processTurn = async (req, res) => {
       ...(patient_audio_url ? { patient_audio_url } : { patient_text }),
     };
 
-    const aiResp = await axios.post(
+    const aiResp = await callAI(
       `${process.env.AI_SERVICE_URL}/interview/turn`,
       turnPayload,
-      { timeout: 60_000 }
+      60_000
     );
     const { status, message, correctedPatientText, rawPatientText } = aiResp.data;
 
@@ -107,10 +115,10 @@ const processTurn = async (req, res) => {
         .map((t) => t.patient_corrected)
         .join(" ");
 
-      const finalizeResp = await axios.post(
+      const finalizeResp = await callAI(
         `${process.env.AI_SERVICE_URL}/pipeline/finalize`,
         { full_transcript_text: fullTranscript },
-        { timeout: 120_000 }
+        120_000
       );
       const result = finalizeResp.data;
 
@@ -122,7 +130,6 @@ const processTurn = async (req, res) => {
         session_id:       session._id,
         patient_id:       session.patient_id,
         generated_at:     new Date(),
-        specialty:        result.doctorReport?.recommendedSpecialty || "",
         rag_query:        result.ragQuery         || "",
         diagnostic_query: result.diagnosticQuery  || "",
         entities:         result.verifiedEntities || [],
@@ -149,24 +156,16 @@ const processTurn = async (req, res) => {
 };
 
 // ── GET /api/sessions/:id ─────────────────────────────────────────────────────
-const getSession = async (req, res) => {
-  try {
-    const session = await Session.findById(req.params.id);
-    if (!session) return res.status(404).json({ error: "Session not found" });
-    res.json(session);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-};
+const getSession = asyncHandler(async (req, res) => {
+  const session = await Session.findById(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+  res.json(session);
+});
 
 // ── GET /api/sessions/patient/:patientId ──────────────────────────────────────
-const getSessionsForPatient = async (req, res) => {
-  try {
-    const sessions = await Session.find({ patient_id: req.params.patientId });
-    res.json(sessions);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-};
+const getSessionsForPatient = asyncHandler(async (req, res) => {
+  const sessions = await Session.find({ patient_id: req.params.patientId });
+  res.json(sessions);
+});
 
 module.exports = { createSession, processTurn, getSession, getSessionsForPatient };

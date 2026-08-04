@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 5000;
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/api/patients", patientRoutes);
@@ -27,6 +27,13 @@ app.use("/api/reports",  reportRoutes);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => res.json({ status: "ok" }));
+
+// ── Centralized error handler (must be last) ──────────────────────────────────
+// asyncHandler in controllers forwards errors here via next(err).
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  res.status(400).json({ error: err.message });
+});
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 connectDB().then(() => {
