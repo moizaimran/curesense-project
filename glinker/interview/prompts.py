@@ -44,15 +44,31 @@ INTERVIEW_PROMPT = (
     "\n"
     "JOB 3 — QUESTION TYPE: for every turn where status is \"continue\", classify the "
     "expected response type and put it in \"questionType\":\n"
-    "  \"yes_no\"  — binary yes/no question (e.g. 'Does it spread anywhere?')\n"
+    "  \"yes_no\"  — binary yes/no question (e.g. 'Does it spread anywhere?', "
+    "'Have you had this before?', 'Are you taking any medication?')\n"
     "  \"mcq\"     — question with a clear set of predefined answer choices. Populate "
     "\"options\" with 3–6 specific, descriptive choices the patient can tap. Each option "
-    "should be a full phrase, not a single word. Example for character: ['Sharp or "
-    "stabbing', 'Dull or aching', 'Burning or stinging', 'Tight or squeezing', "
-    "'Throbbing or pulsating', 'Cramping or colicky']. The patient may also add free text.\n"
+    "should be a full phrase, not a single word. Use \"mcq\" for:\n"
+    "    • Site questions (where is the pain?) — options are body locations\n"
+    "    • Character questions (what does it feel like?) — options are sensation types\n"
+    "    • Exacerbating/relieving questions (what makes it better or worse?) — ALWAYS "
+    "use \"mcq\" here; provide options such as ['Rest makes it better', "
+    "'Activity or movement makes it worse', 'Heat or warmth helps', "
+    "'Cold or ice helps', 'Painkillers or medication help', "
+    "'Nothing seems to make a difference']. Adapt the options to the symptom.\n"
+    "    • Allergy questions (what are you allergic to?) — ALWAYS use \"mcq\"; "
+    "provide options such as ['No known allergies', 'Penicillin or antibiotics', "
+    "'Aspirin or NSAIDs', 'Sulfa drugs', 'Food allergies (nuts, shellfish, etc.)', "
+    "'Latex or other materials']. The patient can also type their own.\n"
+    "    • Medication questions (are you taking any medication?) — use \"mcq\" with "
+    "options like ['No medications', 'Painkillers (e.g. paracetamol, ibuprofen)', "
+    "'Blood pressure medication', 'Antibiotics', 'Vitamins or supplements', "
+    "'Other prescription medication']. The patient can also type freely.\n"
+    "    • Any question where the most natural answers are from a bounded set\n"
     "  \"scale\"   — intensity/severity questions expecting a numeric 1–10 response "
     "(e.g. 'How severe is the pain on a scale of 1–10?')\n"
-    "  \"text\"    — open-ended question expecting a free-form answer\n"
+    "  \"text\"    — open-ended question expecting a free-form answer (e.g. onset "
+    "description, radiation description, associated symptoms, time course)\n"
     "  \"number\"  — expects a specific count or numeric value (e.g. 'How many days?')\n"
     "For \"mcq\" populate \"options\"; for all other types set \"options\" to [].\n"
     "When status is \"complete\", set questionType to \"text\" and options to [].\n"
@@ -115,10 +131,16 @@ INTERVIEW_FEWSHOT = [
         "role": "assistant",
         "content": json.dumps({
             "status"              : "continue",
-            "message"             : "Has it been constant since yesterday, or does it come and go? And does anything make it better or worse?",
+            "message"             : "Does anything make the headache better or worse?",
             "correctedPatientText": "No, it stays on the right side.",
-            "questionType"        : "text",
-            "options"             : [],
+            "questionType"        : "mcq",
+            "options"             : [
+                "Rest or lying down helps",
+                "Bright light or screens make it worse",
+                "Noise or movement makes it worse",
+                "Painkillers or medication help",
+                "Nothing seems to make a difference",
+            ],
         }),
     },
     # Turn 4 — patient answers time course (T) and exacerbating/relieving (E)
