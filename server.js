@@ -9,6 +9,7 @@ require("dotenv").config();
 const express       = require("express");
 const cors          = require("cors");
 const connectDB     = require("./config/db");
+const authRoutes    = require("./routes/authRoutes");
 const patientRoutes = require("./routes/patientRoutes");
 const sessionRoutes = require("./routes/sessionRoutes");
 const reportRoutes  = require("./routes/reportRoutes");
@@ -21,6 +22,7 @@ app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
+app.use("/api/auth",     authRoutes);
 app.use("/api/patients", patientRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/reports",  reportRoutes);

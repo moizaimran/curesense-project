@@ -12,6 +12,7 @@ const PatientSchema = new mongoose.Schema(
       phone: { type: String, default: "" },
       email: { type: String, required: true },
     },
+    user_id:             { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     allergies:           { type: [String], default: [] },
     current_medications: { type: [String], default: [] },
   },

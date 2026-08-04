@@ -8,11 +8,12 @@
 //   · calls Flask /interview/turn, saves the exchange to the session
 //   · on status:"complete" calls Flask /pipeline/finalize, saves the report
 // =============================================================================
-const axios        = require("axios");
-const cloudinary   = require("../config/cloudinary");
-const Session      = require("../models/Session");
-const Report       = require("../models/Report");
-const asyncHandler = require("../utils/asyncHandler");
+const axios              = require("axios");
+const cloudinary         = require("../config/cloudinary");
+const Session            = require("../models/Session");
+const Report             = require("../models/Report");
+const asyncHandler       = require("../utils/asyncHandler");
+const { canAccessPatient } = require("../middleware/auth");
 
 // One automatic retry on network-level failures (Ngrok hiccups).
 // Does NOT retry HTTP errors from Flask — those are logic errors, not transient.
@@ -29,9 +30,10 @@ async function callAI(url, payload, timeout) {
 const ABANDONED_AFTER_HOURS = 48;
 
 // ── POST /api/sessions ────────────────────────────────────────────────────────
+// patient_id is taken from the JWT — a patient can only create sessions for themselves
 const createSession = asyncHandler(async (req, res) => {
-  const { patient_id } = req.body;
-  if (!patient_id) return res.status(400).json({ error: "patient_id is required" });
+  const patient_id = req.user.patient_id;
+  if (!patient_id) return res.status(400).json({ error: "No patient profile linked to this account" });
   const session = await Session.create({ patient_id });
   res.status(201).json(session);
 });
@@ -41,6 +43,11 @@ const processTurn = async (req, res) => {
   try {
     const session = await Session.findById(req.params.id);
     if (!session) return res.status(404).json({ error: "Session not found" });
+
+    // Ensure the patient can only interact with their own sessions
+    if (session.patient_id.toString() !== req.user.patient_id?.toString()) {
+      return res.status(403).json({ error: "Access denied" });
+    }
 
     // ── Guard: session already ended ─────────────────────────────────────────
     if (["completed", "failed"].includes(session.status)) {
@@ -159,11 +166,17 @@ const processTurn = async (req, res) => {
 const getSession = asyncHandler(async (req, res) => {
   const session = await Session.findById(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
+  if (!canAccessPatient(req.user, session.patient_id)) {
+    return res.status(403).json({ error: "Access denied" });
+  }
   res.json(session);
 });
 
 // ── GET /api/sessions/patient/:patientId ──────────────────────────────────────
 const getSessionsForPatient = asyncHandler(async (req, res) => {
+  if (!canAccessPatient(req.user, req.params.patientId)) {
+    return res.status(403).json({ error: "Access denied" });
+  }
   const sessions = await Session.find({ patient_id: req.params.patientId });
   res.json(sessions);
 });
