@@ -74,7 +74,31 @@ MEDICINE_DISEASE_MAP = {
 }
 
 
-# ── Internal helper ───────────────────────────────────────────────────────────
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _find_col(columns, *keywords, default_idx=0):
+    """Return the first column name containing any keyword substring; fall back to columns[default_idx]."""
+    for kw in keywords:
+        match = next((c for c in columns if kw in c), None)
+        if match:
+            return match
+    return columns[default_idx]
+
+
+def _join_symptom_cols(df, disease_col):
+    """
+    For datasets where symptoms are spread across multiple 'symptom*' columns,
+    joins them into a single space-separated symptom_text string per row.
+    """
+    sym_cols = [c for c in df.columns if 'symptom' in c]
+    sym_text = df[sym_cols].fillna('').astype(str).apply(
+        lambda col: col.str.strip().str.lower().str.replace('_', ' ')
+    ).apply(lambda row: ' '.join(v for v in row if v and v != 'nan'), axis=1)
+    return pd.DataFrame({
+        'diseases'    : df[disease_col].str.strip().str.lower(),
+        'symptom_text': sym_text,
+    })
+
 
 def _join_onehot(raw: pd.DataFrame, disease_col: str) -> pd.DataFrame:
     """Convert one-hot symptom columns into a symptom_text string per row."""
@@ -110,8 +134,8 @@ def load_datasets() -> None:
             p = f'/kaggle/input/datasets/abhishekgodara/symptoms-to-diseases/{fname}'
             r = pd.read_csv(p)
             r.columns = [c.strip().lower() for c in r.columns]
-            dc = next((c for c in r.columns if 'disease' in c), r.columns[0])
-            sc = next((c for c in r.columns if 'symptom' in c), r.columns[1])
+            dc = _find_col(r.columns, 'disease')
+            sc = _find_col(r.columns, 'symptom', default_idx=1)
             frames.append(r[[dc, sc]].rename(columns={dc: 'diseases', sc: 'symptom_text'})
                           .astype(str).apply(lambda x: x.str.strip().str.lower()))
         print("✅ DS1 loaded")
@@ -122,12 +146,8 @@ def load_datasets() -> None:
     try:
         r2 = pd.read_csv('/kaggle/input/datasets/itachi9604/disease-symptom-description-dataset/dataset.csv')
         r2.columns = [c.strip().lower() for c in r2.columns]
-        dc = next((c for c in r2.columns if 'disease' in c), r2.columns[0])
-        sc = [c for c in r2.columns if 'symptom' in c]
-        sym_text = r2[sc].fillna('').astype(str).apply(
-            lambda col: col.str.strip().str.lower().str.replace('_', ' ')
-        ).apply(lambda row: ' '.join(v for v in row if v and v != 'nan'), axis=1)
-        frames.append(pd.DataFrame({'diseases': r2[dc].str.strip().str.lower(), 'symptom_text': sym_text}))
+        dc = _find_col(r2.columns, 'disease')
+        frames.append(_join_symptom_cols(r2, dc))
         print("✅ DS2 loaded")
     except Exception as e:
         print(f"⬜ DS2 not available ({type(e).__name__})")
@@ -157,8 +177,8 @@ def load_datasets() -> None:
     try:
         r5 = pd.read_csv('/kaggle/input/datasets/manncodes/drug-prescription-to-disease-dataset/final.csv')
         r5.columns = [c.strip().lower() for c in r5.columns]
-        dc = next((c for c in r5.columns if 'disease' in c or 'condition' in c), r5.columns[0])
-        sc = next((c for c in r5.columns if any(k in c for k in ('drug', 'medicine', 'symptom', 'description', 'text'))), r5.columns[1])
+        dc = _find_col(r5.columns, 'disease', 'condition')
+        sc = _find_col(r5.columns, 'drug', 'medicine', 'symptom', 'description', 'text', default_idx=1)
         frames.append(r5[[dc, sc]].rename(columns={dc: 'diseases', sc: 'symptom_text'})
                       .astype(str).apply(lambda x: x.str.strip().str.lower()))
         print("✅ DS5 loaded")
@@ -169,7 +189,7 @@ def load_datasets() -> None:
     try:
         r6 = pd.read_csv('/kaggle/input/datasets/uom190346a/disease-symptoms-and-patient-profile-dataset/Disease_symptom_and_patient_profile_dataset.csv')
         r6.columns = [c.strip().lower() for c in r6.columns]
-        dc = next((c for c in r6.columns if 'disease' in c), r6.columns[0])
+        dc = _find_col(r6.columns, 'disease')
         sym_cols = [c for c in r6.columns if c != dc]
         parts = []
         for col in sym_cols:
@@ -185,12 +205,8 @@ def load_datasets() -> None:
     try:
         r7 = pd.read_csv('/kaggle/input/datasets/choongqianzheng/disease-and-symptoms-dataset/DiseaseAndSymptoms.csv')
         r7.columns = [c.strip().lower() for c in r7.columns]
-        dc = next((c for c in r7.columns if 'disease' in c), r7.columns[0])
-        sc = [c for c in r7.columns if 'symptom' in c]
-        sym_text = r7[sc].fillna('').astype(str).apply(
-            lambda col: col.str.strip().str.lower().str.replace('_', ' ')
-        ).apply(lambda row: ' '.join(v for v in row if v and v != 'nan'), axis=1)
-        frames.append(pd.DataFrame({'diseases': r7[dc].str.strip().str.lower(), 'symptom_text': sym_text}))
+        dc = _find_col(r7.columns, 'disease')
+        frames.append(_join_symptom_cols(r7, dc))
         print("✅ DS7 loaded")
     except Exception as e:
         print(f"⬜ DS7 not available ({type(e).__name__})")
@@ -206,7 +222,7 @@ def load_datasets() -> None:
                 continue
         if r8 is not None:
             r8.columns = [c.strip().lower() for c in r8.columns]
-            prog_col = next((c for c in r8.columns if 'prognosis' in c or 'disease' in c), r8.columns[-1])
+            prog_col = _find_col(r8.columns, 'prognosis', 'disease', default_idx=-1)
             df8 = _join_onehot(r8, prog_col)
             df8.columns = ['diseases', 'symptom_text']
             frames.append(df8)
@@ -218,7 +234,7 @@ def load_datasets() -> None:
     try:
         r9 = pd.read_csv('/kaggle/input/datasets/shobhit043/diseases-and-their-symptoms/FInal_Train_Data.csv')
         r9.columns = [c.strip().lower() for c in r9.columns]
-        dc = next((c for c in r9.columns if 'disease' in c or 'label' in c), r9.columns[0])
+        dc = _find_col(r9.columns, 'disease', 'label')
         df9 = _join_onehot(r9, dc)
         df9.columns = ['diseases', 'symptom_text']
         frames.append(df9)
@@ -313,9 +329,9 @@ def rank_diseases(verified_entities: list[dict], clinical_summary: str, top_k: i
         overlap_s  = _symptom_overlap(symptom_kws, full_text)
         blended    = 0.6 * tfidf_s + 0.4 * overlap_s
         candidates.append({
-            "disease"     : _df.iloc[idx]["diseases"],
-            "symptom_ref" : full_text[:120],
-            "tfidf_score" : tfidf_s,
+            "disease"      : _df.iloc[idx]["diseases"],
+            "symptom_ref"  : full_text[:120],
+            "tfidf_score"  : tfidf_s,
             "overlap_score": overlap_s,
             "blended_score": blended,
         })

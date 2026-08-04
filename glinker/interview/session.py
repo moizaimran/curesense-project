@@ -2,8 +2,10 @@
 # glinker/interview/session.py — per-turn LLM call and PatientInterview session
 # ==============================================================================
 from glinker import config
-from glinker.utils import parse_json_response
+from glinker.utils import call_llm
 from glinker.interview.prompts import INTERVIEW_PROMPT, INTERVIEW_SCHEMA, INTERVIEW_FEWSHOT
+
+LLM_CONFIG = config.LLM_CONFIG
 
 
 def run_interview_turn(history_messages: list[dict], patient_message: str) -> dict:
@@ -13,27 +15,12 @@ def run_interview_turn(history_messages: list[dict], patient_message: str) -> di
     Does NOT mutate history_messages — the caller decides what to store.
     """
     messages = history_messages + [{"role": "user", "content": patient_message}]
-
-    response = config.openai_client.chat.completions.create(
-        model=LLM_CONFIG["model"],
-        max_completion_tokens=LLM_CONFIG["interview_turn_max_tokens"],
-        reasoning_effort=LLM_CONFIG["reasoning_effort"],
-        messages=messages,
-        response_format={"type": "json_schema", "json_schema": INTERVIEW_SCHEMA},
-    )
-    raw           = response.choices[0].message.content
-    finish_reason = response.choices[0].finish_reason
-
     fallback = {
         "status"              : "continue",
-        "message"             : raw.strip() if raw else "Sorry! I didn't get a response from the LLM",
+        "message"             : "Sorry, I had trouble processing that. Could you rephrase?",
         "correctedPatientText": patient_message,
     }
-    return parse_json_response(raw, finish_reason, fallback, "run_interview_turn")
-
-
-# Import LLM_CONFIG after defining the function so the import is at module level
-LLM_CONFIG = config.LLM_CONFIG
+    return call_llm(messages, INTERVIEW_SCHEMA, "interview_turn_max_tokens", fallback, "run_interview_turn")
 
 
 class PatientInterview:

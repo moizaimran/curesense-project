@@ -60,6 +60,7 @@ INTERVIEW_SCHEMA = {
 }
 
 INTERVIEW_FEWSHOT = [
+    # Turn 1 — patient volunteers onset; assistant asks about site
     {"role": "user", "content": "I ve had a bad hedache since yestarday."},
     {
         "role": "assistant",
@@ -69,13 +70,36 @@ INTERVIEW_FEWSHOT = [
             "correctedPatientText": "I've had a bad headache since yesterday.",
         }),
     },
+    # Turn 2 — patient covers site, character, severity, associated, meds, allergies
+    #           still missing: radiation (R), time course (T), exacerbating/relieving (E)
     {"role": "user", "content": "mosly on rite side, its sharp pain, 7 out of 10. nothing else, no meds, no allergies"},
+    {
+        "role": "assistant",
+        "content": json.dumps({
+            "status"              : "continue",
+            "message"             : "Got it. Does the pain spread anywhere — like to your neck, eye, or jaw?",
+            "correctedPatientText": "Mostly on the right side, it's a sharp pain, 7 out of 10. Nothing else, no meds, no allergies.",
+        }),
+    },
+    # Turn 3 — patient answers radiation (R); still missing T and E
+    {"role": "user", "content": "No it stays on the rite side"},
+    {
+        "role": "assistant",
+        "content": json.dumps({
+            "status"              : "continue",
+            "message"             : "Has it been there constantly since yesterday, and does anything make it better or worse?",
+            "correctedPatientText": "No, it stays on the right side.",
+        }),
+    },
+    # Turn 4 — patient answers time course (T) and exacerbating/relieving (E)
+    #           all 8 SOCRATES + meds + allergies now covered → complete
+    {"role": "user", "content": "yes its constant, bright light makes it much worse, lying down in a dark room helps"},
     {
         "role": "assistant",
         "content": json.dumps({
             "status"              : "complete",
             "message"             : "Thanks, that's everything I need for now. The clinician will review this shortly.",
-            "correctedPatientText": "Mostly on the right side, it's a sharp pain, 7 out of 10. Nothing else, no meds, no allergies.",
+            "correctedPatientText": "Yes it's constant, bright light makes it much worse, lying down in a dark room helps.",
         }),
     },
 ]

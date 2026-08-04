@@ -170,10 +170,11 @@ COMBINED_REPORT_PROMPT = (
     "indications, contraindications, interactions, or dosage notes from openFDA. "
     "Each flag must cite its source. Empty array if no medications or no drug data.\n"
     "\n"
-    "A7 — RETRIEVAL STATUS. Set to:\n"
-    "  'grounded'            — retrieved material directly informed the recommendation\n"
-    "  'partial'             — retrieved material is loosely related\n"
-    "  'no_relevant_content' — nothing relevant retrieved; routing from symptoms only\n"
+    "A7 — RETRIEVAL STATUS is pre-computed by the pipeline and provided in the input "
+    "as \"retrievalStatus\". Do NOT output this field — use it only to calibrate your "
+    "language: if 'grounded' cite retrieved material explicitly; if 'partial' note limited "
+    "coverage; if 'no_relevant_content' state clearly that no reference material was "
+    "retrieved and the recommendation is based on symptoms alone.\n"
     "\n"
     "A8 — CONFIDENCE NOTE. State which diagnostic candidates are plausible given the "
     "verified entities, which are implausible and why, and the overall confidence basis.\n"
@@ -255,17 +256,13 @@ COMBINED_REPORT_SCHEMA = {
                             "additionalProperties": False,
                         },
                     },
-                    "retrievalStatus": {
-                        "type": "string",
-                        "enum": ["grounded", "partial", "no_relevant_content"],
-                    },
                     "confidenceNote": {"type": "string"},
                 },
                 "required": [
                     "interviewClinicalSummary", "retrievalAndMedicationSummary",
                     "recommendedSpecialty", "specialtyReasoning",
                     "guidelineConsiderations", "medicationFlags",
-                    "retrievalStatus", "confidenceNote",
+                    "confidenceNote",
                 ],
                 "additionalProperties": False,
             },

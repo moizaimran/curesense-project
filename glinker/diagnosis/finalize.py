@@ -6,7 +6,7 @@
 # ==============================================================================
 import json
 from glinker import config
-from glinker.utils import parse_json_response
+from glinker.utils import call_llm
 from glinker.diagnosis.prompts import FINALIZE_PROMPT, FINALIZE_SCHEMA, FINALIZE_FEWSHOT
 
 
@@ -54,19 +54,9 @@ def finalize_report(transcript_text: str, gliner_entities: list[dict]) -> dict:
     messages.extend(FINALIZE_FEWSHOT)
     messages.append({"role": "user", "content": payload})
 
-    response = config.openai_client.chat.completions.create(
-        model=config.LLM_CONFIG["model"],
-        max_completion_tokens=config.LLM_CONFIG["finalize_max_tokens"],
-        reasoning_effort=config.LLM_CONFIG["reasoning_effort"],
-        messages=messages,
-        response_format={"type": "json_schema", "json_schema": FINALIZE_SCHEMA},
-    )
-    raw           = response.choices[0].message.content
-    finish_reason = response.choices[0].finish_reason
-
     fallback = {
         "entities"       : [{"category": e["category"], "keyword": e["text"], "relates_to": ""} for e in gliner_entities],
         "ragQuery"       : "",
         "diagnosticQuery": "",
     }
-    return parse_json_response(raw, finish_reason, fallback, "finalize_report")
+    return call_llm(messages, FINALIZE_SCHEMA, "finalize_max_tokens", fallback, "finalize_report")

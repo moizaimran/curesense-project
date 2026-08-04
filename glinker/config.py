@@ -39,8 +39,7 @@ LLM_CONFIG = {
     "reasoning_effort"         : "low",
     "interview_turn_max_tokens": 500,
     "finalize_max_tokens"      : 1200,
-    "diagnose_max_tokens"      : 1500,
-    "patient_summary_max_tokens": 800,
+    "diagnose_max_tokens"      : 2000,
     "interview_max_turns"      : 12,
 }
 

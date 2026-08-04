@@ -57,6 +57,13 @@ def _transcribe_audio(audio_url: str) -> str:
         os.unlink(tmp_path)
 
 
+def _retrieval_status(chunks: list[dict]) -> str:
+    """Compute retrieval status from actual chunk scores — never let the LLM guess this."""
+    if not chunks:
+        return "no_relevant_content"
+    return "grounded" if max(c["score"] for c in chunks) >= 0.65 else "partial"
+
+
 def _build_full_history(live_history: list[dict]) -> list[dict]:
     """
     Reassemble the full message list the LLM expects on every call:
@@ -144,6 +151,8 @@ def pipeline_finalize():
         except Exception as e:
             print(f"[RAG] retrieve_context failed: {e} — continuing without retrieval.")
 
+    retrieval_status = _retrieval_status(retrieved_chunks)
+
     # ── 4. Disease ranking — uses verified entities + LLM-crafted diagnosticQuery
     ranked_diseases = []
     try:
@@ -167,15 +176,14 @@ def pipeline_finalize():
     # ── 6. Combined report — one LLM call for doctor + patient + diagnoses ────
     combined = generate_combined_report(
         transcript_text, report["entities"], retrieved_chunks, medication_info,
-        ranked_diseases,
+        ranked_diseases, retrieval_status,
     )
 
     doctor_report         = combined.get("doctorReport", {})
     patient_summary       = combined.get("patientSummary", {})
     interpreted_diagnoses = combined.get("interpretedDiagnoses", [])
 
-    # Promote patientComplaintSummary to doctor report (no extra LLM call)
-    doctor_report["patientComplaintSummary"] = patient_summary.get("patientComplaintSummary", "")
+    doctor_report["retrievalStatus"] = retrieval_status
 
     return jsonify({
         "verifiedEntities"    : report["entities"],

@@ -6,8 +6,7 @@
 # Replaces the previous separate doctor_report.py + patient_summary.py calls.
 # ==============================================================================
 import json
-from glinker import config
-from glinker.utils import parse_json_response
+from glinker.utils import call_llm
 from glinker.diagnosis.prompts import COMBINED_REPORT_PROMPT, COMBINED_REPORT_SCHEMA
 
 
@@ -55,6 +54,7 @@ def generate_combined_report(
     retrieved_chunks: list[dict],
     medication_info: dict,
     ranked_diseases: list[dict],
+    retrieval_status: str = "no_relevant_content",
 ) -> dict:
     """
     Single LLM call producing:
@@ -68,6 +68,7 @@ def generate_combined_report(
     payload = json.dumps({
         "transcript"          : transcript_text,
         "verifiedEntities"    : verified_entities,
+        "retrievalStatus"     : retrieval_status,
         "retrievedChunks"     : _fmt_chunks(retrieved_chunks),
         "medicationInfo"      : _fmt_medications(medication_info),
         "diagnosticCandidates": _fmt_ranked_diseases(ranked_diseases),
@@ -81,7 +82,6 @@ def generate_combined_report(
             "specialtyReasoning"           : "Defaulted due to generation failure.",
             "guidelineConsiderations"      : [],
             "medicationFlags"              : [],
-            "retrievalStatus"              : "no_relevant_content",
             "confidenceNote"               : "generate_combined_report call failed.",
         },
         "patientSummary": {
@@ -93,20 +93,12 @@ def generate_combined_report(
         "interpretedDiagnoses": [],
     }
 
+    messages = [
+        {"role": "system", "content": COMBINED_REPORT_PROMPT},
+        {"role": "user",   "content": payload},
+    ]
     try:
-        response = config.openai_client.chat.completions.create(
-            model=config.LLM_CONFIG["model"],
-            max_completion_tokens=config.LLM_CONFIG["diagnose_max_tokens"],
-            reasoning_effort=config.LLM_CONFIG["reasoning_effort"],
-            messages=[
-                {"role": "system", "content": COMBINED_REPORT_PROMPT},
-                {"role": "user",   "content": payload},
-            ],
-            response_format={"type": "json_schema", "json_schema": COMBINED_REPORT_SCHEMA},
-        )
-        raw           = response.choices[0].message.content
-        finish_reason = response.choices[0].finish_reason
-        return parse_json_response(raw, finish_reason, fallback, "generate_combined_report")
+        return call_llm(messages, COMBINED_REPORT_SCHEMA, "diagnose_max_tokens", fallback, "generate_combined_report")
     except Exception as e:
         print(f"[generate_combined_report] ERROR: {e}")
         fallback["doctorReport"]["confidenceNote"] = f"Error: {e}"
