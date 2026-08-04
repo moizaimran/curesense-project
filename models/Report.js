@@ -89,6 +89,7 @@ const ReportSchema = new mongoose.Schema(
     generated_at:     { type: Date,   default: Date.now },
     specialty:        { type: String, default: "" },
     rag_query:        { type: String, default: "" },
+    diagnostic_query: { type: String, default: "" },
     entities:         { type: [EntitySchema],         default: [] },
     disease_ranking:  { type: [DiseaseRankSchema],    default: [] },
     retrieved_chunks: { type: [RetrievedChunkSchema], default: [] },

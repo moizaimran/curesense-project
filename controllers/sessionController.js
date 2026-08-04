@@ -124,6 +124,7 @@ const processTurn = async (req, res) => {
         generated_at:     new Date(),
         specialty:        result.doctorReport?.recommendedSpecialty || "",
         rag_query:        result.ragQuery         || "",
+        diagnostic_query: result.diagnosticQuery  || "",
         entities:         result.verifiedEntities || [],
         disease_ranking:  result.rankedDiseases   || [],
         retrieved_chunks: result.retrievedSources || [],
