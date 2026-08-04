@@ -257,9 +257,29 @@ def load_datasets() -> None:
             print(f"⬜ BioBERT unavailable ({e}) — TF-IDF only")
 
 
+def _symptom_overlap(symptom_kws: list[str], symptom_text: str) -> float:
+    """
+    Fraction of the patient's verified symptom keywords found (substring match)
+    in a disease's symptom_text from the dataset.
+    Returns 0.0 when symptom_kws is empty.
+    """
+    if not symptom_kws:
+        return 0.0
+    text = symptom_text.lower()
+    matches = sum(1 for kw in symptom_kws if kw in text)
+    return matches / len(symptom_kws)
+
+
 def rank_diseases(verified_entities: list[dict], clinical_summary: str, top_k: int = 5) -> list[dict]:
     """
-    Return top-k disease candidates ranked by symptom similarity.
+    Return top-k disease candidates ranked by a blended score:
+      60% TF-IDF cosine similarity  (broad vocabulary match)
+      40% symptom keyword overlap   (direct patient-symptom ↔ dataset-symptom match)
+
+    The overlap term re-ranks within the TF-IDF top-25 window, consistently
+    favouring diseases whose dataset entries contain the patient's actual symptoms
+    over diseases that score high on TF-IDF due to corpus frequency alone.
+
     Returns [] when DISEASE_RANKER_READY is False.
     """
     if not DISEASE_RANKER_READY:
@@ -284,21 +304,34 @@ def rank_diseases(verified_entities: list[dict], clinical_summary: str, top_k: i
     sims      = cosine_similarity(query_vec, _tfidf_matrix)[0]
     top_idx   = sims.argsort()[-25:][::-1]
 
-    candidates = [
-        {"disease": _df.iloc[idx]["diseases"], "symptom_ref": _df.iloc[idx]["symptom_text"][:120], "tfidf_score": float(sims[idx])}
-        for idx in top_idx if sims[idx] > 0
-    ]
+    candidates = []
+    for idx in top_idx:
+        if sims[idx] <= 0:
+            continue
+        full_text  = _df.iloc[idx]["symptom_text"]
+        tfidf_s    = float(sims[idx])
+        overlap_s  = _symptom_overlap(symptom_kws, full_text)
+        blended    = 0.6 * tfidf_s + 0.4 * overlap_s
+        candidates.append({
+            "disease"     : _df.iloc[idx]["diseases"],
+            "symptom_ref" : full_text[:120],
+            "tfidf_score" : tfidf_s,
+            "overlap_score": overlap_s,
+            "blended_score": blended,
+        })
 
+    # Deduplicate — keep the highest blended score per disease name
     seen = {}
     for c in candidates:
         d = c["disease"]
-        if d not in seen or c["tfidf_score"] > seen[d]["tfidf_score"]:
+        if d not in seen or c["blended_score"] > seen[d]["blended_score"]:
             seen[d] = c
-    top = sorted(seen.values(), key=lambda x: x["tfidf_score"], reverse=True)[:top_k]
+    top = sorted(seen.values(), key=lambda x: x["blended_score"], reverse=True)[:top_k]
 
     if not top:
         return []
 
+    # Optional BioBERT rerank (only active when USE_BIOBERT = True)
     if _biobert is not None:
         import torch
         _device = next(_biobert.parameters()).device
@@ -311,11 +344,11 @@ def rank_diseases(verified_entities: list[dict], clinical_summary: str, top_k: i
             d_enc = {k: v.to(_device) for k, v in d_enc.items()}
             with torch.no_grad():
                 d_feat = _biobert(**d_enc).last_hidden_state[:, 0, :]
-            c["final_score"] = c["tfidf_score"] * 0.4 + torch.nn.functional.cosine_similarity(q_feat, d_feat).item() * 0.6
-    else:
-        for c in top:
-            c["final_score"] = c["tfidf_score"]
+            c["blended_score"] = c["blended_score"] * 0.4 + torch.nn.functional.cosine_similarity(q_feat, d_feat).item() * 0.6
+        top = sorted(top, key=lambda x: x["blended_score"], reverse=True)
 
-    top   = sorted(top, key=lambda x: x["final_score"], reverse=True)
-    max_s = top[0]["final_score"]
-    return [{"disease": c["disease"], "confidence": round((c["final_score"] / max_s) * 100, 1)} for c in top]
+    max_s = top[0]["blended_score"]
+    return [
+        {"disease": c["disease"], "confidence": round((c["blended_score"] / max_s) * 100, 1)}
+        for c in top
+    ]
