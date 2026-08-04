@@ -20,7 +20,8 @@ const signToken = id =>
 
 // ── POST /api/auth/register ───────────────────────────────────────────────────
 const register = asyncHandler(async (req, res) => {
-  const { name, email, password, dob, gender, phone } = req.body;
+  const { name, email, password, dob, gender, phone,
+          current_medications, allergies, medical_conditions } = req.body;
 
   if (!name || !email || !password || !dob || !gender) {
     return res.status(400).json({ error: "name, email, password, dob and gender are required" });
@@ -34,7 +35,10 @@ const register = asyncHandler(async (req, res) => {
     name,
     dob,
     gender,
-    contact: { phone: phone || "", email },
+    contact:             { phone: phone || "", email },
+    current_medications: Array.isArray(current_medications) ? current_medications : [],
+    allergies:           Array.isArray(allergies)           ? allergies           : [],
+    medical_conditions:  Array.isArray(medical_conditions)  ? medical_conditions  : [],
   });
 
   let user;

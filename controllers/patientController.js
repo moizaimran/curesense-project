@@ -29,10 +29,11 @@ const updatePatientProfile = asyncHandler(async (req, res) => {
     return res.status(403).json({ error: "Access denied" });
   }
 
-  const { allergies, current_medications } = req.body;
+  const { allergies, current_medications, medical_conditions } = req.body;
   const updates = { updated_at: new Date() };
   if (allergies)           updates.allergies           = allergies;
   if (current_medications) updates.current_medications = current_medications;
+  if (medical_conditions)  updates.medical_conditions  = medical_conditions;
 
   const updated = await Patient.findByIdAndUpdate(req.params.id, { $set: updates }, { new: true });
   res.json(updated);
