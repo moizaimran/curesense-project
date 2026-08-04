@@ -8,6 +8,18 @@ from glinker.diagnosis.prompts import PATIENT_SUMMARY_PROMPT, PATIENT_SUMMARY_SC
 from glinker.diagnosis.doctor_report import _format_retrieved_chunks, _format_medication_info
 
 
+def _format_ranked_diseases_patient(ranked_diseases: list[dict]) -> str:
+    if not ranked_diseases:
+        return "No diagnostic candidates available."
+    lines = []
+    for i, d in enumerate(ranked_diseases[:5], 1):
+        lines.append(f"  {i}. {d.get('disease', 'Unknown')} (confidence {d.get('confidence', 0):.1f}/100)")
+    return (
+        "Top conditions our system found that match your symptoms "
+        "(these are not diagnoses — your doctor will decide):\n" + "\n".join(lines)
+    )
+
+
 def generate_patient_summary(
     transcript_text: str,
     verified_entities: list[dict],
@@ -19,14 +31,15 @@ def generate_patient_summary(
     Plain-language summary for the patient. Uses the same retrieved content
     as the doctor report but reframes everything in everyday language.
 
-    ranked_diseases : top-5 list from the disease ranking module — appended
-                      directly to the result without going through the LLM.
+    ranked_diseases are passed to the LLM so it can interpret them in narrative,
+    and are also appended directly as topDiagnoses (top 5) without going through the LLM.
     """
     payload = json.dumps({
-        "transcript"      : transcript_text,
-        "verifiedEntities": verified_entities,
-        "retrievedChunks" : _format_retrieved_chunks(retrieved_chunks),
-        "medicationInfo"  : _format_medication_info(medication_info),
+        "transcript"          : transcript_text,
+        "verifiedEntities"    : verified_entities,
+        "retrievedChunks"     : _format_retrieved_chunks(retrieved_chunks),
+        "medicationInfo"      : _format_medication_info(medication_info),
+        "diagnosticCandidates": _format_ranked_diseases_patient(ranked_diseases),
     })
 
     fallback = {
@@ -54,7 +67,7 @@ def generate_patient_summary(
         print(f"[generate_patient_summary] ERROR: {e}")
         result = fallback
 
-    # Top 5 diagnoses from the disease ranking module — added here, not via LLM
+    # Top 5 diagnoses added directly from the ranking module — not via LLM
     result["topDiagnoses"] = ranked_diseases[:5]
 
     return result

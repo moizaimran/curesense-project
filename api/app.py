@@ -13,7 +13,7 @@
 #
 # POST /pipeline/finalize
 #   Body:  { full_transcript_text }
-#   Returns: { verifiedEntities, rankedDiseases, ragQuery,
+#   Returns: { verifiedEntities, rankedDiseases, ragQuery, diagnosticQuery,
 #              retrievedSources, medicationInfo, doctorReport, patientSummary }
 #
 # Launch
@@ -31,8 +31,9 @@ from flask import Flask, request, jsonify
 from glinker import config
 from glinker.interview.session  import run_interview_turn
 from glinker.interview.prompts  import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT
-from glinker.diagnosis.finalize import run_gliner, finalize_report
-from glinker.rag.retrieval      import retrieve_context, get_medication_info
+from glinker.diagnosis.finalize        import run_gliner, finalize_report
+from glinker.rag.retrieval             import retrieve_context, get_medication_info
+from glinker.disease.ranker            import rank_diseases
 from glinker.diagnosis.doctor_report   import generate_doctor_report
 from glinker.diagnosis.patient_summary import generate_patient_summary
 
@@ -129,9 +130,10 @@ def pipeline_finalize():
     # ── 1. GLiNER ─────────────────────────────────────────────────────────────
     gliner_entities = run_gliner(transcript_text)
 
-    # ── 2. Finalize — entity verification + disease ranking + ragQuery ─────────
-    report    = finalize_report(transcript_text, gliner_entities)
-    rag_query = report.get("ragQuery", "")
+    # ── 2. Finalize — entity verification + ragQuery + diagnosticQuery ─────────
+    report           = finalize_report(transcript_text, gliner_entities)
+    rag_query        = report.get("ragQuery", "")
+    diagnostic_query = report.get("diagnosticQuery", "")
 
     # ── 3. RAG retrieval (non-critical — degrades gracefully if index missing) ─
     retrieved_chunks = []
@@ -143,7 +145,15 @@ def pipeline_finalize():
         except Exception as e:
             print(f"[RAG] retrieve_context failed: {e} — continuing without retrieval.")
 
-    # ── 4. openFDA — live lookup per medication (non-critical) ────────────────
+    # ── 4. Disease ranking — uses verified entities + LLM-crafted diagnosticQuery
+    ranked_diseases = []
+    try:
+        ranked_diseases = rank_diseases(report["entities"], diagnostic_query)
+        print(f"[Ranker] {len(ranked_diseases)} candidate(s) returned.")
+    except Exception as e:
+        print(f"[Ranker] rank_diseases failed: {e} — continuing without ranking.")
+
+    # ── 5. openFDA — live lookup per medication (non-critical) ────────────────
     med_names = [
         e["keyword"] for e in report["entities"]
         if e.get("category") == "medication"
@@ -155,25 +165,27 @@ def pipeline_finalize():
         except Exception as e:
             print(f"[openFDA] get_medication_info failed: {e} — continuing without drug data.")
 
-    # ── 5. Doctor report ──────────────────────────────────────────────────────
+    # ── 6. Doctor report ──────────────────────────────────────────────────────
     doctor_report = generate_doctor_report(
-        transcript_text, report["entities"], retrieved_chunks, medication_info
+        transcript_text, report["entities"], retrieved_chunks, medication_info,
+        ranked_diseases,
     )
 
-    # ── 6. Patient summary ────────────────────────────────────────────────────
+    # ── 7. Patient summary ────────────────────────────────────────────────────
     patient_summary = generate_patient_summary(
         transcript_text, report["entities"], retrieved_chunks, medication_info,
-        report.get("rankedDiseases", []),
+        ranked_diseases,
     )
 
-    # Add shared fields to doctor report (no extra LLM call)
+    # Shared fields promoted to doctor report (no extra LLM call)
     doctor_report["topDiagnoses"]            = patient_summary.get("topDiagnoses", [])
     doctor_report["patientComplaintSummary"] = patient_summary.get("patientComplaintSummary", "")
 
     return jsonify({
         "verifiedEntities": report["entities"],
-        "rankedDiseases"  : report.get("rankedDiseases", []),
+        "rankedDiseases"  : ranked_diseases,
         "ragQuery"        : rag_query,
+        "diagnosticQuery" : diagnostic_query,
         "retrievedSources": retrieved_chunks,
         "medicationInfo"  : medication_info,
         "doctorReport"    : doctor_report,

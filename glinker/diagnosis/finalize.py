@@ -2,13 +2,12 @@
 # glinker/diagnosis/finalize.py
 #
 # run_gliner()      — runs GLiNER once on the full transcript
-# finalize_report() — LLM call: verify entities + summary + specialty + ragQuery
+# finalize_report() — LLM call: verify entities + ragQuery + diagnosticQuery
 # ==============================================================================
 import json
 from glinker import config
 from glinker.utils import parse_json_response
 from glinker.diagnosis.prompts import FINALIZE_PROMPT, FINALIZE_SCHEMA, FINALIZE_FEWSHOT
-from glinker.disease.ranker import rank_diseases
 
 
 def run_gliner(text: str) -> list[dict]:
@@ -37,20 +36,15 @@ def run_gliner(text: str) -> list[dict]:
 
 def finalize_report(transcript_text: str, gliner_entities: list[dict]) -> dict:
     """
-    One LLM call: verifies/extends GLiNER entities, writes clinical summary,
-    suggests specialty, and generates a dense ragQuery for retrieval.
-    """
-    # Run disease ranking from raw GLiNER entities (returns [] if ranker not loaded)
-    _entity_query   = " ".join(e["text"] for e in gliner_entities)
-    ranked_diseases = rank_diseases(
-        [{"category": e["category"], "keyword": e["text"], "relates_to": ""} for e in gliner_entities],
-        _entity_query,
-    )
+    One LLM call: verifies GLiNER entities, writes a dense ragQuery for FAISS
+    retrieval, and writes a symptom-only diagnosticQuery for TF-IDF ranking.
 
+    rank_diseases is NOT called here — it runs in app.py after this returns,
+    using the verified entities and diagnosticQuery produced below.
+    """
     payload = json.dumps({
-        "transcript"    : transcript_text,
-        "rankedDiseases": ranked_diseases,
-        "entities"      : [
+        "transcript": transcript_text,
+        "entities"  : [
             {"category": e["category"], "keyword": e["text"], "ner_confidence": e["confidence"]}
             for e in gliner_entities
         ],
@@ -71,8 +65,8 @@ def finalize_report(transcript_text: str, gliner_entities: list[dict]) -> dict:
     finish_reason = response.choices[0].finish_reason
 
     fallback = {
-        "entities"      : [{"category": e["category"], "keyword": e["text"], "relates_to": ""} for e in gliner_entities],
-        "ragQuery"      : "",
-        "rankedDiseases": ranked_diseases,
+        "entities"       : [{"category": e["category"], "keyword": e["text"], "relates_to": ""} for e in gliner_entities],
+        "ragQuery"       : "",
+        "diagnosticQuery": "",
     }
     return parse_json_response(raw, finish_reason, fallback, "finalize_report")

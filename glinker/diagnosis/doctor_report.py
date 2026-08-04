@@ -36,23 +36,35 @@ def _format_medication_info(medication_info: dict[str, dict]) -> str:
     return "\n\n".join(parts)
 
 
+def _format_ranked_diseases(ranked_diseases: list[dict]) -> str:
+    if not ranked_diseases:
+        return "No disease candidates available from the diagnostic module."
+    lines = []
+    for i, d in enumerate(ranked_diseases[:10], 1):
+        lines.append(f"  {i}. {d.get('disease', 'Unknown')} — confidence {d.get('confidence', 0):.1f}/100")
+    return "Top symptom-pattern candidates (TF-IDF, normalized to 100):\n" + "\n".join(lines)
+
+
 def generate_doctor_report(
     transcript_text: str,
     verified_entities: list[dict],
     retrieved_chunks: list[dict],
     medication_info: dict[str, dict],
+    ranked_diseases: list[dict],
 ) -> dict:
     """
-    Doctor-facing report grounded in retrieved textbook/guideline chunks and
-    openFDA medication data. Degrades gracefully when either is empty.
+    Doctor-facing report grounded in retrieved textbook/guideline chunks,
+    openFDA medication data, and TF-IDF disease ranking candidates.
+    Degrades gracefully when any input is empty.
 
     Returns a dict with keys matching DOCTOR_REPORT_SCHEMA.
     """
     payload = json.dumps({
-        "transcript"      : transcript_text,
-        "verifiedEntities": verified_entities,
-        "retrievedChunks" : _format_retrieved_chunks(retrieved_chunks),
-        "medicationInfo"  : _format_medication_info(medication_info),
+        "transcript"       : transcript_text,
+        "verifiedEntities" : verified_entities,
+        "retrievedChunks"  : _format_retrieved_chunks(retrieved_chunks),
+        "medicationInfo"   : _format_medication_info(medication_info),
+        "diagnosticCandidates": _format_ranked_diseases(ranked_diseases),
     })
 
     fallback = {

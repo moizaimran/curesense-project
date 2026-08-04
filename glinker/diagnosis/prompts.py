@@ -1,10 +1,5 @@
 # ==============================================================================
 # glinker/diagnosis/prompts.py
-#
-# Prompts, JSON schemas, and few-shot examples for the post-interview LLM calls:
-#   • finalize       — verify entities, build ragQuery, pass through rankedDiseases
-#   • doctor_report  — doctor-facing grounded report (retrieved chunks + FDA data)
-#   • patient_summary — plain-language patient-facing summary
 # ==============================================================================
 import json
 
@@ -13,49 +8,39 @@ import json
 FINALIZE_PROMPT = (
     "You receive a completed patient intake transcript (already spelling-corrected) and "
     "a list of entities (category + keyword + ner_confidence 0-1) an NLP model extracted "
-    "from it. You do TWO jobs in one pass, and return both as JSON:\n"
+    "from it. You do THREE jobs in one pass and return all as JSON:\n"
     "\n"
     "JOB 1 — VERIFY ENTITIES. Valid categories: symptom, medical condition, body part, "
     "severity, duration, medication, dosage, frequency, allergy, trigger.\n"
-    "USE ner_confidence AS A PRIOR, DON'T RE-DERIVE EVERYTHING FROM SCRATCH: the NER model "
-    "is usually right about WHERE a real span is (high ner_confidence, roughly >=0.6) — "
-    "for those, do a quick pass/fail check against the 4 tests below rather than "
-    "re-analyzing the whole sentence around them. Spend your real effort on low-confidence "
-    "entities (likely wrong span or category) and on catching things ONLY you can catch "
-    "that the NER model structurally can't — negation, denial, and whether something is "
-    "truly a stated fact vs. inferred/asked-about — since the NER model has no idea about "
-    "any of that regardless of its confidence score. A high ner_confidence never overrides "
-    "tests a-d below (e.g. a high-confidence \"neck\" span still gets dropped if the "
-    "patient denied it) — confidence only tells you how much re-checking of the SPAN "
-    "ITSELF is needed, not whether to skip the tests.\n"
-    "For EVERY entity — the ones handed to you AND any you add yourself for something the "
-    "NLP model missed — keep it only if it passes ALL four tests below. If it fails even "
-    "one, drop it entirely; never keep a failing entity under a different category as a "
-    "fallback.\n"
-    "  a. AFFIRMED, NOT DENIED — the patient is asserting this is true about them right "
-    "now. Reject anything they deny, rule out, or describe as absent, in ANY phrasing "
-    "however broken or informal.\n"
-    "  b. CONCRETE, NOT A LABEL OR VAGUE FILLER — the keyword must name an actual specific "
-    "thing the patient said. Never keep a vague hedge word when a concrete value for the "
-    "SAME thing is also present — keep only the concrete one.\n"
-    "  c. STATED, NOT SILENTLY GUESSED — if the patient names a reason/purpose themselves, "
-    "even in plain everyday words, that IS the patient stating their condition — keep it. "
-    "Only drop a condition when the patient gives NO purpose at all.\n"
-    "  d. RIGHT CATEGORY FOR THE MEANING — pick the category that matches what the phrase "
-    "actually IS.\n"
-    "LINK MODIFIERS: every entity also needs \"relates_to\". For standalone items "
-    "(symptom, medical condition, medication, allergy, trigger) set it to \"\". For "
-    "modifier categories (severity, duration, dosage, frequency, body part when naming "
-    "WHERE a symptom is) set it to the exact keyword of the symptom/medication it belongs "
-    "to.\n"
+    "USE ner_confidence AS A PRIOR — for high-confidence spans (>=0.6) do a quick "
+    "pass/fail against the 4 tests below. Spend real effort on low-confidence entities "
+    "and on things only you can catch: negation, denial, stated-fact vs. inferred.\n"
+    "Keep an entity only if it passes ALL four tests. Fail one → drop entirely.\n"
+    "  a. AFFIRMED, NOT DENIED — patient asserts this is true right now. Reject anything "
+    "denied, ruled out, or described as absent in ANY phrasing.\n"
+    "  b. CONCRETE, NOT VAGUE — keyword must name a specific thing. Drop vague hedge words "
+    "when a concrete value for the same thing exists.\n"
+    "  c. STATED, NOT GUESSED — if patient names a reason/purpose, keep it. Drop only when "
+    "patient gives no purpose at all.\n"
+    "  d. RIGHT CATEGORY — pick the category that matches what the phrase actually IS.\n"
+    "LINK MODIFIERS: set relates_to to \"\" for standalone items (symptom, medical "
+    "condition, medication, allergy, trigger). For modifier categories (severity, duration, "
+    "dosage, frequency, body part) set it to the exact keyword of what it modifies.\n"
     "\n"
-    "JOB 2 — RAG QUERY. Write a dense, retrieval-optimized clinical search string for "
-    "this case and put it in \"ragQuery\". NOT prose — compact clinical keyword sequence: "
-    "chief complaint + anatomical site + character + duration + severity + associated "
-    "features + relevant medications.\n"
-    "  Good: \"right-sided throbbing headache photophobia nausea 6/10 two days "
-    "losartan hypertension\"\n"
+    "JOB 2 — RAG QUERY. Write a dense clinical search string for vector retrieval. "
+    "Compact keyword sequence: chief complaint + site + character + duration + severity "
+    "+ associated features + relevant medications. Put in \"ragQuery\".\n"
+    "  Good: \"right-sided throbbing headache photophobia nausea 6/10 two days losartan hypertension\"\n"
     "  Bad:  \"Patient has had a headache on the right side since yesterday.\"\n"
+    "\n"
+    "JOB 3 — DIAGNOSTIC QUERY. Write a symptom-focused keyword string specifically "
+    "designed for a TF-IDF disease ranking model. Include ONLY presenting symptoms, signs, "
+    "body parts, severity descriptors, and duration — NO medications, NO clinical "
+    "abbreviations, NO lab values, NO condition names. Use plain descriptive terms that "
+    "match how symptoms are listed in symptom-disease datasets. Put in \"diagnosticQuery\".\n"
+    "  Good: \"throbbing headache left side behind eye temple nausea blurry vision light "
+    "sensitivity severe constant worsening 24 hours\"\n"
+    "  Bad:  \"migraine ibuprofen 8/10 retro-orbital\"\n"
     "\n"
     "Never call a tool. Return only the JSON object the schema requires — no extra text."
 )
@@ -79,21 +64,10 @@ FINALIZE_SCHEMA = {
                     "additionalProperties": False,
                 },
             },
-            "ragQuery"      : {"type": "string"},
-            "rankedDiseases": {
-                "type": "array",
-                "items": {
-                    "type"      : "object",
-                    "properties": {
-                        "disease"   : {"type": "string"},
-                        "confidence": {"type": "number"},
-                    },
-                    "required"            : ["disease", "confidence"],
-                    "additionalProperties": False,
-                },
-            },
+            "ragQuery"       : {"type": "string"},
+            "diagnosticQuery": {"type": "string"},
         },
-        "required"            : ["entities", "ragQuery", "rankedDiseases"],
+        "required"            : ["entities", "ragQuery", "diagnosticQuery"],
         "additionalProperties": False,
     },
 }
@@ -111,11 +85,6 @@ FINALIZE_FEWSHOT = [
                 "quite bad, but not very very worst. I take Losartan, 50 milligram, one time "
                 "every day for blood pressure. No medicine allergy, I think."
             ),
-            "rankedDiseases": [
-                {"disease": "migraine",               "confidence": 100.0},
-                {"disease": "cluster headache",       "confidence": 68.3},
-                {"disease": "hypertensive headache",  "confidence": 54.1},
-            ],
             "entities": [
                 {"category": "symptom",           "keyword": "headache",          "ner_confidence": 0.93},
                 {"category": "body part",         "keyword": "right side",        "ner_confidence": 0.85},
@@ -143,7 +112,7 @@ FINALIZE_FEWSHOT = [
                 {"category": "duration",          "keyword": "two days",           "relates_to": "headache"},
                 {"category": "symptom",           "keyword": "nausea",             "relates_to": ""},
                 {"category": "trigger",           "keyword": "bright light",       "relates_to": "headache"},
-                {"category": "severity",          "keyword": "six",                "relates_to": "headache"},
+                {"category": "severity",          "keyword": "six out of ten",     "relates_to": "headache"},
                 {"category": "medication",        "keyword": "Losartan",           "relates_to": ""},
                 {"category": "dosage",            "keyword": "50 milligram",       "relates_to": "Losartan"},
                 {"category": "frequency",         "keyword": "one time every day", "relates_to": "Losartan"},
@@ -153,11 +122,10 @@ FINALIZE_FEWSHOT = [
                 "right-sided throbbing headache photophobia nausea 6/10 two days "
                 "losartan 50mg daily hypertension"
             ),
-            "rankedDiseases": [
-                {"disease": "migraine",               "confidence": 100.0},
-                {"disease": "cluster headache",       "confidence": 68.3},
-                {"disease": "hypertensive headache",  "confidence": 54.1},
-            ],
+            "diagnosticQuery": (
+                "throbbing headache right side nausea light sensitivity photophobia "
+                "moderate severe constant two days"
+            ),
         }),
     },
 ]
@@ -167,49 +135,47 @@ FINALIZE_FEWSHOT = [
 
 DOCTOR_REPORT_PROMPT = (
     "You are a clinical decision support tool generating a doctor-facing pre-consultation "
-    "report. Your output is for the CLINICIAN, not the patient — write as if briefing a "
-    "doctor before they see this patient.\n"
+    "report. Your output is for the CLINICIAN — write as if briefing a doctor before they "
+    "see this patient.\n"
     "\n"
     "You receive: (1) the patient transcript, (2) verified clinical entities, "
-    "(3) reference chunks retrieved from medical textbooks and clinical guidelines, "
-    "(4) medication information from openFDA drug labels (may be empty).\n"
+    "(3) reference chunks from medical textbooks and clinical guidelines, "
+    "(4) medication information from openFDA drug labels (may be empty), "
+    "(5) top disease candidates from a TF-IDF diagnostic module with confidence scores "
+    "(scores are normalized — top candidate = 100, others relative to it).\n"
     "\n"
     "You have SIX jobs:\n"
     "\n"
     "JOB 1 — INTERVIEW CLINICAL SUMMARY. In 2-3 sentences, write a concise technical "
-    "summary of the clinical picture from the interview for the clinician. Cover: chief "
-    "complaint, key symptom features (site, character, severity, duration, onset), "
-    "associated symptoms, relevant medications and allergies. This is the doctor's "
-    "quick-read of the case before the detailed findings.\n"
+    "summary of the clinical picture from the interview: chief complaint, key symptom "
+    "features (site, character, severity, duration, onset), associated symptoms, relevant "
+    "medications and allergies. This is the doctor's quick-read of the case.\n"
     "\n"
-    "JOB 2 — RETRIEVAL AND MEDICATION SUMMARY. In 1-2 sentences, briefly state what the "
-    "retrieved reference material covers and what openFDA returned. For example: "
-    "'Retrieved 4 chunks from NICE headache guidelines covering migraine, cluster headache, "
-    "and atypical aura. Ibuprofen openFDA label retrieved — GI risk and medication overuse "
-    "flagged.' If nothing was retrieved or no medications exist, state that clearly.\n"
+    "JOB 2 — RETRIEVAL AND MEDICATION SUMMARY. In 1-2 sentences, state what the retrieved "
+    "reference material covers and what openFDA returned. If nothing retrieved, state that.\n"
     "\n"
-    "JOB 3 — RECOMMENDED SPECIALTY. Recommend the single specialty most appropriate "
-    "for referral, explicitly grounded in the retrieved reference material where available.\n"
+    "JOB 3 — RECOMMENDED SPECIALTY. Recommend the single specialty most appropriate for "
+    "referral, grounded in retrieved material where available. Cross-reference with the "
+    "top disease candidates if relevant.\n"
     "\n"
     "JOB 4 — GUIDELINE CONSIDERATIONS. List 2-5 relevant points the retrieved reference "
-    "material associates with this symptom pattern. Each point must include a citation "
-    "string naming the source. Frame as 'the guideline states...' or 'the reference "
-    "material notes...' — never as your own clinical judgment. Empty array if no "
-    "retrieved material is relevant.\n"
+    "material associates with this symptom pattern. Each point must cite its source. "
+    "Frame as 'the guideline states...' — never as your own clinical judgment. "
+    "Empty array if no retrieved material is relevant.\n"
     "\n"
-    "JOB 5 — MEDICATION FLAGS. For each medication the patient is taking, surface any "
-    "relevant indications, contraindications, interactions, or dosage notes from the "
-    "provided openFDA drug-label data. Each flag must cite its source. Empty array if "
-    "no drug-label data was provided or the patient takes no medications.\n"
+    "JOB 5 — MEDICATION FLAGS. For each patient medication, surface relevant indications, "
+    "contraindications, interactions, or dosage notes from the openFDA data. Each flag "
+    "must cite its source. Empty array if no medications or no drug data.\n"
     "\n"
     "JOB 6 — RETRIEVAL STATUS. Set retrievalStatus to:\n"
-    "  'grounded'             — retrieved material directly informed the recommendation\n"
-    "  'partial'              — retrieved material is loosely related\n"
-    "  'no_relevant_content'  — nothing above relevance threshold; route from symptoms only\n"
-    "When 'no_relevant_content', explain in confidenceNote.\n"
+    "  'grounded'            — retrieved material directly informed the recommendation\n"
+    "  'partial'             — retrieved material is loosely related\n"
+    "  'no_relevant_content' — nothing above threshold; route from symptoms only\n"
+    "Explain in confidenceNote when 'no_relevant_content'.\n"
     "\n"
     "RULES: Every claim from retrieved content MUST include a citation. Never fabricate. "
-    "Never diagnose. Never contradict retrieved guideline text. "
+    "Never diagnose. Use the diagnostic module candidates as a signal, not a verdict — "
+    "they indicate symptom-pattern similarity, not confirmed diagnoses. "
     "Return only the JSON object the schema requires — no extra text."
 )
 
@@ -273,32 +239,29 @@ PATIENT_SUMMARY_PROMPT = (
     "\n"
     "You receive: (1) the corrected patient transcript, (2) verified clinical entities, "
     "(3) reference chunks from medical textbooks and guidelines, "
-    "(4) medication information from drug labels (may be empty).\n"
+    "(4) medication information from drug labels (may be empty), "
+    "(5) top probable conditions from our diagnostic module — these are symptom-pattern "
+    "matches, not confirmed diagnoses. Use them to gently inform the patient of what "
+    "the doctor may consider, without alarming them.\n"
     "\n"
-    "You have THREE jobs:\n"
+    "You have FOUR jobs:\n"
     "\n"
     "JOB 1 — PATIENT COMPLAINT SUMMARY. In 2-3 plain sentences, summarise what the "
-    "patient described using everyday language (not medical jargon). Do NOT include "
-    "speculation or diagnosis.\n"
+    "patient described using everyday language. Do NOT diagnose or speculate.\n"
     "\n"
-    "JOB 2 — REFERRAL SPECIALTY. Based on the transcript and entities provided, state "
-    "the single medical specialty the patient is most likely to be referred to (e.g. "
-    "'Neurology', 'Cardiology', 'General Medicine'). One word or short phrase only.\n"
+    "JOB 2 — REFERRAL SPECIALTY. State the single specialty the patient is most likely "
+    "to be referred to. One word or short phrase only.\n"
     "\n"
-    "JOB 3 — APPOINTMENT GUIDANCE. In 2-4 bullet points, based ONLY on the retrieved "
-    "reference material, explain what typically happens next for this type of complaint — "
-    "what the doctor might ask, what they might check, or what to watch for. Attribute "
-    "to 'general guidance' or a source name. Omit this section (empty array) if no "
-    "relevant material was retrieved.\n"
+    "JOB 3 — APPOINTMENT GUIDANCE. In 2-4 bullet points, based ONLY on retrieved "
+    "reference material, explain what typically happens next — what the doctor might ask, "
+    "check, or watch for. Attribute to a source name. Empty array if nothing retrieved.\n"
     "\n"
-    "JOB 4 — MEDICATION NOTES. For each medication the patient mentioned, provide one "
-    "plain-language sentence about what it is typically used for and any important notes "
-    "from the drug label (e.g. 'don't take on an empty stomach'). Use the openFDA data "
-    "provided. Empty array if no medications reported.\n"
+    "JOB 4 — MEDICATION NOTES. For each patient medication, one plain-language sentence "
+    "about what it is used for and any important label notes. Use openFDA data. "
+    "Empty array if no medications reported.\n"
     "\n"
-    "TONE: warm, clear, non-alarmist. Do NOT diagnose. Do NOT say 'you have X'. "
-    "Say 'the doctor may want to check whether...' or 'it's common with this type of "
-    "complaint to...' Never invent facts. Never contradict retrieved content. "
+    "TONE: warm, clear, non-alarmist. Never say 'you have X'. Say 'the doctor may want "
+    "to check whether...' Never invent facts. Never contradict retrieved content. "
     "Return only the JSON object the schema requires — no extra text."
 )
 
@@ -340,7 +303,6 @@ PATIENT_SUMMARY_SCHEMA = {
     },
 }
 
-
-# Keep legacy aliases so old import references don't break during transition
+# Legacy aliases
 DIAGNOSE_PROMPT = DOCTOR_REPORT_PROMPT
 DIAGNOSE_SCHEMA = DOCTOR_REPORT_SCHEMA
