@@ -104,7 +104,7 @@ const processTurn = async (req, res) => {
       turnPayload,
       60_000
     );
-    const { status, message, correctedPatientText, rawPatientText, questionType, options } = aiResp.data;
+    const { status, message, correctedPatientText, rawPatientText, questionType, options, sessionName } = aiResp.data;
 
     // ── Save turn (pair) to session ───────────────────────────────────────────
     session.transcript.push({
@@ -132,6 +132,7 @@ const processTurn = async (req, res) => {
 
       session.status       = "completed";
       session.completed_at = new Date();
+      if (sessionName) session.session_name = sessionName;
       await session.save();
 
       const report = await Report.create({
@@ -179,7 +180,7 @@ const getSessionsForPatient = asyncHandler(async (req, res) => {
     return res.status(403).json({ error: "Access denied" });
   }
   const sessions = await Session.find({ patient_id: req.params.patientId, is_deleted: { $ne: true } })
-    .sort({ started_at: -1 });
+    .sort({ last_activity_at: -1 });
   res.json(sessions);
 });
 

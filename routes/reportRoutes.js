@@ -10,8 +10,8 @@ const {
   getReportForSession,
 } = require("../controllers/reportController");
 
-router.get("/:id",                protect,                                          getReport);
 router.get("/patient/:patientId", protect, authorize("patient", "doctor", "admin"), getReportsForPatient);
 router.get("/session/:sessionId", protect,                                          getReportForSession);
+router.get("/:id",                protect,                                          getReport);
 
 module.exports = router;

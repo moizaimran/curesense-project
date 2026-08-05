@@ -26,6 +26,7 @@ const SessionSchema = new mongoose.Schema(
       enum:    ["in_progress", "completed", "failed", "abandoned"],
       default: "in_progress",
     },
+    session_name:    { type: String, default: '' },
     turn_count:      { type: Number, default: 0 },
     transcript:      { type: [TurnSchema], default: [] },
     is_deleted:      { type: Boolean, default: false },
