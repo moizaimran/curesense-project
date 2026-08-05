@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
-  Easing,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -73,61 +73,76 @@ function plausibilityBg(p: string) {
   return 'rgba(148,163,184,0.10)';
 }
 
-// ── Floating Popup ────────────────────────────────────────────────────────────
+// ── Modal Sheet ───────────────────────────────────────────────────────────────
 
-function FloatingPopup({
-  icon, label, color, items, side,
+function ModalSheet({
+  visible, onClose, icon, title, color, items,
 }: {
-  icon:  React.ComponentProps<typeof Ionicons>['name'];
-  label: string;
-  color: string;
-  items: string[];
-  side:  'left' | 'right';
+  visible: boolean;
+  onClose: () => void;
+  icon:    React.ComponentProps<typeof Ionicons>['name'];
+  title:   string;
+  color:   string;
+  items:   string[];
 }) {
-  const [open, setOpen] = useState(false);
-  const anim = useRef(new Animated.Value(0)).current;
+  const translateY    = useRef(new Animated.Value(600)).current;
+  const overlayAnim   = useRef(new Animated.Value(0)).current;
+  const [rendered, setRendered] = useState(false);
 
-  function toggle() {
-    Animated.timing(anim, {
-      toValue:  open ? 0 : 1,
-      duration: 220,
-      easing:   Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-    setOpen(o => !o);
-  }
+  useEffect(() => {
+    if (visible) {
+      setRendered(true);
+      translateY.setValue(600);
+      overlayAnim.setValue(0);
+      Animated.parallel([
+        Animated.timing(overlayAnim, {
+          toValue: 1, duration: 320, useNativeDriver: true,
+        }),
+        Animated.spring(translateY, {
+          toValue: 0, useNativeDriver: true,
+          damping: 20, stiffness: 110, mass: 1,
+        }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(overlayAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+        Animated.timing(translateY,  { toValue: 600, duration: 260, useNativeDriver: true }),
+      ]).start(() => setRendered(false));
+    }
+  }, [visible]);
 
-  const panelWidth  = anim.interpolate({ inputRange: [0, 1], outputRange: [0,  260] });
-  const panelHeight = anim.interpolate({ inputRange: [0, 1], outputRange: [0,  Math.min(items.length * 56 + 48, 320)] });
-  const panelOpacity = anim.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0, 0, 1] });
-
-  if (items.length === 0) return null;
+  if (!rendered) return null;
 
   return (
-    <View style={[fp.wrap, side === 'right' ? fp.right : fp.left]}>
-      {/* Expanded panel */}
-      <Animated.View style={[fp.panel, side === 'right' ? fp.panelRight : fp.panelLeft, { width: panelWidth, maxHeight: panelHeight, opacity: panelOpacity }]}>
-        <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
-          <Text style={[fp.panelTitle, { color }]}>{label}</Text>
-          {items.map((item, i) => (
-            <View key={i} style={fp.panelItem}>
-              <View style={[fp.bullet, { backgroundColor: color }]} />
-              <Text style={fp.panelText}>{item}</Text>
-            </View>
-          ))}
-        </ScrollView>
-      </Animated.View>
+    <Modal transparent visible animationType="none" onRequestClose={onClose}>
+      <Animated.View style={[m.overlayWrap, { opacity: overlayAnim }]}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
+        <Animated.View style={[m.sheet, { transform: [{ translateY }] }]}>
+          {/* Handle bar */}
+          <View style={m.handle} />
 
-      {/* Pill badge */}
-      <TouchableOpacity
-        style={[fp.pill, { backgroundColor: `${color}22`, borderColor: `${color}55` }]}
-        onPress={toggle}
-        activeOpacity={0.8}
-      >
-        <Ionicons name={open ? 'close' : icon} size={14} color={color} />
-        {!open && <Text style={[fp.pillLabel, { color }]}>{label}</Text>}
-      </TouchableOpacity>
-    </View>
+          {/* Header */}
+          <View style={m.sheetHeader}>
+            <View style={[m.iconCircle, { backgroundColor: `${color}22` }]}>
+              <Ionicons name={icon} size={20} color={color} />
+            </View>
+            <Text style={[m.sheetTitle, { color }]}>{title}</Text>
+            <TouchableOpacity onPress={onClose} style={m.closeBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close-circle" size={22} color="rgba(255,255,255,0.30)" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+            {items.map((item, i) => (
+              <View key={i} style={m.sheetItem}>
+                <View style={[m.bullet, { backgroundColor: color }]} />
+                <Text style={m.sheetText}>{item}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        </Animated.View>
+      </Animated.View>
+    </Modal>
   );
 }
 
@@ -138,10 +153,11 @@ export default function ReportSheetScreen() {
   const router = useRouter();
   const { session_id } = useLocalSearchParams<{ session_id: string }>();
 
-  const [report,  setReport]  = useState<ReportData | null>(null);
-  const [session, setSession] = useState<SessionData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState('');
+  const [report,      setReport]      = useState<ReportData | null>(null);
+  const [session,     setSession]     = useState<SessionData | null>(null);
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState('');
+  const [activeModal, setActiveModal] = useState<'appointment' | 'flags' | null>(null);
 
   useEffect(() => { if (session_id) fetchData(); }, [session_id]);
 
@@ -187,12 +203,16 @@ export default function ReportSheetScreen() {
     );
   }
 
-  const ps           = report.patient_summary;
-  const diagnoses    = report.interpreted_diagnoses.filter(d => d.plausibility !== 'unlikely');
-  const flags        = report.doctor_report?.medicationFlags ?? [];
-  const apptItems    = ps.appointmentGuidance?.map(g => g.point).filter(Boolean) ?? [];
-  const flagItems    = flags.map(f => `${f.drug}: ${f.flag}`).filter(Boolean);
-  const sessionName  = session.session_name || 'Medical Interview';
+  const ps          = report.patient_summary;
+  const diagnoses   = report.interpreted_diagnoses
+    .filter(d => d.plausibility !== 'unlikely')
+    .slice(0, 3);
+  const flags       = report.doctor_report?.medicationFlags ?? [];
+  const apptItems   = ps.appointmentGuidance?.map(g => g.point).filter(Boolean) ?? [];
+  const flagItems   = flags.map(f => `${f.drug}: ${f.flag}`).filter(Boolean);
+  const sessionName = session.session_name || 'Medical Interview';
+
+  const hasActions = apptItems.length > 0 || flagItems.length > 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0B1437' }}>
@@ -213,7 +233,7 @@ export default function ReportSheetScreen() {
       </LinearGradient>
 
       <ScrollView
-        contentContainerStyle={[s.container, { paddingBottom: insets.bottom + 120 }]}
+        contentContainerStyle={[s.container, { paddingBottom: insets.bottom + (hasActions ? 110 : 32) }]}
         showsVerticalScrollIndicator={false}
       >
         {/* Specialty banner */}
@@ -236,7 +256,7 @@ export default function ReportSheetScreen() {
           <Text style={s.summaryText}>{ps.patientComplaintSummary || 'No summary available.'}</Text>
         </View>
 
-        {/* Diagnosis list */}
+        {/* Diagnosis list — top 3 only */}
         {diagnoses.length > 0 && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>Possible Conditions</Text>
@@ -265,10 +285,10 @@ export default function ReportSheetScreen() {
         {ps.medicationNotes && ps.medicationNotes.length > 0 && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>Medication Notes</Text>
-            {ps.medicationNotes.map((m, i) => (
+            {ps.medicationNotes.map((med, i) => (
               <View key={i} style={s.medNoteCard}>
-                <Text style={s.medNoteDrug}>{m.drug}</Text>
-                <Text style={s.medNoteText}>{m.note}</Text>
+                <Text style={s.medNoteDrug}>{med.drug}</Text>
+                <Text style={s.medNoteText}>{med.note}</Text>
               </View>
             ))}
           </View>
@@ -290,23 +310,49 @@ export default function ReportSheetScreen() {
         </Text>
       </ScrollView>
 
-      {/* Floating popups */}
-      <FloatingPopup
+      {/* Bottom action bar */}
+      {hasActions && (
+        <View style={[s.actionBar, { bottom: insets.bottom + 16 }]}>
+          {apptItems.length > 0 && (
+            <TouchableOpacity
+              style={[s.actionBtn, s.actionBtnGreen]}
+              onPress={() => setActiveModal('appointment')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="calendar-outline" size={18} color="#22C55E" />
+              <Text style={[s.actionBtnText, { color: '#22C55E' }]}>Appointment</Text>
+            </TouchableOpacity>
+          )}
+          {flagItems.length > 0 && (
+            <TouchableOpacity
+              style={[s.actionBtn, s.actionBtnRed]}
+              onPress={() => setActiveModal('flags')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="warning-outline" size={18} color="#F87171" />
+              <Text style={[s.actionBtnText, { color: '#F87171' }]}>Flags</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* Modal sheets */}
+      <ModalSheet
+        visible={activeModal === 'appointment'}
+        onClose={() => setActiveModal(null)}
         icon="calendar-outline"
-        label="Appointment"
+        title="Appointment Guidance"
         color="#22C55E"
         items={apptItems}
-        side="right"
       />
-      {flagItems.length > 0 && (
-        <FloatingPopup
-          icon="warning-outline"
-          label="Flags"
-          color="#F87171"
-          items={flagItems}
-          side="left"
-        />
-      )}
+      <ModalSheet
+        visible={activeModal === 'flags'}
+        onClose={() => setActiveModal(null)}
+        icon="warning-outline"
+        title="Medical Flags"
+        color="#F87171"
+        items={flagItems}
+      />
     </View>
   );
 }
@@ -343,31 +389,61 @@ const s = StyleSheet.create({
   diagName: { color: '#fff', fontSize: 14, fontWeight: '700', flex: 1 },
   plausBadge:{ borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   plausText: { fontSize: 11, fontWeight: '700' },
-  diagNote:  { color: 'rgba(255,255,255,0.55)', fontSize: 13, lineHeight: 19 },
+  diagNote:  { color: 'rgba(255,255,255,0.60)', fontSize: 13, lineHeight: 20 },
 
   medNoteCard: { backgroundColor: 'rgba(251,191,36,0.07)', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: 'rgba(251,191,36,0.20)', gap: 4 },
   medNoteDrug: { color: '#FBBF24', fontSize: 13, fontWeight: '700' },
-  medNoteText: { color: 'rgba(255,255,255,0.60)', fontSize: 13, lineHeight: 18 },
+  medNoteText: { color: 'rgba(255,255,255,0.60)', fontSize: 13, lineHeight: 19 },
 
   transcriptBtn:     { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(37,99,235,0.10)', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(37,99,235,0.20)', marginTop: 4 },
   transcriptBtnText: { color: '#60A5FA', fontSize: 13, fontWeight: '600', flex: 1 },
 
   disclaimer: { color: 'rgba(255,255,255,0.20)', fontSize: 11, lineHeight: 17, textAlign: 'center', paddingHorizontal: 8 },
+
+  actionBar:      { position: 'absolute', left: 16, right: 16, flexDirection: 'row', gap: 10 },
+  actionBtn:      { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: 16, borderWidth: 1.5 },
+  actionBtnGreen: { backgroundColor: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.35)' },
+  actionBtnRed:   { backgroundColor: 'rgba(248,113,113,0.12)', borderColor: 'rgba(248,113,113,0.35)' },
+  actionBtnText:  { fontSize: 14, fontWeight: '700' },
 });
 
-const fp = StyleSheet.create({
-  wrap:      { position: 'absolute', bottom: 100, alignItems: 'flex-end', gap: 8 },
-  right:     { right: 16 },
-  left:      { left: 16, alignItems: 'flex-start' },
+const m = StyleSheet.create({
+  overlayWrap: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: '#111827',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 36,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 24,
+  },
+  handle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignSelf: 'center', marginBottom: 18,
+  },
+  sheetHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20,
+  },
+  iconCircle: {
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sheetTitle: { fontSize: 17, fontWeight: '800', flex: 1 },
+  closeBtn:   { padding: 2 },
 
-  pill:      { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },
-  pillLabel: { fontSize: 12, fontWeight: '700' },
-
-  panel:      { borderRadius: 14, backgroundColor: 'rgba(11,20,55,0.97)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', padding: 14, overflow: 'hidden' },
-  panelRight: { alignSelf: 'flex-end' },
-  panelLeft:  { alignSelf: 'flex-start' },
-  panelTitle: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
-  panelItem:  { flexDirection: 'row', gap: 8, marginBottom: 10, alignItems: 'flex-start' },
-  bullet:     { width: 6, height: 6, borderRadius: 3, marginTop: 5, flexShrink: 0 },
-  panelText:  { color: 'rgba(255,255,255,0.75)', fontSize: 13, lineHeight: 19, flex: 1 },
+  sheetItem: { flexDirection: 'row', gap: 10, marginBottom: 14, alignItems: 'flex-start' },
+  bullet:    { width: 6, height: 6, borderRadius: 3, marginTop: 6, flexShrink: 0 },
+  sheetText: { color: 'rgba(255,255,255,0.78)', fontSize: 14, lineHeight: 21, flex: 1 },
 });
