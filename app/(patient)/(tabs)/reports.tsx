@@ -31,17 +31,11 @@ interface Session {
 }
 
 interface Report {
-  _id:          string;
-  session_id:   string;
-  generated_at: string;
+  _id:        string;
+  session_id: string;
   patient_summary: {
-    patientComplaintSummary: string;
-    referralSpecialty:       string;
+    referralSpecialty: string;
   };
-  interpreted_diagnoses: Array<{
-    disease:      string;
-    plausibility: 'likely' | 'possible' | 'unlikely';
-  }>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -56,12 +50,6 @@ function hoursLeft(last_activity_at: string) {
   const left    = Math.max(0, 48 - elapsed);
   if (left < 1) return `${Math.round(left * 60)}m remaining`;
   return `${Math.floor(left)}h ${Math.round((left % 1) * 60)}m remaining`;
-}
-
-function plausibilityColor(p: string) {
-  if (p === 'likely')   return '#22C55E';
-  if (p === 'possible') return '#FBBF24';
-  return '#94A3B8';
 }
 
 // ── Screen ─────────────────────────────────────────────────────────────────────
@@ -231,53 +219,41 @@ export default function ReportsScreen() {
           <Section title="Completed" icon="checkmark-circle-outline" iconColor="#22C55E">
             {completed.map(sess => {
               const report = reportBySession[sess._id];
-              const topDx  = report?.interpreted_diagnoses?.find(d => d.plausibility !== 'unlikely');
               return (
                 <TouchableOpacity
                   key={sess._id}
-                  style={s.card}
-                  activeOpacity={0.85}
+                  style={s.completedCard}
+                  activeOpacity={0.82}
                   onPress={() => router.push({ pathname: '/report-sheet', params: { session_id: sess._id } } as any)}
                 >
-                  <View style={s.cardHeader}>
-                    <View style={[s.statusDot, { backgroundColor: '#22C55E' }]} />
-                    <Text style={s.cardDate}>{fmtDate(sess.completed_at ?? sess.started_at)}</Text>
-                    <View style={[s.statusBadge, { backgroundColor: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.30)' }]}>
-                      <Text style={[s.statusBadgeText, { color: '#22C55E' }]}>Completed</Text>
+                  {/* Session name */}
+                  <Text style={s.sessionName} numberOfLines={2}>
+                    {sess.session_name || 'Medical Interview'}
+                  </Text>
+
+                  {/* Date + status + delete */}
+                  <View style={s.completedMeta}>
+                    <Text style={s.metaDate}>{fmtDate(sess.completed_at ?? sess.started_at)}</Text>
+                    <View style={s.completedBadge}>
+                      <Text style={s.completedBadgeText}>Completed</Text>
                     </View>
-                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); handleDelete(sess._id); }} disabled={deleting === sess._id} style={s.deleteBtn}>
+                    <TouchableOpacity
+                      onPress={(e) => { e.stopPropagation?.(); handleDelete(sess._id); }}
+                      disabled={deleting === sess._id}
+                      style={s.deleteBtn}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
                       {deleting === sess._id
                         ? <ActivityIndicator size="small" color="#F87171" />
-                        : <Ionicons name="trash-outline" size={16} color="#F87171" />}
+                        : <Ionicons name="trash-outline" size={14} color="rgba(248,113,113,0.65)" />}
                     </TouchableOpacity>
                   </View>
 
-                  {sess.session_name ? (
-                    <Text style={s.sessionName}>{sess.session_name}</Text>
-                  ) : null}
-                  <Text style={s.cardSub}>{sess.turn_count} questions · {report ? 'Report generated' : 'Report pending'}</Text>
-
-                  {report?.patient_summary?.patientComplaintSummary ? (
-                    <Text style={s.cardSummary} numberOfLines={3}>
-                      {report.patient_summary.patientComplaintSummary}
-                    </Text>
-                  ) : null}
-
-                  {topDx && (
-                    <View style={s.dxRow}>
-                      <Text style={s.dxLabel}>Top finding</Text>
-                      <View style={[s.dxBadge, { borderColor: plausibilityColor(topDx.plausibility) + '60', backgroundColor: plausibilityColor(topDx.plausibility) + '18' }]}>
-                        <Text style={[s.dxBadgeText, { color: plausibilityColor(topDx.plausibility) }]}>
-                          {topDx.disease} · {topDx.plausibility}
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-
+                  {/* Referral — only if present */}
                   {report?.patient_summary?.referralSpecialty ? (
-                    <View style={s.cardFooter}>
-                      <Ionicons name="medical-outline" size={13} color="#60A5FA" />
-                      <Text style={s.cardFooterText}>Referred to {report.patient_summary.referralSpecialty}</Text>
+                    <View style={s.referralRow}>
+                      <Ionicons name="medical-outline" size={11} color="rgba(96,165,250,0.70)" />
+                      <Text style={s.referralText}>Referred to {report.patient_summary.referralSpecialty}</Text>
                     </View>
                   ) : null}
                 </TouchableOpacity>
@@ -371,15 +347,25 @@ const s = StyleSheet.create({
   statusBadge:    { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
   statusBadgeText:{ fontSize: 11, fontWeight: '700' },
 
-  sessionName: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: -0.2 },
-  cardSub:     { color: 'rgba(255,255,255,0.40)', fontSize: 12 },
-  cardSummary: { color: 'rgba(255,255,255,0.70)', fontSize: 13, lineHeight: 20 },
+  completedCard: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: 'rgba(34,197,94,0.18)',
+    borderLeftWidth: 3, borderLeftColor: 'rgba(34,197,94,0.50)',
+    gap: 6,
+  },
 
-  dxRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  dxLabel:      { color: 'rgba(255,255,255,0.35)', fontSize: 11 },
-  dxBadge:      { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
-  dxBadgeText:  { fontSize: 12, fontWeight: '600' },
+  sessionName: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: -0.2, flexShrink: 1 },
 
+  completedMeta:      { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  metaDate:           { color: 'rgba(255,255,255,0.35)', fontSize: 11, flex: 1 },
+  completedBadge:     { backgroundColor: 'rgba(34,197,94,0.10)', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2, borderWidth: 1, borderColor: 'rgba(34,197,94,0.28)' },
+  completedBadgeText: { color: '#22C55E', fontSize: 10, fontWeight: '700' },
+
+  referralRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+  referralText:{ color: 'rgba(96,165,250,0.65)', fontSize: 11 },
+
+  cardSub:        { color: 'rgba(255,255,255,0.40)', fontSize: 12 },
   cardFooter:     { flexDirection: 'row', alignItems: 'center', gap: 5 },
   cardFooterText: { color: 'rgba(255,255,255,0.45)', fontSize: 12 },
   cardAction:     { color: '#60A5FA', fontSize: 12, fontWeight: '600' },
