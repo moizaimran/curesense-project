@@ -7,7 +7,9 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Dimensions,
   Modal,
+  PanResponder,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,6 +19,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { API_URL } from '@/constants/api';
+
+const { height: SCREEN_H } = Dimensions.get('window');
+const DOT_CLAMP_TOP    = 130;
+const DOT_CLAMP_BOTTOM = 130;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -45,11 +51,11 @@ interface ReportData {
 }
 
 interface SessionData {
-  session_name:    string;
-  started_at:      string;
-  completed_at:    string | null;
-  status:          string;
-  turn_count:      number;
+  session_name: string;
+  started_at:   string;
+  completed_at: string | null;
+  status:       string;
+  turn_count:   number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -85,8 +91,8 @@ function ModalSheet({
   color:   string;
   items:   string[];
 }) {
-  const translateY    = useRef(new Animated.Value(600)).current;
-  const overlayAnim   = useRef(new Animated.Value(0)).current;
+  const translateY  = useRef(new Animated.Value(600)).current;
+  const overlayAnim = useRef(new Animated.Value(0)).current;
   const [rendered, setRendered] = useState(false);
 
   useEffect(() => {
@@ -95,9 +101,7 @@ function ModalSheet({
       translateY.setValue(600);
       overlayAnim.setValue(0);
       Animated.parallel([
-        Animated.timing(overlayAnim, {
-          toValue: 1, duration: 320, useNativeDriver: true,
-        }),
+        Animated.timing(overlayAnim, { toValue: 1, duration: 320, useNativeDriver: true }),
         Animated.spring(translateY, {
           toValue: 0, useNativeDriver: true,
           damping: 20, stiffness: 110, mass: 1,
@@ -118,31 +122,133 @@ function ModalSheet({
       <Animated.View style={[m.overlayWrap, { opacity: overlayAnim }]}>
         <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
         <Animated.View style={[m.sheet, { transform: [{ translateY }] }]}>
-          {/* Handle bar */}
           <View style={m.handle} />
-
-          {/* Header */}
           <View style={m.sheetHeader}>
             <View style={[m.iconCircle, { backgroundColor: `${color}22` }]}>
               <Ionicons name={icon} size={20} color={color} />
             </View>
             <Text style={[m.sheetTitle, { color }]}>{title}</Text>
-            <TouchableOpacity onPress={onClose} style={m.closeBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={onClose} style={m.closeBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <Ionicons name="close-circle" size={22} color="rgba(255,255,255,0.30)" />
             </TouchableOpacity>
           </View>
-
-          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 400 }}>
             {items.map((item, i) => (
               <View key={i} style={m.sheetItem}>
                 <View style={[m.bullet, { backgroundColor: color }]} />
                 <Text style={m.sheetText}>{item}</Text>
               </View>
             ))}
+            <View style={{ height: 8 }} />
           </ScrollView>
         </Animated.View>
       </Animated.View>
     </Modal>
+  );
+}
+
+// ── Floating Dot (iOS AssistiveTouch style) ───────────────────────────────────
+
+function FloatingDot({
+  apptItems, flagItems, onOpen,
+}: {
+  apptItems: string[];
+  flagItems: string[];
+  onOpen:    (type: 'appointment' | 'flags') => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuOpenRef = useRef(false);
+  const menuAnim    = useRef(new Animated.Value(0)).current;
+  const posY        = useRef(new Animated.Value(SCREEN_H * 0.42)).current;
+  const posOffset   = useRef(SCREEN_H * 0.42);
+  const dragDelta   = useRef(0);
+
+  const panResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder:  (_, gs) => Math.abs(gs.dy) > 4,
+    onPanResponderGrant: () => {
+      dragDelta.current = 0;
+      posY.setOffset(posOffset.current);
+      posY.setValue(0);
+    },
+    onPanResponderMove: (_, gs) => {
+      dragDelta.current = Math.abs(gs.dy);
+      posY.setValue(gs.dy);
+    },
+    onPanResponderRelease: (_, gs) => {
+      const raw     = posOffset.current + gs.dy;
+      const clamped = Math.max(DOT_CLAMP_TOP, Math.min(SCREEN_H - DOT_CLAMP_BOTTOM, raw));
+      posOffset.current = clamped;
+      posY.flattenOffset();
+      Animated.spring(posY, {
+        toValue: clamped, useNativeDriver: true,
+        damping: 18, stiffness: 220,
+      }).start();
+      if (dragDelta.current < 8) {
+        const opening = !menuOpenRef.current;
+        menuOpenRef.current = opening;
+        setMenuOpen(opening);
+        Animated.spring(menuAnim, {
+          toValue: opening ? 1 : 0,
+          useNativeDriver: true, damping: 15, stiffness: 200,
+        }).start();
+      }
+    },
+  })).current;
+
+  function selectOption(type: 'appointment' | 'flags') {
+    menuOpenRef.current = false;
+    setMenuOpen(false);
+    Animated.timing(menuAnim, { toValue: 0, duration: 150, useNativeDriver: true }).start();
+    onOpen(type);
+  }
+
+  const menuOpacity = menuAnim;
+  const menuScale   = menuAnim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] });
+  const menuTransX  = menuAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] });
+
+  const hasGuidelines = apptItems.length > 0;
+  const hasFlags      = flagItems.length > 0;
+  if (!hasGuidelines && !hasFlags) return null;
+
+  return (
+    <Animated.View
+      style={[dot.wrap, { transform: [{ translateY: posY }] }]}
+      {...panResponder.panHandlers}
+    >
+      {/* Popup card — appears to the left of the dot */}
+      <Animated.View
+        style={[
+          dot.menu,
+          {
+            opacity:   menuOpacity,
+            transform: [{ scale: menuScale }, { translateX: menuTransX }],
+          },
+        ]}
+        pointerEvents={menuOpen ? 'auto' : 'none'}
+      >
+        {hasGuidelines && (
+          <TouchableOpacity style={dot.menuItem} onPress={() => selectOption('appointment')} activeOpacity={0.8}>
+            <Ionicons name="calendar-outline" size={14} color="#22C55E" />
+            <Text style={[dot.menuLabel, { color: '#22C55E' }]}>Guidelines</Text>
+          </TouchableOpacity>
+        )}
+        {hasGuidelines && hasFlags && <View style={dot.menuDivider} />}
+        {hasFlags && (
+          <TouchableOpacity style={dot.menuItem} onPress={() => selectOption('flags')} activeOpacity={0.8}>
+            <Ionicons name="warning-outline" size={14} color="#F87171" />
+            <Text style={[dot.menuLabel, { color: '#F87171' }]}>Flags</Text>
+          </TouchableOpacity>
+        )}
+      </Animated.View>
+
+      {/* The pill handle (snapped to right edge) */}
+      <View style={[dot.pill, menuOpen && dot.pillOpen]}>
+        <View style={dot.line} />
+        <View style={dot.line} />
+        <View style={dot.line} />
+      </View>
+    </Animated.View>
   );
 }
 
@@ -163,17 +269,14 @@ export default function ReportSheetScreen() {
 
   async function fetchData() {
     try {
-      const token = await SecureStore.getItemAsync('token');
+      const token   = await SecureStore.getItemAsync('token');
       const headers = { Authorization: `Bearer ${token}` };
-
       const [repRes, sessRes] = await Promise.all([
         fetch(`${API_URL}/api/reports/session/${session_id}`, { headers }),
         fetch(`${API_URL}/api/sessions/${session_id}`,        { headers }),
       ]);
-
       if (!repRes.ok)  throw new Error('Could not load report');
       if (!sessRes.ok) throw new Error('Could not load session');
-
       const [rep, sess] = await Promise.all([repRes.json(), sessRes.json()]);
       setReport(rep);
       setSession(sess);
@@ -212,8 +315,6 @@ export default function ReportSheetScreen() {
   const flagItems   = flags.map(f => `${f.drug}: ${f.flag}`).filter(Boolean);
   const sessionName = session.session_name || 'Medical Interview';
 
-  const hasActions = apptItems.length > 0 || flagItems.length > 0;
-
   return (
     <View style={{ flex: 1, backgroundColor: '#0B1437' }}>
       <StatusBar style="light" />
@@ -224,39 +325,46 @@ export default function ReportSheetScreen() {
           <Ionicons name="chevron-back" size={22} color="#fff" />
         </TouchableOpacity>
         <View style={s.headerCenter}>
-          <Text style={s.headerTitle} numberOfLines={1}>{sessionName}</Text>
+          <Text style={s.headerTitle} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.75}>
+            {sessionName}
+          </Text>
           <Text style={s.headerDate}>{fmtDate(session.completed_at ?? session.started_at)}</Text>
         </View>
-        <View style={[s.completeBadge]}>
+        <View style={s.completeBadge}>
           <Text style={s.completeBadgeText}>Complete</Text>
         </View>
       </LinearGradient>
 
       <ScrollView
-        contentContainerStyle={[s.container, { paddingBottom: insets.bottom + (hasActions ? 110 : 32) }]}
+        contentContainerStyle={[s.container, { paddingBottom: insets.bottom + 48 }]}
         showsVerticalScrollIndicator={false}
       >
         {/* Specialty banner */}
-        {ps.referralSpecialty ? (
-          <LinearGradient colors={['rgba(37,99,235,0.18)', 'rgba(29,78,216,0.08)']} style={s.specialtyBanner}>
-            <Ionicons name="medical-outline" size={18} color="#60A5FA" />
-            <View style={{ flex: 1 }}>
+        {!!ps.referralSpecialty && (
+          <LinearGradient
+            colors={['rgba(37,99,235,0.18)', 'rgba(29,78,216,0.08)']}
+            style={s.specialtyBanner}
+          >
+            <Ionicons name="medical-outline" size={18} color="#60A5FA" style={{ flexShrink: 0 }} />
+            <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={s.specialtyLabel}>Recommended Specialty</Text>
-              <Text style={s.specialtyValue}>{ps.referralSpecialty}</Text>
+              <Text style={s.specialtyValue} numberOfLines={2}>{ps.referralSpecialty}</Text>
             </View>
           </LinearGradient>
-        ) : null}
+        )}
 
         {/* Patient complaint summary */}
         <View style={s.card}>
           <View style={s.cardHeader}>
-            <Ionicons name="document-text-outline" size={16} color="#60A5FA" />
+            <Ionicons name="document-text-outline" size={16} color="#60A5FA" style={{ flexShrink: 0 }} />
             <Text style={s.cardTitle}>Your Summary</Text>
           </View>
-          <Text style={s.summaryText}>{ps.patientComplaintSummary || 'No summary available.'}</Text>
+          <Text style={s.summaryText}>
+            {ps.patientComplaintSummary?.trim() || 'No summary available.'}
+          </Text>
         </View>
 
-        {/* Diagnosis list — top 3 only */}
+        {/* Diagnosis list — top 3, unlikely filtered */}
         {diagnoses.length > 0 && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>Possible Conditions</Text>
@@ -266,16 +374,17 @@ export default function ReportSheetScreen() {
                   <View style={s.rankBadge}>
                     <Text style={s.rankText}>{i + 1}</Text>
                   </View>
-                  <Text style={s.diagName}>{d.disease}</Text>
+                  {/* disease name stretches, badge is fixed */}
+                  <Text style={s.diagName} numberOfLines={3}>{d.disease}</Text>
                   <View style={[s.plausBadge, { backgroundColor: plausibilityBg(d.plausibility) }]}>
                     <Text style={[s.plausText, { color: plausibilityColor(d.plausibility) }]}>
                       {d.plausibility.charAt(0).toUpperCase() + d.plausibility.slice(1)}
                     </Text>
                   </View>
                 </View>
-                {d.patientNote ? (
-                  <Text style={s.diagNote}>{d.patientNote}</Text>
-                ) : null}
+                {!!d.patientNote?.trim() && (
+                  <Text style={s.diagNote}>{d.patientNote.trim()}</Text>
+                )}
               </View>
             ))}
           </View>
@@ -287,22 +396,22 @@ export default function ReportSheetScreen() {
             <Text style={s.sectionLabel}>Medication Notes</Text>
             {ps.medicationNotes.map((med, i) => (
               <View key={i} style={s.medNoteCard}>
-                <Text style={s.medNoteDrug}>{med.drug}</Text>
-                <Text style={s.medNoteText}>{med.note}</Text>
+                <Text style={s.medNoteDrug} numberOfLines={2}>{med.drug}</Text>
+                <Text style={s.medNoteText}>{med.note?.trim()}</Text>
               </View>
             ))}
           </View>
         )}
 
-        {/* View Transcript link */}
+        {/* View Transcript */}
         <TouchableOpacity
           style={s.transcriptBtn}
           onPress={() => router.push({ pathname: '/transcript', params: { session_id } } as any)}
           activeOpacity={0.8}
         >
-          <Ionicons name="chatbubbles-outline" size={16} color="#60A5FA" />
+          <Ionicons name="chatbubbles-outline" size={16} color="#60A5FA" style={{ flexShrink: 0 }} />
           <Text style={s.transcriptBtnText}>View Interview Transcript</Text>
-          <Ionicons name="chevron-forward" size={14} color="rgba(96,165,250,0.6)" />
+          <Ionicons name="chevron-forward" size={14} color="rgba(96,165,250,0.6)" style={{ flexShrink: 0 }} />
         </TouchableOpacity>
 
         <Text style={s.disclaimer}>
@@ -310,38 +419,19 @@ export default function ReportSheetScreen() {
         </Text>
       </ScrollView>
 
-      {/* Bottom action bar */}
-      {hasActions && (
-        <View style={[s.actionBar, { bottom: insets.bottom + 16 }]}>
-          {apptItems.length > 0 && (
-            <TouchableOpacity
-              style={[s.actionBtn, s.actionBtnGreen]}
-              onPress={() => setActiveModal('appointment')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="calendar-outline" size={18} color="#22C55E" />
-              <Text style={[s.actionBtnText, { color: '#22C55E' }]}>Appointment</Text>
-            </TouchableOpacity>
-          )}
-          {flagItems.length > 0 && (
-            <TouchableOpacity
-              style={[s.actionBtn, s.actionBtnRed]}
-              onPress={() => setActiveModal('flags')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="warning-outline" size={18} color="#F87171" />
-              <Text style={[s.actionBtnText, { color: '#F87171' }]}>Flags</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
+      {/* Draggable floating dot */}
+      <FloatingDot
+        apptItems={apptItems}
+        flagItems={flagItems}
+        onOpen={setActiveModal}
+      />
 
       {/* Modal sheets */}
       <ModalSheet
         visible={activeModal === 'appointment'}
         onClose={() => setActiveModal(null)}
         icon="calendar-outline"
-        title="Appointment Guidance"
+        title="Guidelines"
         color="#22C55E"
         items={apptItems}
       />
@@ -360,73 +450,102 @@ export default function ReportSheetScreen() {
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  header:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 16, gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' },
+  header: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingBottom: 16, gap: 10,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
   backBtn:      { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  headerCenter: { flex: 1 },
+  headerCenter: { flex: 1, minWidth: 0 },
   headerTitle:  { color: '#fff', fontSize: 16, fontWeight: '800' },
   headerDate:   { color: 'rgba(255,255,255,0.38)', fontSize: 11, marginTop: 2 },
-  completeBadge:     { backgroundColor: 'rgba(34,197,94,0.12)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(34,197,94,0.35)' },
+
+  completeBadge: {
+    flexShrink: 0,
+    backgroundColor: 'rgba(34,197,94,0.12)',
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4,
+    borderWidth: 1, borderColor: 'rgba(34,197,94,0.35)',
+  },
   completeBadgeText: { color: '#22C55E', fontSize: 11, fontWeight: '700' },
 
   container: { paddingHorizontal: 16, paddingTop: 16, gap: 12 },
 
-  specialtyBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: 'rgba(37,99,235,0.25)' },
-  specialtyLabel:  { color: 'rgba(255,255,255,0.40)', fontSize: 11, fontWeight: '600' },
-  specialtyValue:  { color: '#93C5FD', fontSize: 14, fontWeight: '700', marginTop: 2 },
+  specialtyBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
+    borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: 'rgba(37,99,235,0.25)',
+  },
+  specialtyLabel: { color: 'rgba(255,255,255,0.40)', fontSize: 11, fontWeight: '600' },
+  specialtyValue: { color: '#93C5FD', fontSize: 14, fontWeight: '700', marginTop: 2 },
 
-  card:       { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 10 },
+  card: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 16, padding: 16,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 10,
+  },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  cardTitle:  { color: '#60A5FA', fontSize: 13, fontWeight: '700' },
+  cardTitle:  { color: '#60A5FA', fontSize: 13, fontWeight: '700', flex: 1 },
   summaryText:{ color: 'rgba(255,255,255,0.80)', fontSize: 14, lineHeight: 22 },
 
   section:      { gap: 8 },
-  sectionLabel: { color: 'rgba(255,255,255,0.40)', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
+  sectionLabel: {
+    color: 'rgba(255,255,255,0.40)', fontSize: 11, fontWeight: '700',
+    textTransform: 'uppercase', letterSpacing: 1, marginTop: 4,
+  },
 
-  diagCard: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 8 },
-  diagRow:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  rankBadge:{ width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(37,99,235,0.25)', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  rankText: { color: '#60A5FA', fontSize: 11, fontWeight: '800' },
-  diagName: { color: '#fff', fontSize: 14, fontWeight: '700', flex: 1 },
-  plausBadge:{ borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  diagCard: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 10,
+  },
+  diagRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  rankBadge: {
+    width: 24, height: 24, borderRadius: 12, flexShrink: 0,
+    backgroundColor: 'rgba(37,99,235,0.25)',
+    alignItems: 'center', justifyContent: 'center', marginTop: 1,
+  },
+  rankText:  { color: '#60A5FA', fontSize: 11, fontWeight: '800' },
+  diagName:  { color: '#fff', fontSize: 14, fontWeight: '700', flex: 1, flexShrink: 1, lineHeight: 20 },
+  plausBadge:{ flexShrink: 0, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' },
   plausText: { fontSize: 11, fontWeight: '700' },
-  diagNote:  { color: 'rgba(255,255,255,0.60)', fontSize: 13, lineHeight: 20 },
+  diagNote:  { color: 'rgba(255,255,255,0.62)', fontSize: 13, lineHeight: 20, flexShrink: 1 },
 
-  medNoteCard: { backgroundColor: 'rgba(251,191,36,0.07)', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: 'rgba(251,191,36,0.20)', gap: 4 },
-  medNoteDrug: { color: '#FBBF24', fontSize: 13, fontWeight: '700' },
-  medNoteText: { color: 'rgba(255,255,255,0.60)', fontSize: 13, lineHeight: 19 },
+  medNoteCard: {
+    backgroundColor: 'rgba(251,191,36,0.07)',
+    borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: 'rgba(251,191,36,0.20)', gap: 6,
+  },
+  medNoteDrug: { color: '#FBBF24', fontSize: 13, fontWeight: '700', flexShrink: 1 },
+  medNoteText: { color: 'rgba(255,255,255,0.62)', fontSize: 13, lineHeight: 20, flexShrink: 1 },
 
-  transcriptBtn:     { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(37,99,235,0.10)', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(37,99,235,0.20)', marginTop: 4 },
+  transcriptBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: 'rgba(37,99,235,0.10)',
+    borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: 'rgba(37,99,235,0.20)', marginTop: 4,
+  },
   transcriptBtnText: { color: '#60A5FA', fontSize: 13, fontWeight: '600', flex: 1 },
 
-  disclaimer: { color: 'rgba(255,255,255,0.20)', fontSize: 11, lineHeight: 17, textAlign: 'center', paddingHorizontal: 8 },
-
-  actionBar:      { position: 'absolute', left: 16, right: 16, flexDirection: 'row', gap: 10 },
-  actionBtn:      { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: 16, borderWidth: 1.5 },
-  actionBtnGreen: { backgroundColor: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.35)' },
-  actionBtnRed:   { backgroundColor: 'rgba(248,113,113,0.12)', borderColor: 'rgba(248,113,113,0.35)' },
-  actionBtnText:  { fontSize: 14, fontWeight: '700' },
+  disclaimer: {
+    color: 'rgba(255,255,255,0.20)', fontSize: 11, lineHeight: 17,
+    textAlign: 'center', paddingHorizontal: 8,
+  },
 });
+
+// ── Modal Sheet Styles ────────────────────────────────────────────────────────
 
 const m = StyleSheet.create({
   overlayWrap: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.72)',
-    justifyContent: 'flex-end',
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', justifyContent: 'flex-end',
   },
   sheet: {
     backgroundColor: '#111827',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingBottom: 36,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: 20, paddingBottom: 40, paddingTop: 10,
+    borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 24,
+    shadowOpacity: 0.5, shadowRadius: 20, elevation: 24,
   },
   handle: {
     width: 40, height: 4, borderRadius: 2,
@@ -437,13 +556,71 @@ const m = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20,
   },
   iconCircle: {
-    width: 40, height: 40, borderRadius: 20,
-    alignItems: 'center', justifyContent: 'center',
+    width: 42, height: 42, borderRadius: 21,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
   sheetTitle: { fontSize: 17, fontWeight: '800', flex: 1 },
-  closeBtn:   { padding: 2 },
+  closeBtn:   { padding: 2, flexShrink: 0 },
 
-  sheetItem: { flexDirection: 'row', gap: 10, marginBottom: 14, alignItems: 'flex-start' },
-  bullet:    { width: 6, height: 6, borderRadius: 3, marginTop: 6, flexShrink: 0 },
-  sheetText: { color: 'rgba(255,255,255,0.78)', fontSize: 14, lineHeight: 21, flex: 1 },
+  sheetItem: { flexDirection: 'row', gap: 10, marginBottom: 16, alignItems: 'flex-start' },
+  bullet:    { width: 6, height: 6, borderRadius: 3, marginTop: 7, flexShrink: 0 },
+  sheetText: { color: 'rgba(255,255,255,0.78)', fontSize: 14, lineHeight: 22, flex: 1 },
+});
+
+// ── Floating Dot Styles ───────────────────────────────────────────────────────
+
+const dot = StyleSheet.create({
+  wrap: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  menu: {
+    backgroundColor: 'rgba(10,18,50,0.97)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    paddingVertical: 6,
+    marginRight: 6,
+    minWidth: 136,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45, shadowRadius: 14, elevation: 14,
+  },
+  menuItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 9,
+    paddingHorizontal: 14, paddingVertical: 11,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    marginHorizontal: 10,
+  },
+  menuLabel: { fontSize: 13, fontWeight: '700' },
+
+  pill: {
+    width: 38,
+    height: 62,
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
+    borderTopRightRadius: 0,
+    borderBottomRightRadius: 0,
+    backgroundColor: 'rgba(255,255,255,0.09)',
+    borderWidth: 1,
+    borderRightWidth: 0,
+    borderColor: 'rgba(255,255,255,0.20)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  pillOpen: {
+    backgroundColor: 'rgba(37,99,235,0.22)',
+    borderColor: 'rgba(37,99,235,0.55)',
+  },
+  line: {
+    width: 16, height: 2.5, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.50)',
+  },
 });
