@@ -187,6 +187,37 @@ def pipeline_finalize():
 
     doctor_report["retrievalStatus"] = retrieval_status
 
+    # ── 7. Generate a short memorable session name ────────────────────────────
+    session_name = ""
+    try:
+        name_resp = config.openai_client.chat.completions.create(
+            model=config.LLM_CONFIG["model"],
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a medical assistant. Given a short excerpt of a patient's "
+                        "symptom description, generate a concise 2-5 word memorable clinical "
+                        "name for this medical interview session. The name must capture the "
+                        "main complaint clearly. Examples: 'Recurring Migraine with Nausea', "
+                        "'Acute Fever and Body Aches', 'Chest Tightness on Exertion', "
+                        "'Lower Back Pain with Stiffness'. Return ONLY the name — no quotes, "
+                        "no punctuation at the end, no explanation."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Patient transcript excerpt: {transcript_text[:600]}",
+                },
+            ],
+            max_tokens=20,
+            temperature=0.4,
+        )
+        session_name = name_resp.choices[0].message.content.strip().strip('"\'').strip(".")
+        print(f"[Session Name] {session_name!r}")
+    except Exception as e:
+        print(f"[Session Name] generation failed: {e} — using empty string.")
+
     return jsonify({
         "verifiedEntities"    : report["entities"],
         "rankedDiseases"      : ranked_diseases,
@@ -197,6 +228,7 @@ def pipeline_finalize():
         "doctorReport"        : doctor_report,
         "patientSummary"      : patient_summary,
         "interpretedDiagnoses": interpreted_diagnoses,
+        "sessionName"         : session_name,
     })
 
 
