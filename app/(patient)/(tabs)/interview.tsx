@@ -100,16 +100,16 @@ export default function InterviewScreen() {
   // ── Blink + slide transition ──────────────────────────────────────────────────
 
   function transitionToQuestion(q: string, type: QuestionType, opts: string[]) {
-    Animated.timing(opacity, { toValue: 0, duration: 130, useNativeDriver: true }).start(() => {
-      setCurrentQ(q);
-      setQuestionType(type);
-      setOptions(opts);
-      translateY.setValue(28);
-      Animated.parallel([
-        Animated.timing(opacity,    { toValue: 1, duration: 380, useNativeDriver: true }),
-        Animated.spring(translateY, { toValue: 0, tension: 90, friction: 9, useNativeDriver: true }),
-      ]).start();
-    });
+    // opacity is already 0 (CoolLoader is covering the area); skip fade-out, go straight to spring-in
+    setCurrentQ(q);
+    setQuestionType(type);
+    setOptions(opts);
+    opacity.setValue(0);
+    translateY.setValue(28);
+    Animated.parallel([
+      Animated.timing(opacity,    { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.spring(translateY, { toValue: 0, tension: 90, friction: 9, useNativeDriver: true }),
+    ]).start();
   }
 
   // ── Start new session ─────────────────────────────────────────────────────────
@@ -155,9 +155,7 @@ export default function InterviewScreen() {
     setSending(true);
     setTextInput('');
     setIsFirstQ(false);
-
-    // Fade out the current question immediately so skeleton takes over
-    Animated.timing(opacity, { toValue: 0, duration: 180, useNativeDriver: true }).start();
+    // CoolLoader takes over the full content area — no opacity animation needed here
 
     try {
       const token = await SecureStore.getItemAsync('token');
@@ -167,7 +165,11 @@ export default function InterviewScreen() {
         body: JSON.stringify({ patient_text: patientText }),
       });
       const data = await res.json();
-      if (!res.ok) { Alert.alert('Error', data.error ?? 'Something went wrong.'); return; }
+      if (!res.ok) {
+        opacity.setValue(1); // restore question visibility on API error
+        Alert.alert('Error', data.error ?? 'Something went wrong.');
+        return;
+      }
 
       setTurnCount(t => t + 1);
 
@@ -182,6 +184,7 @@ export default function InterviewScreen() {
         );
       }
     } catch {
+      opacity.setValue(1); // restore question visibility on network error
       Alert.alert('Connection Error', 'Could not reach the server.');
     } finally {
       setSending(false);
@@ -218,16 +221,17 @@ export default function InterviewScreen() {
         </View>
       </LinearGradient>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        {/* Question area — fades out on submit, blinks back in with next question */}
-        <Animated.View style={[s.questionArea, { opacity, transform: [{ translateY }] }]}>
-          <Text style={s.questionText}>{currentQ}</Text>
-        </Animated.View>
+      {sending ? (
+        /* CoolLoader takes over the full content area while API processes */
+        <CoolLoader />
+      ) : (
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          {/* Question — blinks in with slide when next question arrives */}
+          <Animated.View style={[s.questionArea, { opacity, transform: [{ translateY }] }]}>
+            <Text style={s.questionText}>{currentQ}</Text>
+          </Animated.View>
 
-        {/* Input panel — skeleton while waiting, real input when ready */}
-        {sending ? (
-          <LoadingPanel insets={insets} />
-        ) : (
+          {/* Input panel */}
           <View style={[s.inputPanel, { paddingBottom: insets.bottom + 16 }]}>
             {renderInput(questionType, options, sendTurn, textInput, setTextInput)}
 
@@ -242,8 +246,8 @@ export default function InterviewScreen() {
               </TouchableOpacity>
             )}
           </View>
-        )}
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      )}
     </View>
   );
 }
@@ -289,65 +293,93 @@ function renderInput(
   }
 }
 
-// ── Loading Panel ─────────────────────────────────────────────────────────────
+// ── Cool Loader ───────────────────────────────────────────────────────────────
 
-function LoadingPanel({ insets }: { insets: any }) {
-  const pulse = useRef(new Animated.Value(0)).current;
-  const dot1  = useRef(new Animated.Value(0)).current;
-  const dot2  = useRef(new Animated.Value(0)).current;
-  const dot3  = useRef(new Animated.Value(0)).current;
+const LOADING_MESSAGES = [
+  'Analyzing your response…',
+  'Preparing your next question…',
+  'Understanding your symptoms…',
+  'Almost there…',
+  'CureSense AI is thinking…',
+];
+
+function SonarRing({ delay, size }: { delay: number; size: number }) {
+  const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Skeleton shimmer
     Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.delay(delay),
+        Animated.timing(anim, {
+          toValue: 1, duration: 2400,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.delay(Math.max(0, 3200 - delay - 2400)),
+      ])
+    ).start();
+  }, []);
+
+  const scale   = anim.interpolate({ inputRange: [0, 1], outputRange: [0.35, 2.4] });
+  const opacity = anim.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 0.55, 0] });
+
+  return (
+    <Animated.View style={[l.ring, { width: size, height: size, borderRadius: size / 2, transform: [{ scale }], opacity }]} />
+  );
+}
+
+function CoolLoader() {
+  const orbit = useRef(new Animated.Value(0)).current;
+  const orb   = useRef(new Animated.Value(1)).current;
+  const [msgIdx, setMsgIdx] = useState(0);
+
+  useEffect(() => {
+    // Orbital rotation
+    Animated.loop(
+      Animated.timing(orbit, { toValue: 1, duration: 3200, easing: Easing.linear, useNativeDriver: true })
+    ).start();
+
+    // Orb pulse
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(orb, { toValue: 1.10, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(orb, { toValue: 1.00, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
       ])
     ).start();
 
-    // Staggered dots
-    const dotAnim = (dot: Animated.Value, delay: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(dot, { toValue: -6, duration: 320, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-          Animated.timing(dot, { toValue:  0, duration: 320, easing: Easing.in(Easing.quad),  useNativeDriver: true }),
-          Animated.delay(600),
-        ])
-      );
-    dotAnim(dot1, 0).start();
-    dotAnim(dot2, 160).start();
-    dotAnim(dot3, 320).start();
+    // Message cycling
+    const id = setInterval(() => setMsgIdx(i => (i + 1) % LOADING_MESSAGES.length), 2600);
+    return () => clearInterval(id);
   }, []);
 
-  const skeletonOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.06, 0.14] });
+  const rotateDeg = orbit.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   return (
-    <View style={[l.panel, { paddingBottom: insets.bottom + 16 }]}>
-      {/* Label + bouncing dots */}
-      <View style={l.labelRow}>
-        <LinearGradient colors={['#1D4ED8', '#2563EB']} style={l.labelIcon}>
-          <Ionicons name="medical" size={11} color="#fff" />
-        </LinearGradient>
-        <Text style={l.labelText}>Next question coming up</Text>
-        <View style={l.dotsRow}>
-          {[dot1, dot2, dot3].map((d, i) => (
-            <Animated.View key={i} style={[l.dot, { transform: [{ translateY: d }] }]} />
-          ))}
-        </View>
+    <View style={l.wrap}>
+      {/* Sonar rings */}
+      <View style={l.orbWrap}>
+        <SonarRing delay={0}    size={90} />
+        <SonarRing delay={1066} size={90} />
+        <SonarRing delay={2133} size={90} />
+
+        {/* Orbiting dots */}
+        <Animated.View style={[l.orbitRing, { transform: [{ rotate: rotateDeg }] }]}>
+          <View style={[l.orbitDot, l.orbitDot1]} />
+          <View style={[l.orbitDot, l.orbitDot2]} />
+          <View style={[l.orbitDot, l.orbitDot3]} />
+        </Animated.View>
+
+        {/* Center orb */}
+        <Animated.View style={[l.orbOuter, { transform: [{ scale: orb }] }]}>
+          <LinearGradient colors={['#1D4ED8', '#2563EB', '#3B82F6']} style={l.orbInner}>
+            <Ionicons name="medical" size={28} color="#fff" />
+          </LinearGradient>
+        </Animated.View>
       </View>
 
-      {/* Skeleton rows mimicking MCQ options */}
-      {[1, 0.85, 0.70, 0.55].map((w, i) => (
-        <Animated.View
-          key={i}
-          style={[l.skeletonRow, { width: `${w * 100}%` as any, opacity: skeletonOpacity }]}
-        />
-      ))}
-
-      {/* Skeleton send button */}
-      <Animated.View style={[l.skeletonBtn, { opacity: skeletonOpacity }]} />
+      {/* Cycling status text */}
+      <Text style={l.message} key={msgIdx}>{LOADING_MESSAGES[msgIdx]}</Text>
+      <Text style={l.subLabel}>CureSense AI</Text>
     </View>
   );
 }
@@ -446,16 +478,27 @@ const s = StyleSheet.create({
 });
 
 const l = StyleSheet.create({
-  panel:       { paddingHorizontal: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)', backgroundColor: '#0B1437', gap: 12 },
+  wrap:      { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28, backgroundColor: '#0B1437' },
 
-  labelRow:    { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  labelIcon:   { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  labelText:   { color: 'rgba(255,255,255,0.35)', fontSize: 12, fontWeight: '600', flex: 1 },
-  dotsRow:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  dot:         { width: 5, height: 5, borderRadius: 3, backgroundColor: '#2563EB' },
+  orbWrap:   { width: 160, height: 160, alignItems: 'center', justifyContent: 'center' },
 
-  skeletonRow: { height: 48, borderRadius: 14, backgroundColor: '#fff', alignSelf: 'flex-start' },
-  skeletonBtn: { height: 50, borderRadius: 12, backgroundColor: '#fff', width: '100%' },
+  ring: {
+    position: 'absolute',
+    borderWidth: 1.5,
+    borderColor: '#2563EB',
+  },
+
+  orbitRing: { position: 'absolute', width: 148, height: 148 },
+  orbitDot:  { position: 'absolute', width: 11, height: 11, borderRadius: 6 },
+  orbitDot1: { backgroundColor: '#60A5FA', top: -1,  left: 69 },
+  orbitDot2: { backgroundColor: '#3B82F6', bottom: 18, right: 3  },
+  orbitDot3: { backgroundColor: '#93C5FD', bottom: 18, left: 3   },
+
+  orbOuter: { width: 86, height: 86, borderRadius: 43, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(37,99,235,0.15)', borderWidth: 1.5, borderColor: 'rgba(37,99,235,0.35)' },
+  orbInner: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center' },
+
+  message:   { color: 'rgba(255,255,255,0.75)', fontSize: 16, fontWeight: '600', textAlign: 'center', letterSpacing: -0.2 },
+  subLabel:  { color: 'rgba(255,255,255,0.20)', fontSize: 12, fontWeight: '700', letterSpacing: 2, textTransform: 'uppercase' },
 });
 
 const g = StyleSheet.create({
