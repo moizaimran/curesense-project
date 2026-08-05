@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Easing,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -155,6 +156,9 @@ export default function InterviewScreen() {
     setTextInput('');
     setIsFirstQ(false);
 
+    // Fade out the current question immediately so skeleton takes over
+    Animated.timing(opacity, { toValue: 0, duration: 180, useNativeDriver: true }).start();
+
     try {
       const token = await SecureStore.getItemAsync('token');
       const res   = await fetch(`${API_URL}/api/sessions/${sid}/turn`, {
@@ -215,19 +219,15 @@ export default function InterviewScreen() {
       </LinearGradient>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        {/* Full-screen animated question */}
+        {/* Question area — fades out on submit, blinks back in with next question */}
         <Animated.View style={[s.questionArea, { opacity, transform: [{ translateY }] }]}>
           <Text style={s.questionText}>{currentQ}</Text>
-          {sending && (
-            <View style={s.processingRow}>
-              <ActivityIndicator color="#2563EB" size="small" />
-              <Text style={s.processingText}>Processing…</Text>
-            </View>
-          )}
         </Animated.View>
 
-        {/* Input — pinned to bottom */}
-        {!sending && (
+        {/* Input panel — skeleton while waiting, real input when ready */}
+        {sending ? (
+          <LoadingPanel insets={insets} />
+        ) : (
           <View style={[s.inputPanel, { paddingBottom: insets.bottom + 16 }]}>
             {renderInput(questionType, options, sendTurn, textInput, setTextInput)}
 
@@ -287,6 +287,69 @@ function renderInput(
         </View>
       );
   }
+}
+
+// ── Loading Panel ─────────────────────────────────────────────────────────────
+
+function LoadingPanel({ insets }: { insets: any }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  const dot1  = useRef(new Animated.Value(0)).current;
+  const dot2  = useRef(new Animated.Value(0)).current;
+  const dot3  = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // Skeleton shimmer
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ])
+    ).start();
+
+    // Staggered dots
+    const dotAnim = (dot: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(dot, { toValue: -6, duration: 320, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(dot, { toValue:  0, duration: 320, easing: Easing.in(Easing.quad),  useNativeDriver: true }),
+          Animated.delay(600),
+        ])
+      );
+    dotAnim(dot1, 0).start();
+    dotAnim(dot2, 160).start();
+    dotAnim(dot3, 320).start();
+  }, []);
+
+  const skeletonOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.06, 0.14] });
+
+  return (
+    <View style={[l.panel, { paddingBottom: insets.bottom + 16 }]}>
+      {/* Label + bouncing dots */}
+      <View style={l.labelRow}>
+        <LinearGradient colors={['#1D4ED8', '#2563EB']} style={l.labelIcon}>
+          <Ionicons name="medical" size={11} color="#fff" />
+        </LinearGradient>
+        <Text style={l.labelText}>Next question coming up</Text>
+        <View style={l.dotsRow}>
+          {[dot1, dot2, dot3].map((d, i) => (
+            <Animated.View key={i} style={[l.dot, { transform: [{ translateY: d }] }]} />
+          ))}
+        </View>
+      </View>
+
+      {/* Skeleton rows mimicking MCQ options */}
+      {[1, 0.85, 0.70, 0.55].map((w, i) => (
+        <Animated.View
+          key={i}
+          style={[l.skeletonRow, { width: `${w * 100}%` as any, opacity: skeletonOpacity }]}
+        />
+      ))}
+
+      {/* Skeleton send button */}
+      <Animated.View style={[l.skeletonBtn, { opacity: skeletonOpacity }]} />
+    </View>
+  );
 }
 
 // ── Greeting Screen ───────────────────────────────────────────────────────────
@@ -368,10 +431,8 @@ const s = StyleSheet.create({
   qBadge:       { backgroundColor: 'rgba(37,99,235,0.25)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(37,99,235,0.40)' },
   qBadgeText:   { color: '#60A5FA', fontSize: 12, fontWeight: '800' },
 
-  questionArea:   { flex: 1, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 32 },
-  questionText:   { color: '#fff', fontSize: 24, fontWeight: '700', lineHeight: 36, letterSpacing: -0.3 },
-  processingRow:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 24 },
-  processingText: { color: 'rgba(255,255,255,0.40)', fontSize: 13 },
+  questionArea: { flex: 1, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 32 },
+  questionText: { color: '#fff', fontSize: 24, fontWeight: '700', lineHeight: 36, letterSpacing: -0.3 },
 
   inputPanel: { paddingHorizontal: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)', backgroundColor: '#0B1437', gap: 12 },
 
@@ -382,6 +443,19 @@ const s = StyleSheet.create({
 
   bodyBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.09)', alignSelf: 'center' },
   bodyBtnText: { color: 'rgba(255,255,255,0.35)', fontSize: 12 },
+});
+
+const l = StyleSheet.create({
+  panel:       { paddingHorizontal: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)', backgroundColor: '#0B1437', gap: 12 },
+
+  labelRow:    { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  labelIcon:   { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  labelText:   { color: 'rgba(255,255,255,0.35)', fontSize: 12, fontWeight: '600', flex: 1 },
+  dotsRow:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  dot:         { width: 5, height: 5, borderRadius: 3, backgroundColor: '#2563EB' },
+
+  skeletonRow: { height: 48, borderRadius: 14, backgroundColor: '#fff', alignSelf: 'flex-start' },
+  skeletonBtn: { height: 50, borderRadius: 12, backgroundColor: '#fff', width: '100%' },
 });
 
 const g = StyleSheet.create({
