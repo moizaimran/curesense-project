@@ -463,8 +463,8 @@ const s = StyleSheet.create({
   qBadge:       { backgroundColor: 'rgba(37,99,235,0.25)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(37,99,235,0.40)' },
   qBadgeText:   { color: '#60A5FA', fontSize: 12, fontWeight: '800' },
 
-  questionArea: { flex: 1, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 32 },
-  questionText: { color: '#fff', fontSize: 24, fontWeight: '700', lineHeight: 36, letterSpacing: -0.3 },
+  questionArea: { flex: 1, alignSelf: 'stretch', justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 24 },
+  questionText: { color: '#fff', fontSize: 23, fontWeight: '700', lineHeight: 34, letterSpacing: -0.3, flexShrink: 1 },
 
   inputPanel: { paddingHorizontal: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)', backgroundColor: '#0B1437', gap: 12 },
 

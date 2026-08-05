@@ -31,7 +31,7 @@ export default function MCQInput({ options, onSubmit, disabled }: Props) {
     <View style={s.wrap}>
       {/* Option chips — full-width rows */}
       <View style={s.chips}>
-        {options.map((opt, idx) => {
+        {options.slice(0, 5).map((opt, idx) => {
           const active = selected === opt;
           return (
             <TouchableOpacity
