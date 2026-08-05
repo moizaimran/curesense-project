@@ -166,6 +166,21 @@ export default function TranscriptScreen() {
               </Text>
             </View>
           ))}
+
+          {/* View Report button — only for completed sessions */}
+          {meta?.status === 'completed' && (
+            <TouchableOpacity
+              style={s.viewReportBtn}
+              onPress={() => router.push({ pathname: '/report-sheet', params: { session_id } } as any)}
+              activeOpacity={0.85}
+            >
+              <LinearGradient colors={['#1D4ED8', '#2563EB']} style={s.viewReportGrad}>
+                <Ionicons name="document-text-outline" size={18} color="#fff" />
+                <Text style={s.viewReportText}>View Full Report</Text>
+                <Ionicons name="arrow-forward" size={16} color="rgba(255,255,255,0.7)" />
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
         </ScrollView>
       )}
     </LinearGradient>
@@ -213,4 +228,8 @@ const s = StyleSheet.create({
 
   entryText:        { color: 'rgba(255,255,255,0.75)', fontSize: 14, lineHeight: 22 },
   entryTextPatient: { color: '#fff' },
+
+  viewReportBtn:  { marginTop: 8, borderRadius: 16, overflow: 'hidden' },
+  viewReportGrad: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 16, paddingHorizontal: 20 },
+  viewReportText: { color: '#fff', fontWeight: '800', fontSize: 16, flex: 1 },
 });

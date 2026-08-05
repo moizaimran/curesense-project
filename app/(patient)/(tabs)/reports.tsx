@@ -23,6 +23,7 @@ import { API_URL } from '@/constants/api';
 interface Session {
   _id:              string;
   status:           'in_progress' | 'completed' | 'abandoned' | 'failed';
+  session_name:     string;
   turn_count:       number;
   started_at:       string;
   completed_at:     string | null;
@@ -236,7 +237,7 @@ export default function ReportsScreen() {
                   key={sess._id}
                   style={s.card}
                   activeOpacity={0.85}
-                  onPress={() => router.push({ pathname: '/transcript', params: { session_id: sess._id } } as any)}
+                  onPress={() => router.push({ pathname: '/report-sheet', params: { session_id: sess._id } } as any)}
                 >
                   <View style={s.cardHeader}>
                     <View style={[s.statusDot, { backgroundColor: '#22C55E' }]} />
@@ -251,6 +252,9 @@ export default function ReportsScreen() {
                     </TouchableOpacity>
                   </View>
 
+                  {sess.session_name ? (
+                    <Text style={s.sessionName}>{sess.session_name}</Text>
+                  ) : null}
                   <Text style={s.cardSub}>{sess.turn_count} questions · {report ? 'Report generated' : 'Report pending'}</Text>
 
                   {report?.patient_summary?.patientComplaintSummary ? (
@@ -367,6 +371,7 @@ const s = StyleSheet.create({
   statusBadge:    { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
   statusBadgeText:{ fontSize: 11, fontWeight: '700' },
 
+  sessionName: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: -0.2 },
   cardSub:     { color: 'rgba(255,255,255,0.40)', fontSize: 12 },
   cardSummary: { color: 'rgba(255,255,255,0.70)', fontSize: 13, lineHeight: 20 },
 
