@@ -36,9 +36,9 @@ export default function Profile() {
 
             <div>
 
-                <h1 className="text-3xl font-bold text-slate-800">
+                {/* <h1 className="text-3xl font-bold text-slate-800">
                     Profile
-                </h1>
+                </h1> */}
 
                 <p className="text-gray-500 mt-2">
                     Manage your personal information and account settings.

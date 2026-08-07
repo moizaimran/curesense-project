@@ -8,8 +8,29 @@ import Profile from '../pages/Profile'
 import DoctorLogin from "../pages/auth/DoctorLogin";
 import DoctorSignup from "../pages/auth/DoctorSignup";
 import ForgotPassword from "../pages/auth/ForgotPassword";
+import AdminLayout from "../layouts/AdminLayout";
+
+import AdminDashboard from "../pages/admin/AdminDashboard";
+import ManageDoctors from "../pages/admin/ManageDoctors";
+import ManagePatients from "../pages/admin/ManagePatients";
+import Reports from "../pages/admin/Reports";
+import Settings from "../pages/admin/Settings";
+import DoctorDetails from "../pages/admin/DoctorDetails"
+import PatientDetail from "../pages/admin/PatientDetail";
+import AdminProfile from "../pages/admin/AdminProfile";
+import AdminLogin from "../pages/adminAuth/AdminLogin";
+import AdminForgotPassword from "../pages/adminAuth/AdminForgotPassword"
 const router = createBrowserRouter([
        // Authentication Routes (NO SIDEBAR / NO NAVBAR)
+      
+       {
+        path: "/admin/login",
+        element:<AdminLogin/>
+       },
+       {
+        path:"/admin/forgot-password",
+        element:<AdminForgotPassword/>
+       },
 
     {
         path: "/doctor/login",
@@ -51,11 +72,52 @@ const router = createBrowserRouter([
                 element: <Profile/>
             },
             
+            
 
         
         
         
         ]
+
+},
+{
+    path: '/admin',
+    element : <AdminLayout/>,
+    children: [
+        {
+            index: true,
+            element:<AdminDashboard/>
+        },
+        {
+            path:"doctors",
+            element:<ManageDoctors/>
+        },
+        {
+            path:"patients",
+            element:<ManagePatients/>
+        },
+        {
+            path:"reports",
+            element:<Reports/>
+        },
+        {
+            path:"settings",
+            element:<Settings/>
+        },
+        {
+            path: "doctors/:id",
+            element:<DoctorDetails/>
+        },
+        {
+            path: "patients/:id",
+            element: <PatientDetail/>
+        },
+        {
+          path: "profile",
+          element: <AdminProfile />
+}
+       
+    ]
 
 }
 ])
