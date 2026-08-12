@@ -96,7 +96,7 @@ export default function ReportsScreen() {
   async function handleDelete(sessionId: string) {
     Alert.alert(
       'Remove Session',
-      'This will hide the session and its report from your records. The data is retained securely and your doctor has been notified. This cannot be undone.',
+      'This will hide the session and its report from your records. The data is retained securely. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
