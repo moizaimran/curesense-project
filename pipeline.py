@@ -13,10 +13,10 @@
 #
 # No retrieval happens turn-by-turn during the interview — single pass at end.
 # ==============================================================================
-from glinker.diagnosis.finalize      import run_gliner, finalize_report
-from glinker.diagnosis.doctor_report import diagnose_for_doctor
-from glinker.diagnosis.patient_summary import summarize_for_patient
-from glinker.rag.retrieval           import retrieve_context, get_medication_info
+from glinker.diagnosis.finalize        import run_gliner, finalize_report
+from glinker.diagnosis.doctor_report   import generate_doctor_report
+from glinker.diagnosis.patient_summary import generate_patient_summary
+from glinker.rag.retrieval             import retrieve_context, get_medication_info
 
 
 def run_clinical_pipeline(interview) -> dict:
@@ -56,13 +56,13 @@ def run_clinical_pipeline(interview) -> dict:
             print(f"[openFDA] get_medication_info failed: {e} — continuing without drug data.")
 
     # ── 5. Doctor-facing grounded report ─────────────────────────────────────
-    doctor_report = diagnose_for_doctor(
-        transcript_text, report["entities"], retrieved_chunks, medication_info
+    doctor_report = generate_doctor_report(
+        transcript_text, report["entities"], retrieved_chunks, medication_info, []
     )
 
     # ── 6. Patient-facing plain-language summary ──────────────────────────────
-    patient_summary = summarize_for_patient(
-        transcript_text, report["entities"], retrieved_chunks, medication_info
+    patient_summary = generate_patient_summary(
+        transcript_text, report["entities"], retrieved_chunks, medication_info, []
     )
 
     return {
@@ -70,7 +70,7 @@ def run_clinical_pipeline(interview) -> dict:
         "rawEntities"     : gliner_entities,
         "verifiedEntities": report["entities"],
         "ragQuery"        : rag_query,
-        "rankedDiseases"  : report["rankedDiseases"],
+        "rankedDiseases"  : [],
         "retrievedSources": retrieved_chunks,
         "medicationInfo"  : medication_info,
         "doctorReport"    : doctor_report,
@@ -117,7 +117,7 @@ def print_clinical_report(report: dict) -> None:
         print("\n" + "=" * 60)
         print("DOCTOR-FACING REPORT")
         print("=" * 60)
-        print(f"Specialty : {dr['specialtyRecommendation']}")
+        print(f"Specialty : {dr['recommendedSpecialty']}")
         print(f"Reasoning : {dr['specialtyReasoning']}")
         if dr.get("clinicalConsiderations"):
             print("\nClinical Considerations (from retrieved guidelines):")

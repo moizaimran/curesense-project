@@ -211,7 +211,6 @@ def pipeline_finalize():
                 },
             ],
             max_completion_tokens=20,
-            temperature=0.4,
         )
         session_name = name_resp.choices[0].message.content.strip().strip('"\'').strip(".")
         print(f"[Session Name] {session_name!r}")

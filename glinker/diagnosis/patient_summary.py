@@ -52,7 +52,7 @@ def generate_patient_summary(
     try:
         response = config.openai_client.chat.completions.create(
             model=config.LLM_CONFIG["model"],
-            max_completion_tokens=config.LLM_CONFIG["patient_summary_max_tokens"],
+            max_completion_tokens=config.LLM_CONFIG["diagnose_max_tokens"],
             reasoning_effort=config.LLM_CONFIG["reasoning_effort"],
             messages=[
                 {"role": "system", "content": PATIENT_SUMMARY_PROMPT},
