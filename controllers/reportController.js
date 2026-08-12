@@ -7,7 +7,7 @@ const { canAccessPatient } = require("../middleware/auth");
 
 // GET /api/reports/:id
 const getReport = asyncHandler(async (req, res) => {
-  const report = await Report.findById(req.params.id);
+  const report = await Report.findOne({ _id: req.params.id, is_deleted: { $ne: true } });
   if (!report) return res.status(404).json({ error: "Report not found" });
   if (!canAccessPatient(req.user, report.patient_id)) {
     return res.status(403).json({ error: "Access denied" });
@@ -26,7 +26,7 @@ const getReportsForPatient = asyncHandler(async (req, res) => {
 
 // GET /api/reports/session/:sessionId
 const getReportForSession = asyncHandler(async (req, res) => {
-  const report = await Report.findOne({ session_id: req.params.sessionId });
+  const report = await Report.findOne({ session_id: req.params.sessionId, is_deleted: { $ne: true } });
   if (!report) return res.status(404).json({ error: "Report not found" });
   if (!canAccessPatient(req.user, report.patient_id)) {
     return res.status(403).json({ error: "Access denied" });

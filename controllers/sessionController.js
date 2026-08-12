@@ -132,7 +132,7 @@ const processTurn = async (req, res) => {
 
       session.status       = "completed";
       session.completed_at = new Date();
-      if (sessionName) session.session_name = sessionName;
+      if (result.sessionName) session.session_name = result.sessionName;
       await session.save();
 
       const report = await Report.create({

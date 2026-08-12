@@ -34,7 +34,7 @@ app.get("/health", (req, res) => res.json({ status: "ok" }));
 // asyncHandler in controllers forwards errors here via next(err).
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  res.status(400).json({ error: err.message });
+  res.status(err.status || 500).json({ error: err.message });
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
