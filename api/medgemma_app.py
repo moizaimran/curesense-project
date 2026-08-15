@@ -58,14 +58,39 @@ def _load_model():
     import torch
     from transformers import AutoProcessor, AutoModelForImageTextToText
 
+    # VRAM before load — confirms both GPUs are visible and have headroom
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            free, total = torch.cuda.mem_get_info(i)
+            print(f"[MedGemma] GPU {i} VRAM before load: {free/1e9:.1f} GB free / {total/1e9:.1f} GB total")
+
     print("[MedGemma] Loading model google/medgemma-1.5-4b-it …")
     _processor = AutoProcessor.from_pretrained("google/medgemma-1.5-4b-it")
+
+    # Pin to GPU 1 so MedGemma never competes with Flask's Whisper + GLiNER on GPU 0.
+    # Fallback: Kaggle occasionally provisions only 1 T4 despite the "2x T4" setting —
+    # device_map={"": 1} would raise an error in that case, so we detect and fall back.
+    _n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    if _n_gpus >= 2:
+        _device_map = {"": 1}
+        print("[MedGemma] Pinning to GPU 1 (2 GPUs detected)")
+    else:
+        print(f"[MedGemma] WARNING: only {_n_gpus} GPU(s) available — falling back to device_map='auto'")
+        _device_map = "auto"
+
     _model = AutoModelForImageTextToText.from_pretrained(
         "google/medgemma-1.5-4b-it",
         torch_dtype=torch.bfloat16,
-        device_map="auto",
+        device_map=_device_map,
     )
     print("[MedGemma] Model loaded.")
+
+    # VRAM after load — confirms the split: GPU 0 still free for Flask, GPU 1 mostly used
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            free, total = torch.cuda.mem_get_info(i)
+            print(f"[MedGemma] GPU {i} VRAM after load:  {free/1e9:.1f} GB free / {total/1e9:.1f} GB total")
+
     return _model, _processor
 
 
