@@ -55,6 +55,13 @@ export default function PatientLayout() {
           tabBarIcon: ({ color }) => <Ionicons name="chatbubbles-outline" size={24} color={color as string} />,
         }}
       />
+      <Tabs.Screen
+        name="scan"
+        options={{
+          title: 'Scan',
+          tabBarIcon: ({ color }) => <Ionicons name="scan-outline" size={24} color={color as string} />,
+        }}
+      />
     </Tabs>
   );
 }
