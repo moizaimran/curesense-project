@@ -29,12 +29,13 @@ import requests as http
 from flask import Flask, request, jsonify
 
 from glinker import config
-from glinker.interview.session  import run_interview_turn
-from glinker.interview.prompts  import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT
+from glinker.interview.session         import run_interview_turn
+from glinker.interview.prompts         import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT
 from glinker.diagnosis.finalize        import run_gliner, finalize_report
 from glinker.rag.retrieval             import retrieve_context, get_medication_info
 from glinker.disease.ranker            import rank_diseases
 from glinker.diagnosis.combined_report import generate_combined_report
+from glinker.images.pdf_analysis       import analyze_pdf
 
 app = Flask(__name__)
 
@@ -229,6 +230,26 @@ def pipeline_finalize():
         "interpretedDiagnoses": interpreted_diagnoses,
         "sessionName"         : session_name,
     })
+
+
+# ── Images: PDF analysis ─────────────────────────────────────────────────────
+
+@app.route("/images/analyze-pdf", methods=["POST"])
+def images_analyze_pdf():
+    data       = request.get_json(force=True)
+    pdf_base64 = data.get("pdf_base64", "").strip()
+    filename   = data.get("filename", "document.pdf")
+
+    if not pdf_base64:
+        return jsonify({"error": "pdf_base64 is required"}), 400
+
+    try:
+        result = analyze_pdf(pdf_base64, filename)
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 422
+    except Exception as exc:
+        return jsonify({"error": f"Analysis failed: {exc}"}), 502
 
 
 # ── Launch (called from the notebook after secrets are loaded) ────────────────

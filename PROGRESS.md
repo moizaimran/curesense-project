@@ -290,3 +290,4 @@ Cost reduced from ~$0.03-0.04 → ~$0.01 by:
 - Cell 7: `load_datasets()` — rebuilds TF-IDF from 9 CSVs (fast, in-memory)
 - Cell 8: Flask + Ngrok → prints `AI_SERVICE_URL` → paste into Backend `.env`
 - GitHub: `https://github.com/moizaimran/curesense-project` · AI branch: `hassan-branch` · Backend branch: `backend`
+ai

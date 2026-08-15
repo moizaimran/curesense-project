@@ -12,3 +12,5 @@ pandas
 scikit-learn
 numpy
 Pillow>=10.4.0,<11.0
+pdfplumber
+pypdfium2
