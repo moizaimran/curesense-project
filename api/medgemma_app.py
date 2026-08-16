@@ -156,17 +156,18 @@ def _mri_slices_to_images(volume: np.ndarray) -> list:
 _XRAY_PROMPT = """\
 You are a radiologist assistant. Analyze this chest X-ray image carefully.
 
-Return ONLY a valid JSON object with these exact keys:
+Respond with ONLY a valid JSON object. Begin your response with { and end with }. No preamble, no explanation outside the JSON.
+
 {
   "summary":          "<2-3 sentence plain-language description>",
-  "findings":         ["<finding 1>", "..."],
-  "flagged_abnormal": true or false,
-  "abnormal_items":   ["<abnormal finding>", "..."],
+  "findings":         ["<finding 1>", "<finding 2>"],
+  "flagged_abnormal": true,
+  "abnormal_items":   ["<abnormal finding>"],
   "impression":       "<overall radiological impression>",
   "disclaimer":       "This AI analysis is for informational purposes only and does not constitute a medical diagnosis. Please consult a radiologist.",
   "model_used":       "medgemma-1.5-4b"
 }
-Flag abnormal only if clearly pathological findings are visible."""
+Set flagged_abnormal to true only if clearly pathological findings are visible."""
 
 # CT/MRI prompt is split into instruction (placed before the images) and query
 # (placed after), matching the multi-image format in the official notebook.
@@ -178,18 +179,82 @@ _CT_MRI_INSTRUCTION = (
 _CT_MRI_QUERY = """\
 
 
-Based on all the slices provided above, return ONLY a valid JSON object with these exact keys:
+Based on all the slices provided above, respond with ONLY a valid JSON object. Begin your response with { and end with }. No preamble, no explanation outside the JSON.
+
 {
   "summary":          "<2-3 sentence plain-language description of the overall scan>",
   "modality":         "<CT or MRI>",
-  "findings":         ["<finding 1>", "..."],
-  "flagged_abnormal": true or false,
-  "abnormal_items":   ["<abnormal finding>", "..."],
+  "findings":         ["<finding 1>", "<finding 2>"],
+  "flagged_abnormal": true,
+  "abnormal_items":   ["<abnormal finding>"],
   "impression":       "<overall radiological impression>",
   "disclaimer":       "This AI analysis is for informational purposes only and does not constitute a medical diagnosis. Please consult a radiologist.",
   "model_used":       "medgemma-1.5-4b"
 }
-Flag abnormal only if clearly pathological findings are visible."""
+Set flagged_abnormal to true only if clearly pathological findings are visible."""
+
+
+# ── Text-format fallback parser ───────────────────────────────────────────────
+
+def _parse_text_fallback(text: str) -> dict:
+    """
+    MedGemma 4B sometimes ignores JSON instructions and returns labeled text:
+      FINDINGS: The lungs are clear...
+      FLAGGED_ABNORMAL: true
+      ABNORMAL_ITEMS: None
+      IMPRESSION: Normal chest X-ray.
+    This parser extracts those fields into the same dict shape as JSON output.
+    """
+    import re
+
+    result = {
+        "summary":          "",
+        "findings":         [],
+        "flagged_abnormal": False,
+        "abnormal_items":   [],
+        "impression":       "",
+        "disclaimer":       (
+            "This AI analysis is for informational purposes only and does not "
+            "constitute a medical diagnosis. Please consult a radiologist."
+        ),
+        "model_used":       "medgemma-1.5-4b",
+    }
+
+    # Each labeled section runs until the next ALL_CAPS_LABEL: or end of string
+    _LABEL_RE = re.compile(
+        r'^([A-Z][A-Z_]{2,}):\s*(.*?)(?=\n[A-Z][A-Z_]{2,}:|$)',
+        re.MULTILINE | re.DOTALL,
+    )
+
+    found_any = False
+    for m in _LABEL_RE.finditer(text):
+        label = m.group(1)
+        value = m.group(2).strip()
+        found_any = True
+
+        if label in ("FINDINGS", "SUMMARY"):
+            result["summary"] = value
+            parts = [p.strip() for p in re.split(r'(?<=[.!?])\s+|\n[-•*]\s*', value) if p.strip()]
+            result["findings"] = parts or [value]
+        elif label == "FLAGGED_ABNORMAL":
+            result["flagged_abnormal"] = value.lower().startswith("true")
+        elif label in ("ABNORMAL_ITEMS", "ABNORMAL"):
+            if value and value.lower() not in ("none", "n/a", ""):
+                parts = [p.strip() for p in re.split(r'\n[-•*]?\s+|(?<=[.!?])\s+', value) if p.strip()]
+                result["abnormal_items"] = parts or [value]
+        elif label == "IMPRESSION":
+            result["impression"] = value
+        elif label == "MODALITY":
+            result["modality"] = value
+        elif label == "DISCLAIMER":
+            result["disclaimer"] = value
+        elif label == "MODEL_USED":
+            result["model_used"] = value
+
+    if not found_any:
+        result["summary"] = text.strip()
+
+    return result
 
 
 # ── Inference helper ──────────────────────────────────────────────────────────
@@ -229,28 +294,12 @@ def _run_inference(prompt: str, image) -> dict:
     end   = output.rfind("}") + 1
 
     if start == -1 or end == 0:
-        return {
-            "summary":          output.strip(),
-            "findings":         [],
-            "flagged_abnormal": False,
-            "abnormal_items":   [],
-            "impression":       "",
-            "disclaimer":       "This AI analysis is for informational purposes only and does not constitute a medical diagnosis.",
-            "model_used":       "medgemma-1.5-4b",
-        }
+        return _parse_text_fallback(output.strip())
 
     try:
         return json.loads(output[start:end])
     except json.JSONDecodeError:
-        return {
-            "summary":          output.strip(),
-            "findings":         [],
-            "flagged_abnormal": False,
-            "abnormal_items":   [],
-            "impression":       "",
-            "disclaimer":       "This AI analysis is for informational purposes only and does not constitute a medical diagnosis.",
-            "model_used":       "medgemma-1.5-4b",
-        }
+        return _parse_text_fallback(output.strip())
 
 
 def _run_multi_slice_inference(instruction: str, query: str, images: list) -> dict:
@@ -292,23 +341,13 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
     start = output.find("{")
     end   = output.rfind("}") + 1
 
-    _fallback = {
-        "summary":          output.strip(),
-        "findings":         [],
-        "flagged_abnormal": False,
-        "abnormal_items":   [],
-        "impression":       "",
-        "disclaimer":       "This AI analysis is for informational purposes only and does not constitute a medical diagnosis.",
-        "model_used":       "medgemma-1.5-4b",
-    }
-
     if start == -1 or end == 0:
-        return _fallback
+        return _parse_text_fallback(output.strip())
 
     try:
         return json.loads(output[start:end])
     except json.JSONDecodeError:
-        return _fallback
+        return _parse_text_fallback(output.strip())
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
