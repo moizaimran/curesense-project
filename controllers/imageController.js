@@ -19,7 +19,9 @@ const AI_SERVICE_URL      = process.env.AI_SERVICE_URL       || "";
 const MEDGEMMA_URL        = process.env.MEDGEMMA_SERVICE_URL  || "";
 const RETRY_DELAYS_MS     = [1000, 2000, 4000];
 const VALID_TYPES         = new Set(["pdf", "xray", "ct_mri"]);
-const MAX_BASE64_BYTES    = 55_000_000; // ~40 MB raw file limit after base64 overhead
+// CT/MRI ZIPs can contain full DICOM series — allow up to ~150 MB raw (200 MB base64).
+// PDF and X-ray stay at the tighter 40 MB limit.
+const MAX_BASE64_BYTES    = { pdf: 55_000_000, xray: 55_000_000, ct_mri: 200_000_000 };
 // Worst-case: 3 MedGemma attempts × 180s + Cloudinary + retries ≈ 10 min; 12 min gives buffer.
 const ANALYSIS_TIMEOUT_MS = 12 * 60 * 1000;
 
@@ -31,8 +33,9 @@ const uploadImage = asyncHandler(async (req, res) => {
   if (!file_base64)           return res.status(400).json({ error: "file_base64 is required" });
   if (!VALID_TYPES.has(upload_type))
     return res.status(400).json({ error: "upload_type must be pdf, xray, or ct_mri" });
-  if (file_base64.length > MAX_BASE64_BYTES)
-    return res.status(413).json({ error: "File too large (max ~40 MB)" });
+  const limitBytes = MAX_BASE64_BYTES[upload_type] ?? 55_000_000;
+  if (file_base64.length > limitBytes)
+    return res.status(413).json({ error: upload_type === "ct_mri" ? "File too large (max ~150 MB for CT/MRI)" : "File too large (max ~40 MB)" });
 
   const record = await ImageUpload.create({
     user_id:           req.user._id,
