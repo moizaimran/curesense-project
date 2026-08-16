@@ -365,3 +365,38 @@ one ngrok URL → FastAPI proxy on port 5003
 - **MedGemma fallback parser**: if model returns labeled text instead of JSON (common for 4B), `_parse_text_fallback()` extracts fields via regex
 - **Privacy**: `storage_url` never sent to client; no PHI logged to console
 - **GPU split**: Flask (Whisper + GLiNER) on GPU 0, MedGemma on GPU 1 via `device_map={"": 1}`
+- **Magic byte validation**: upload rejected before any AI call if file type doesn't match declared `upload_type`
+
+---
+
+### CT / MRI ZIP Upload — Supported & Unsupported Cases
+
+#### ✅ Supported
+
+| Case | Structure | How detected |
+|------|-----------|--------------|
+| Hospital CD/DVD export | `DICOM/IM0001`, `IM0002`… (no extension) inside ZIP | Magic bytes: bytes 128–131 == `DICM` |
+| Simple .dcm ZIP | `0001.dcm`, `0002.dcm`… | File extension `.dcm` |
+| .dcm in subfolder | `series1/0001.dcm`… | File extension, any depth |
+| JPEG/PNG exports | `slice001.jpg`… | File extension |
+| Mixed content (viewer software on CD) | DICOM files + `.exe`, `.inf`, `readme.txt` | Non-DICOM files skipped silently |
+| Single .dcm file (no ZIP) | One DICOM slice | pydicom direct read |
+| Single JPEG/PNG (no ZIP) | One image file | PIL direct read |
+
+#### ❌ Not Supported — returns clear error message
+
+| Case | Error shown to user |
+|------|---------------------|
+| **Multiple series in one ZIP** (e.g. axial + coronal + scout) | "ZIP contains N separate scan series. Please ZIP only one series at a time." |
+| **Philips PAR/REC format** (.par + .rec files) | "Philips PAR/REC format is not supported. Ask your imaging centre for a DICOM export." |
+| **Old DICOM without standard preamble** (pre-1993 equipment) | "Files may be old-format DICOM without the standard header, which is not supported." |
+| **NIfTI format** (.nii, .nii.gz) | Falls through to generic "no supported files found" error |
+| **PDF uploaded into X-ray or CT/MRI slot** | "That looks like a PDF — please use the PDF / Report option instead." |
+| **Image/scan uploaded into PDF slot** | "That looks like an image or scan — please use the X-ray or CT/MRI option instead." |
+
+#### Size limits
+| Type | Max file size |
+|------|--------------|
+| PDF | 40 MB |
+| X-ray | 40 MB |
+| CT / MRI ZIP | 150 MB (~100–200 DICOM slices; MedGemma samples 10 for inference) |
