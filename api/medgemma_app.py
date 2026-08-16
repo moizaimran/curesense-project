@@ -494,12 +494,20 @@ def _dicoms_from_zip(zf: zipfile.ZipFile, dcm_names: list, modality: str) -> lis
         try:
             arr = pydicom.pixels.apply_rescale(dcm.pixel_array, dcm).astype(np.float32)
         except Exception:
-            arr = dcm.pixel_array.astype(np.float32)
+            try:
+                arr = dcm.pixel_array.astype(np.float32)
+            except Exception:
+                continue  # skip slices whose pixel data can't be decoded
         if arr.ndim == 2:
             arrays.append(arr)
 
     if not arrays:
-        raise ValueError("DICOM files in ZIP have no 2-D pixel data.")
+        raise ValueError(
+            "Could not decode the DICOM pixel data. "
+            "The scan uses JPEG Lossless compression which requires pylibjpeg. "
+            "Add this line to your Kaggle notebook install cell and re-run: "
+            "!pip install -q pylibjpeg pylibjpeg-libjpeg"
+        )
 
     volume = np.stack(arrays)  # (Z, H, W)
     return _ct_slices_to_images(volume) if modality.upper() == "CT" else _mri_slices_to_images(volume)
