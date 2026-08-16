@@ -34,23 +34,17 @@ clinically relevant information.
 
 Return a JSON object with these exact keys:
 {
-  "summary":             "<2-3 sentence plain-language summary>",
-  "document_type":       "<lab_report|prescription|imaging_report|discharge_summary|other>",
-  "key_findings":        ["<finding 1>", "..."],
-  "medications":         ["<medication 1>", "..."],
-  "flagged_abnormal":    true or false,
-  "abnormal_items":      ["<item 1>", "..."],
-  "recommended_actions": ["<action 1>", "..."],
-  "impression":          "<overall clinical impression, or empty string if not applicable>",
-  "disclaimer":          "This AI analysis is for informational purposes only and does not constitute medical advice. Please consult a qualified healthcare professional.",
-  "model_used":          "gpt"
+  "summary":          "<2-3 sentence plain-language summary of what the document contains>",
+  "findings":         ["<key finding 1>", "<key finding 2>"],
+  "flagged_abnormal": true or false,
+  "impression":       "<overall clinical impression, or empty string if not applicable>"
 }
 
 Rules:
 - Flag abnormal ONLY if there are clearly out-of-range lab values, critical findings, or urgent recommendations.
 - Do not invent information not present in the document.
-- Keep lists concise — max 8 items each.
-- Return empty lists [] for sections with no relevant content."""
+- Keep findings concise — max 8 items.
+- Return empty list [] for findings if no clinically relevant content is present."""
 
 
 # ── Public entry point ────────────────────────────────────────────────────────

@@ -159,13 +159,10 @@ You are a radiologist assistant. Analyze this chest X-ray image carefully.
 Respond with ONLY a valid JSON object. Begin your response with { and end with }. No preamble, no explanation outside the JSON.
 
 {
-  "summary":          "<2-3 sentence plain-language description>",
+  "summary":          "<2-3 sentence plain-language description of what you see>",
   "findings":         ["<finding 1>", "<finding 2>"],
   "flagged_abnormal": true,
-  "abnormal_items":   ["<abnormal finding>"],
-  "impression":       "<overall radiological impression>",
-  "disclaimer":       "This AI analysis is for informational purposes only and does not constitute a medical diagnosis. Please consult a radiologist.",
-  "model_used":       "medgemma-1.5-4b"
+  "impression":       "<overall radiological impression>"
 }
 Set flagged_abnormal to true only if clearly pathological findings are visible."""
 
@@ -183,13 +180,9 @@ Based on all the slices provided above, respond with ONLY a valid JSON object. B
 
 {
   "summary":          "<2-3 sentence plain-language description of the overall scan>",
-  "modality":         "<CT or MRI>",
   "findings":         ["<finding 1>", "<finding 2>"],
   "flagged_abnormal": true,
-  "abnormal_items":   ["<abnormal finding>"],
-  "impression":       "<overall radiological impression>",
-  "disclaimer":       "This AI analysis is for informational purposes only and does not constitute a medical diagnosis. Please consult a radiologist.",
-  "model_used":       "medgemma-1.5-4b"
+  "impression":       "<overall radiological impression>"
 }
 Set flagged_abnormal to true only if clearly pathological findings are visible."""
 
@@ -211,13 +204,7 @@ def _parse_text_fallback(text: str) -> dict:
         "summary":          "",
         "findings":         [],
         "flagged_abnormal": False,
-        "abnormal_items":   [],
         "impression":       "",
-        "disclaimer":       (
-            "This AI analysis is for informational purposes only and does not "
-            "constitute a medical diagnosis. Please consult a radiologist."
-        ),
-        "model_used":       "medgemma-1.5-4b",
     }
 
     # Each labeled section runs until the next ALL_CAPS_LABEL: or end of string
@@ -238,18 +225,8 @@ def _parse_text_fallback(text: str) -> dict:
             result["findings"] = parts or [value]
         elif label == "FLAGGED_ABNORMAL":
             result["flagged_abnormal"] = value.lower().startswith("true")
-        elif label in ("ABNORMAL_ITEMS", "ABNORMAL"):
-            if value and value.lower() not in ("none", "n/a", ""):
-                parts = [p.strip() for p in re.split(r'\n[-•*]?\s+|(?<=[.!?])\s+', value) if p.strip()]
-                result["abnormal_items"] = parts or [value]
         elif label == "IMPRESSION":
             result["impression"] = value
-        elif label == "MODALITY":
-            result["modality"] = value
-        elif label == "DISCLAIMER":
-            result["disclaimer"] = value
-        elif label == "MODEL_USED":
-            result["model_used"] = value
 
     if not found_any:
         result["summary"] = text.strip()
@@ -372,9 +349,7 @@ def analyze_xray(req: XrayRequest):
 
     img_bytes = base64.b64decode(req.image_base64)
     img       = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    result    = _run_inference(_XRAY_PROMPT, img)
-    result["model_used"] = "medgemma-1.5-4b"
-    return result
+    return _run_inference(_XRAY_PROMPT, img)
 
 
 @app.post("/analyze/ct-mri")
