@@ -36,18 +36,10 @@ type UploadType = 'pdf' | 'xray' | 'ct_mri';
 type UploadStatus = 'processing' | 'complete' | 'error' | 'unavailable';
 
 interface AnalysisResult {
-  summary?:             string;
-  document_type?:       string;
-  modality?:            string;
-  key_findings?:        string[];
-  findings?:            string[];
-  medications?:         string[];
-  flagged_abnormal?:    boolean;
-  abnormal_items?:      string[];
-  recommended_actions?: string[];
-  impression?:          string;
-  disclaimer?:          string;
-  model_used?:          string;
+  summary?:          string;
+  findings?:         string[];
+  flagged_abnormal?: boolean;
+  impression?:       string;
 }
 
 interface ImageUpload {
@@ -97,8 +89,8 @@ const UPLOAD_OPTIONS: {
     sublabel:  'MedGemma 4B',
     icon:      'body-outline',
     color:     '#8B5CF6',
-    mimeTypes: ['image/jpeg', 'image/png', 'application/dicom'],
-    accept:    'image/*,.dcm',
+    mimeTypes: ['application/zip', 'application/x-zip-compressed', 'image/jpeg', 'image/png', 'application/dicom'],
+    accept:    'application/zip,.zip,image/*,.dcm',
   },
 ];
 
@@ -213,10 +205,15 @@ export default function ScanScreen() {
         return;
       }
 
-      const asset = picked.assets[0];
-      const MAX_BYTES = 40 * 1024 * 1024;
+      const asset    = picked.assets[0];
+      const MAX_BYTES = opt.type === 'ct_mri' ? 150 * 1024 * 1024 : 40 * 1024 * 1024;
       if (asset.size && asset.size > MAX_BYTES) {
-        Alert.alert('File too large', 'Please select a file under 40 MB.');
+        Alert.alert(
+          'File too large',
+          opt.type === 'ct_mri'
+            ? 'Please upload a ZIP under 150 MB. Tip: include only the key slices (50–150 DICOM files).'
+            : 'Please select a file under 40 MB.',
+        );
         setUploading(null);
         return;
       }
@@ -309,6 +306,22 @@ export default function ScanScreen() {
               <Text style={[s.uploadCardSub, { color: opt.color }]}>{opt.sublabel}</Text>
             </TouchableOpacity>
           ))}
+        </View>
+
+        {/* CT / MRI upload instructions */}
+        <View style={s.infoHint}>
+          <Ionicons name="information-circle-outline" size={15} color="#8B5CF6" style={{ marginTop: 1 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.infoHintTitle}>CT / MRI — upload as ZIP</Text>
+            <Text style={s.infoHintBody}>
+              CT and MRI scans consist of many files (DICOM series). Compress your scan folder into a single{' '}
+              <Text style={{ color: '#C4B5FD' }}>.zip</Text> file and upload it here. Max 150 MB
+              (50–150 DICOM slices is plenty for analysis).
+            </Text>
+            <Text style={s.infoHintBody}>
+              A single X-ray image upload as JPEG / PNG is also supported.
+            </Text>
+          </View>
         </View>
 
         {/* Error */}
@@ -562,6 +575,11 @@ const s = StyleSheet.create({
   uploadIconWrap:   { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   uploadCardLabel:  { color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center' },
   uploadCardSub:    { fontSize: 10, fontWeight: '600', textAlign: 'center' },
+
+  // CT/MRI upload hint
+  infoHint:      { flexDirection: 'row', gap: 8, backgroundColor: 'rgba(139,92,246,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(139,92,246,0.20)', padding: 12, marginTop: 8 },
+  infoHintTitle: { color: '#C4B5FD', fontSize: 12, fontWeight: '700', marginBottom: 3 },
+  infoHintBody:  { color: 'rgba(255,255,255,0.45)', fontSize: 11, lineHeight: 16, marginBottom: 4 },
 
   // Error
   errorCard:  { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(248,113,113,0.10)', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(248,113,113,0.25)' },
