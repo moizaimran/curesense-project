@@ -195,10 +195,10 @@ Respond with ONLY a valid JSON object. Begin your response with { and end with }
 {
   "summary":          "<2-3 sentence plain-language description of what you see>",
   "findings":         ["<finding 1>", "<finding 2>"],
-  "flagged_abnormal": true,
+  "flagged_abnormal": false,
   "impression":       "<overall radiological impression>"
 }
-Set flagged_abnormal to true only if clearly pathological findings are visible."""
+Set flagged_abnormal to true ONLY if you see clearly pathological findings (e.g. consolidation, effusion, mass, fracture). Set it to false for a normal or unremarkable X-ray. If findings is empty, flagged_abnormal must be false."""
 
 # CT/MRI prompt is split into instruction (placed before the images) and query
 # (placed after), matching the multi-image format in the official notebook.
