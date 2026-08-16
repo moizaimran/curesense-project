@@ -68,7 +68,18 @@ const listImages = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 })
     .limit(20)
     .select("-storage_url -__v");
-  res.json(records);
+  res.json(records.map(r => ({
+    id:                r._id,
+    status:            r.status,
+    upload_type:       r.upload_type,
+    original_filename: r.original_filename,
+    model_used:        r.model_used,
+    analysis_result:   r.analysis_result,
+    flagged_abnormal:  r.flagged_abnormal,
+    error_message:     r.error_message,
+    created_at:        r.createdAt,
+    updated_at:        r.updatedAt,
+  })));
 });
 
 // ── Status / result ───────────────────────────────────────────────────────────
@@ -94,6 +105,7 @@ const getImageStatus = asyncHandler(async (req, res) => {
 // ── Background processing ─────────────────────────────────────────────────────
 
 async function _processInBackground(recordId, fileBase64, uploadType, mimeType, filename) {
+  console.log(`[Images] Processing ${recordId} type=${uploadType} file=${filename}`);
   try {
     // 1. Upload raw file to Cloudinary for durable storage
     const cloudinaryType = uploadType === "pdf" ? "raw" : "image";
@@ -152,7 +164,8 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
         error_message:    result.error_message || "",
       }
     );
-  } catch {
+  } catch (err) {
+    console.error(`[Images] Unexpected error for ${recordId}:`, err?.message || err);
     await ImageUpload.findOneAndUpdate(
       { _id: recordId, status: "processing" },
       { status: "error", error_message: "An unexpected error occurred. Please try again." }
@@ -172,15 +185,24 @@ async function _analyzePdf(pdfBase64, filename) {
       const resp = await axios.post(
         `${AI_SERVICE_URL}/images/analyze-pdf`,
         { pdf_base64: pdfBase64, filename },
-        { timeout: 120_000 }
+        { timeout: 120_000, validateStatus: () => true }
       );
-      return {
-        status:          "complete",
-        model_used:      resp.data.model_used || "gpt",
-        analysis_result: resp.data,
-        error_message:   "",
-      };
-    } catch {
+      console.log(`[Images] PDF analysis HTTP ${resp.status} for attempt ${attempt + 1}`);
+      if (resp.status === 200) {
+        return {
+          status:          "complete",
+          model_used:      resp.data.model_used || "gpt",
+          analysis_result: resp.data,
+          error_message:   "",
+        };
+      }
+      // Flask returned an error response — don't retry, surface the real message
+      const msg = resp.data?.error || `Analysis failed (HTTP ${resp.status})`;
+      console.error(`[Images] PDF analysis error from Flask: ${msg}`);
+      return { status: "error", model_used: "gpt", analysis_result: null, error_message: msg };
+    } catch (err) {
+      // Only network/timeout errors reach here — retry those
+      console.warn(`[Images] PDF attempt ${attempt + 1} network error: ${err?.message}`);
       if (attempt < 2) await _delay(RETRY_DELAYS_MS[attempt]);
     }
   }
@@ -212,15 +234,22 @@ async function _analyzeMedgemma(imageBase64, uploadType) {
       const resp = await axios.post(
         `${MEDGEMMA_URL}${endpoint}`,
         { image_base64: imageBase64, modality: uploadType === "ct_mri" ? "ct" : undefined },
-        { timeout: 180_000 }
+        { timeout: 180_000, validateStatus: () => true }
       );
-      return {
-        status:          "complete",
-        model_used:      "medgemma-1.5-4b",
-        analysis_result: resp.data,
-        error_message:   "",
-      };
-    } catch {
+      console.log(`[Images] MedGemma HTTP ${resp.status} for attempt ${attempt + 1}`);
+      if (resp.status === 200) {
+        return {
+          status:          "complete",
+          model_used:      "medgemma-1.5-4b",
+          analysis_result: resp.data,
+          error_message:   "",
+        };
+      }
+      const msg = resp.data?.detail || resp.data?.error || `Analysis failed (HTTP ${resp.status})`;
+      console.error(`[Images] MedGemma error: ${msg}`);
+      return { status: "error", model_used: "medgemma", analysis_result: null, error_message: msg };
+    } catch (err) {
+      console.warn(`[Images] MedGemma attempt ${attempt + 1} network error: ${err?.message}`);
       if (attempt < 2) await _delay(RETRY_DELAYS_MS[attempt]);
     }
   }
