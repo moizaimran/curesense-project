@@ -25,6 +25,47 @@ const MAX_BASE64_BYTES    = { pdf: 55_000_000, xray: 55_000_000, ct_mri: 200_000
 // Worst-case: 3 MedGemma attempts × 180s + Cloudinary + retries ≈ 10 min; 12 min gives buffer.
 const ANALYSIS_TIMEOUT_MS = 12 * 60 * 1000;
 
+// ── File-type detection via magic bytes ──────────────────────────────────────
+//
+// Decoding only the first 300 base64 chars gives ~225 raw bytes — enough to
+// reach the DICOM magic signature which sits at offset 128.
+//
+// Detected types:
+//   "pdf"     — %PDF  (25 50 44 46)
+//   "image"   — JPEG (FF D8 FF) or PNG (89 50 4E 47)
+//   "zip"     — PK\x03\x04 (50 4B 03 04)
+//   "dicom"   — "DICM" at byte offset 128  (44 49 43 4D)
+//   "unknown" — none of the above
+
+function _detectFileType(base64) {
+  const buf = Buffer.from(base64.slice(0, 300), "base64");
+
+  if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46)
+    return "pdf";                                                   // %PDF
+
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF)
+    return "image";                                                  // JPEG
+
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47)
+    return "image";                                                  // PNG
+
+  if (buf[0] === 0x50 && buf[1] === 0x4B && buf[2] === 0x03 && buf[3] === 0x04)
+    return "zip";                                                    // ZIP
+
+  if (buf.length >= 132 &&
+      buf[128] === 0x44 && buf[129] === 0x49 && buf[130] === 0x43 && buf[131] === 0x4D)
+    return "dicom";                                                  // DICM
+
+  return "unknown";
+}
+
+// Allowed detected types per upload_type, plus a user-facing mismatch message.
+const _TYPE_RULES = {
+  pdf:    { allowed: new Set(["pdf"]),                    hint: "That looks like an image or scan — please use the X-ray or CT / MRI option instead." },
+  xray:   { allowed: new Set(["image", "dicom"]),         hint: "That looks like a PDF — please use the PDF / Report option instead." },
+  ct_mri: { allowed: new Set(["zip", "dicom", "image"]), hint: "That looks like a PDF — please use the PDF / Report option instead." },
+};
+
 // ── Upload ────────────────────────────────────────────────────────────────────
 
 const uploadImage = asyncHandler(async (req, res) => {
@@ -36,6 +77,11 @@ const uploadImage = asyncHandler(async (req, res) => {
   const limitBytes = MAX_BASE64_BYTES[upload_type] ?? 55_000_000;
   if (file_base64.length > limitBytes)
     return res.status(413).json({ error: upload_type === "ct_mri" ? "File too large (max ~150 MB for CT/MRI)" : "File too large (max ~40 MB)" });
+
+  const detectedType = _detectFileType(file_base64);
+  const rule         = _TYPE_RULES[upload_type];
+  if (detectedType !== "unknown" && !rule.allowed.has(detectedType))
+    return res.status(422).json({ error: rule.hint });
 
   const record = await ImageUpload.create({
     user_id:           req.user._id,
