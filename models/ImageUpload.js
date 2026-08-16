@@ -7,18 +7,10 @@ const mongoose = require("mongoose");
 
 const AnalysisResultSchema = new mongoose.Schema(
   {
-    summary:             String,
-    document_type:       String,
-    modality:            String,
-    key_findings:        [String],
-    findings:            [String],
-    medications:         [String],
-    flagged_abnormal:    Boolean,
-    abnormal_items:      [String],
-    recommended_actions: [String],
-    impression:          String,
-    disclaimer:          String,
-    model_used:          String,
+    summary:          String,
+    findings:         [String],
+    flagged_abnormal: Boolean,
+    impression:       String,
   },
   { _id: false, strict: false }
 );
