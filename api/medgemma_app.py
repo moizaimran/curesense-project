@@ -215,10 +215,10 @@ Based on all the slices provided above, respond with ONLY a valid JSON object. B
 {
   "summary":          "<2-3 sentence plain-language description of the overall scan>",
   "findings":         ["<finding 1>", "<finding 2>"],
-  "flagged_abnormal": true,
+  "flagged_abnormal": false,
   "impression":       "<overall radiological impression>"
 }
-Set flagged_abnormal to true only if clearly pathological findings are visible."""
+Set flagged_abnormal to true ONLY if you see clearly pathological findings (e.g. mass, haemorrhage, infarct, fracture, significant oedema). Set it to false for a normal or unremarkable scan. If findings is empty, flagged_abnormal must be false."""
 
 
 # ── Text-format fallback parser ───────────────────────────────────────────────
@@ -551,7 +551,7 @@ def analyze_ct_mri(req: CtMriRequest):
     if _is_zip(img_bytes):
         try:
             volume_images = _load_volume_from_zip(img_bytes, modality)
-        except ValueError as exc:
+        except Exception as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
     # ── Path 2: Single DICOM file ─────────────────────────────────────────────
