@@ -283,11 +283,85 @@ Cost reduced from ~$0.03-0.04 → ~$0.01 by:
 ## Kaggle Setup
 
 - GPU: T4 x2 · Python 3.12
-- Secrets: `OpenAI Key` + `Ngrok Key` via `UserSecretsClient`
+- Secrets: `OpenAI Key` + `Ngrok Key` + `HF_TOKEN` via `UserSecretsClient`
 - RAG index: loaded from `uresense-rag-index` Kaggle dataset (seconds); built from scratch only first time (20-40 min)
 - 9 disease datasets added via Kaggle "Add Data"
 - Cell 1: `git pull` from `hassan-branch` to get latest code
 - Cell 7: `load_datasets()` — rebuilds TF-IDF from 9 CSVs (fast, in-memory)
-- Cell 8: Flask + Ngrok → prints `AI_SERVICE_URL` → paste into Backend `.env`
+- Cell 8: Flask on port 5001 (GPU 0, no tunnel)
+- Cell 9: MedGemma on 5002 (GPU 1) + reverse proxy on 5003 + single ngrok tunnel → prints one URL for both `AI_SERVICE_URL` and `MEDGEMMA_SERVICE_URL`
 - GitHub: `https://github.com/moizaimran/curesense-project` · AI branch: `hassan-branch` · Backend branch: `backend`
-ai
+
+---
+
+## Images Module (Medical Scan & Document Analysis)
+
+### New Files
+| File | Repo | Job |
+|------|------|-----|
+| `Backend/models/ImageUpload.js` | Backend | MongoDB schema — stores status, result, Cloudinary URL |
+| `Backend/controllers/imageController.js` | Backend | Upload / list / poll endpoints + background AI dispatch |
+| `Backend/routes/imageRoutes.js` | Backend | Mounts `/api/images` routes |
+| `Mobile/app/(patient)/(tabs)/scan.tsx` | Mobile | Full Scan tab UI — picker, upload, polling, result modal |
+| `CureSense_AI_Modules/api/medgemma_app.py` | AI | FastAPI service — X-ray single-image + CT/MRI multi-slice inference |
+
+### Modified Files
+| File | Change |
+|------|--------|
+| `Backend/server.js` | Register `/api/images` routes |
+| `api/app.py` | Added `POST /images/analyze-pdf` (Flask, GPT-based) |
+| `requirements.txt` | Added `pdfplumber`, `pypdfium2` |
+| `main.ipynb` | Dual-GPU split, HF login (Cell 3), Flask-only Cell 8, proxy+MedGemma+ngrok Cell 9 |
+| `Mobile/constants/api.ts` | Updated LAN IP |
+| `Mobile/package.json` | Added `expo-document-picker`, `expo-file-system` |
+
+### End-to-End Flow
+
+**PDF Analysis (GPT)**
+```
+scan.tsx → POST /api/images (file_base64, upload_type:"pdf")
+  → Backend: create ImageUpload record (status: processing)
+  → Cloudinary upload (resource_type: raw, private)
+  → POST ngrok/images/analyze-pdf → proxy:5003 → Flask:5001
+  → Flask: pdfplumber extracts text → GPT analyzes
+  → Returns: { summary, key_findings, recommendations, model_used }
+  → Backend: save to MongoDB (status: complete)
+  → Mobile: polls GET /api/images/:id → renders result modal
+```
+
+**X-ray Analysis (MedGemma)**
+```
+scan.tsx → POST /api/images (file_base64, upload_type:"xray")
+  → Backend: create record → Cloudinary upload
+  → POST ngrok/analyze/xray → proxy:5003 → MedGemma FastAPI:5002 (GPU 1)
+  → MedGemma: single PIL image → _run_inference() → JSON
+  → Returns: { summary, findings[], flagged_abnormal, abnormal_items[], impression }
+  → Backend: save to MongoDB → Mobile: result modal with structured sections
+```
+
+**CT / MRI Analysis (MedGemma multi-slice)**
+```
+scan.tsx → POST /api/images (file_base64, upload_type:"ct_mri")
+  → Backend: create record → Cloudinary upload
+  → POST ngrok/analyze/ct-mri → proxy:5003 → MedGemma FastAPI:5002 (GPU 1)
+  → MedGemma:
+      CT:  DICOM → HU windowing → 3-channel RGB (wide/soft-tissue/brain windows)
+      MRI: DICOM → min-max normalise → grayscale RGB
+      Up to 85 slices extracted, sampled to 10 → single forward pass
+  → Returns: { summary, modality, findings[], flagged_abnormal, impression }
+  → Backend: save to MongoDB → Mobile: result modal
+```
+
+**Kaggle Notebook Single-URL Architecture**
+```
+one ngrok URL → FastAPI proxy on port 5003
+  /analyze/*     →  MedGemma FastAPI on 5002  (GPU 1)
+  everything else →  Flask on 5001             (GPU 0 — Whisper + GLiNER)
+```
+
+### Key Implementation Details
+- **Polling**: Mobile polls every 3s up to 4 min; background job has 12 min timeout guard in Express
+- **Retry policy**: 3 attempts with 1s/2s/4s backoff; HTTP errors (4xx/5xx) surface immediately without retrying
+- **MedGemma fallback parser**: if model returns labeled text instead of JSON (common for 4B), `_parse_text_fallback()` extracts fields via regex
+- **Privacy**: `storage_url` never sent to client; no PHI logged to console
+- **GPU split**: Flask (Whisper + GLiNER) on GPU 0, MedGemma on GPU 1 via `device_map={"": 1}`
