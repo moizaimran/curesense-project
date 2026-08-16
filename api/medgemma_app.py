@@ -36,6 +36,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import zipfile
 from typing import Optional
 
 import numpy as np
@@ -327,6 +328,98 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
         return _parse_text_fallback(output.strip())
 
 
+# ── ZIP extraction ────────────────────────────────────────────────────────────
+
+def _is_zip(data: bytes) -> bool:
+    """ZIP files start with the magic bytes PK\x03\x04."""
+    return data[:4] == b'PK\x03\x04'
+
+
+def _load_volume_from_zip(zip_bytes: bytes, modality: str) -> list:
+    """
+    Extract a medical image volume from a ZIP archive.
+
+    Priority order:
+      1. DICOM (.dcm) files — sorted by ImagePositionPatient Z then InstanceNumber
+      2. Standard images (.jpg / .jpeg / .png) — sorted by filename
+    """
+    from PIL import Image
+
+    _DCM_EXTS  = {'.dcm'}
+    _IMG_EXTS  = {'.jpg', '.jpeg', '.png'}
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        all_names = [n for n in zf.namelist() if not n.endswith('/')]
+
+        dcm_names = sorted([n for n in all_names if _ext(n) in _DCM_EXTS])
+        img_names = sorted([n for n in all_names if _ext(n) in _IMG_EXTS])
+
+        if dcm_names:
+            return _dicoms_from_zip(zf, dcm_names, modality)
+
+        if img_names:
+            images = []
+            for name in img_names:
+                try:
+                    images.append(Image.open(io.BytesIO(zf.read(name))).convert("RGB"))
+                except Exception:
+                    pass
+            if images:
+                return images
+
+    raise ValueError(
+        "ZIP contains no supported medical image files. "
+        "Include .dcm (DICOM) files or .jpg/.png images."
+    )
+
+
+def _ext(name: str) -> str:
+    return '.' + name.rsplit('.', 1)[-1].lower() if '.' in name.split('/')[-1] else ''
+
+
+def _dicoms_from_zip(zf: zipfile.ZipFile, dcm_names: list, modality: str) -> list:
+    """Read, sort, and preprocess all DICOM slices from an open ZipFile."""
+    import pydicom
+
+    slices = []
+    for name in dcm_names:
+        try:
+            dcm = pydicom.dcmread(io.BytesIO(zf.read(name)))
+            slices.append(dcm)
+        except Exception:
+            continue
+
+    if not slices:
+        raise ValueError("No readable DICOM files found in ZIP.")
+
+    def _sort_key(dcm):
+        try:
+            return float(dcm.ImagePositionPatient[2])
+        except Exception:
+            pass
+        try:
+            return float(dcm.InstanceNumber)
+        except Exception:
+            return 0.0
+
+    slices.sort(key=_sort_key)
+
+    arrays = []
+    for dcm in slices:
+        try:
+            arr = pydicom.pixels.apply_rescale(dcm.pixel_array, dcm).astype(np.float32)
+        except Exception:
+            arr = dcm.pixel_array.astype(np.float32)
+        if arr.ndim == 2:
+            arrays.append(arr)
+
+    if not arrays:
+        raise ValueError("DICOM files in ZIP have no 2-D pixel data.")
+
+    volume = np.stack(arrays)  # (Z, H, W)
+    return _ct_slices_to_images(volume) if modality.upper() == "CT" else _mri_slices_to_images(volume)
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 class XrayRequest(BaseModel):
@@ -359,25 +452,28 @@ def analyze_ct_mri(req: CtMriRequest):
     img_bytes = base64.b64decode(req.image_base64)
     modality  = (req.modality or "ct").upper()
 
-    # Try DICOM first, fall back to standard image
     volume_images = None
-    try:
-        import pydicom
-        dcm = pydicom.dcmread(io.BytesIO(img_bytes))
-        # apply_rescale converts raw stored pixels → Hounsfield units using the
-        # RescaleSlope and RescaleIntercept tags embedded in the DICOM file.
-        # Without this the CT windowing operates on raw pixel values (0–4095),
-        # not HU values (-1024–+3071), producing blank or solid images.
-        # This mirrors the exact call used in Google's high_dimensional_ct_hugging_face.ipynb.
-        volume = pydicom.pixels.apply_rescale(dcm.pixel_array, dcm).astype(np.float32)
-        if volume.ndim == 2:
-            volume = volume[np.newaxis, ...]  # single slice → (1, H, W)
-        volume_images = _ct_slices_to_images(volume) if modality == "CT" else _mri_slices_to_images(volume)
-    except Exception:
-        pass
 
+    # ── Path 1: ZIP archive (DICOM series or image folder) ────────────────────
+    if _is_zip(img_bytes):
+        volume_images = _load_volume_from_zip(img_bytes, modality)
+
+    # ── Path 2: Single DICOM file ─────────────────────────────────────────────
     if volume_images is None:
-        # Not DICOM — treat as a standard JPG/PNG
+        try:
+            import pydicom
+            dcm = pydicom.dcmread(io.BytesIO(img_bytes))
+            # apply_rescale converts raw stored pixels → Hounsfield units using the
+            # RescaleSlope/RescaleIntercept DICOM tags, matching Google's notebook.
+            volume = pydicom.pixels.apply_rescale(dcm.pixel_array, dcm).astype(np.float32)
+            if volume.ndim == 2:
+                volume = volume[np.newaxis, ...]  # single slice → (1, H, W)
+            volume_images = _ct_slices_to_images(volume) if modality == "CT" else _mri_slices_to_images(volume)
+        except Exception:
+            pass
+
+    # ── Path 3: Single JPEG / PNG ─────────────────────────────────────────────
+    if volume_images is None:
         img           = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         volume_images = [img]
 
