@@ -339,24 +339,51 @@ def _load_volume_from_zip(zip_bytes: bytes, modality: str) -> list:
     """
     Extract a medical image volume from a ZIP archive.
 
+    Handles the standard DICOM disc/CD structure where files inside a DICOM/
+    subfolder have no extension (named IM0001, IM0002, ...).
+
     Priority order:
-      1. DICOM (.dcm) files — sorted by ImagePositionPatient Z then InstanceNumber
-      2. Standard images (.jpg / .jpeg / .png) — sorted by filename
+      1. Files with .dcm extension
+      2. Extensionless files whose first 132 bytes contain the DICOM magic 'DICM'
+         (covers standard hospital CD exports: DICOM/IM0001, DICOM/IM0002 ...)
+      3. Standard images (.jpg / .jpeg / .png) — sorted by filename
     """
     from PIL import Image
 
-    _DCM_EXTS  = {'.dcm'}
-    _IMG_EXTS  = {'.jpg', '.jpeg', '.png'}
+    _DCM_EXTS = {'.dcm'}
+    _IMG_EXTS = {'.jpg', '.jpeg', '.png'}
+
+    # DICOMDIR and viewer-software blobs to skip even if extensionless
+    _SKIP_NAMES = {'dicomdir', 'dicom_dir'}
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         all_names = [n for n in zf.namelist() if not n.endswith('/')]
 
+        # Pass 1: files with explicit .dcm extension
         dcm_names = sorted([n for n in all_names if _ext(n) in _DCM_EXTS])
-        img_names = sorted([n for n in all_names if _ext(n) in _IMG_EXTS])
+
+        # Pass 2: extensionless files — peek at magic bytes to detect DICOM
+        # DICOM magic: bytes 128-131 == b'DICM'
+        if not dcm_names:
+            candidates = [
+                n for n in all_names
+                if _ext(n) == ''
+                and n.split('/')[-1].lower() not in _SKIP_NAMES
+            ]
+            for name in candidates:
+                try:
+                    header = zf.read(name)[:132]
+                    if len(header) >= 132 and header[128:132] == b'DICM':
+                        dcm_names.append(name)
+                except Exception:
+                    pass
+            dcm_names.sort()
 
         if dcm_names:
             return _dicoms_from_zip(zf, dcm_names, modality)
 
+        # Pass 3: plain image files
+        img_names = sorted([n for n in all_names if _ext(n) in _IMG_EXTS])
         if img_names:
             images = []
             for name in img_names:
@@ -369,7 +396,8 @@ def _load_volume_from_zip(zip_bytes: bytes, modality: str) -> list:
 
     raise ValueError(
         "ZIP contains no supported medical image files. "
-        "Include .dcm (DICOM) files or .jpg/.png images."
+        "Expected .dcm files (or extensionless DICOM files inside a DICOM/ folder), "
+        "or .jpg/.png images."
     )
 
 
