@@ -342,14 +342,17 @@ scan.tsx → POST /api/images (file_base64, upload_type:"xray")
 **CT / MRI Analysis (MedGemma multi-slice)**
 ```
 scan.tsx → POST /api/images (file_base64, upload_type:"ct_mri")
-  → Backend: create record → Cloudinary upload
+  → Backend: create record (no Cloudinary at this stage — ZIP too large)
   → POST ngrok/analyze/ct-mri → proxy:5003 → MedGemma FastAPI:5002 (GPU 1)
   → MedGemma:
       CT:  DICOM → HU windowing → 3-channel RGB (wide/soft-tissue/brain windows)
       MRI: DICOM → min-max normalise → grayscale RGB
-      Up to 85 slices extracted, sampled to 10 → single forward pass
-  → Returns: { summary, modality, findings[], flagged_abnormal, impression }
-  → Backend: save to MongoDB → Mobile: result modal
+      Up to 85 slices extracted, sampled to 8 → single forward pass
+      Generates compressed thumbnail montage (8 key slices, JPEG ~50-100 KB)
+  → Returns: { summary, modality, findings[], flagged_abnormal, impression, thumbnail_b64 }
+  → Backend: extracts thumbnail_b64 → uploads to Cloudinary as small JPEG
+  → Saves analysis to MongoDB (thumbnail_b64 stripped — already in Cloudinary)
+  → Mobile: polls GET /api/images/:id → renders result modal
 ```
 
 **Kaggle Notebook Single-URL Architecture**
@@ -366,6 +369,16 @@ one ngrok URL → FastAPI proxy on port 5003
 - **Privacy**: `storage_url` never sent to client; no PHI logged to console
 - **GPU split**: Flask (Whisper + GLiNER) on GPU 0, MedGemma on GPU 1 via `device_map={"": 1}`
 - **Magic byte validation**: upload rejected before any AI call if file type doesn't match declared `upload_type`
+- **CT/MRI thumbnail**: after analysis, MedGemma returns a small JPEG montage (8 slices in a grid, ~50-100 KB) stored in Cloudinary — the raw ZIP is never stored permanently
+- **Slice count limit (8)**: T4 GPU has ~8 GB free VRAM after model load; each image = 256 vision tokens; 8 images ≈ 450 MB KV cache. Safe ceiling on a single T4. Raising above 15 risks OOM.
+
+#### How to improve CT/MRI quality in the future
+| Improvement | What to change | Expected gain |
+|---|---|---|
+| More slices | Upgrade to A100 (2× VRAM) → raise `INFERENCE_SLICES` to 20-25 | Better coverage of subtle findings |
+| Better model | Switch to MedGemma 27B or a CT-specialist model | Significantly better accuracy |
+| All-slice analysis | Run inference in batches, aggregate results | Catches small nodules (<5mm) currently missed |
+| Current bottleneck | `INFERENCE_SLICES = 8` in `api/medgemma_app.py` | — |
 
 ---
 
@@ -387,7 +400,7 @@ one ngrok URL → FastAPI proxy on port 5003
 
 | Case | Error shown to user |
 |------|---------------------|
-| **Multiple series in one ZIP** (e.g. axial + coronal + scout) | "ZIP contains N separate scan series. Please ZIP only one series at a time." |
+| ~~**Multiple series in one ZIP**~~ | ~~error~~ → **now auto-selects the largest series** (axial CT wins; scout/coronal/sagittal skipped) |
 | **Philips PAR/REC format** (.par + .rec files) | "Philips PAR/REC format is not supported. Ask your imaging centre for a DICOM export." |
 | **Old DICOM without standard preamble** (pre-1993 equipment) | "Files may be old-format DICOM without the standard header, which is not supported." |
 | **NIfTI format** (.nii, .nii.gz) | Falls through to generic "no supported files found" error |
@@ -399,4 +412,4 @@ one ngrok URL → FastAPI proxy on port 5003
 |------|--------------|
 | PDF | 40 MB |
 | X-ray | 40 MB |
-| CT / MRI ZIP | 150 MB (~100–200 DICOM slices; MedGemma samples 10 for inference) |
+| CT / MRI ZIP | 150 MB (~100–300 DICOM slices; MedGemma samples 8 for inference) |

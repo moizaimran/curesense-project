@@ -111,7 +111,7 @@ MAX_SLICES = 85
 # Each image produces 256 vision tokens; 10 images → 2 560 tokens → ~560 MB KV
 # cache across 28 layers.  Inference time ≈ 60-90 s on T4 — within the 180 s
 # axios timeout set in imageController.js.  Raising above 15 risks OOM.
-INFERENCE_SLICES = 10
+INFERENCE_SLICES = 8
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
@@ -150,6 +150,39 @@ def _mri_slices_to_images(volume: np.ndarray) -> list:
     step   = max(1, total // MAX_SLICES)
     slices = norm[::step][:MAX_SLICES]
     return [Image.fromarray(sl, mode="L").convert("RGB") for sl in slices]
+
+
+def _create_thumbnail_montage(images: list, max_tiles: int = 9, tile_size: int = 128) -> str:
+    """
+    Pack up to max_tiles evenly-spaced slices into a small JPEG montage.
+    Returns a base64-encoded JPEG (~30-100 KB) suitable for Cloudinary storage.
+    """
+    from PIL import Image
+
+    if not images:
+        return ""
+
+    n = min(len(images), max_tiles)
+    if len(images) <= n:
+        picks = images[:n]
+    else:
+        indices = [int(round(i / (n - 1) * (len(images) - 1))) for i in range(n)] if n > 1 else [0]
+        picks   = [images[i] for i in indices]
+
+    cols    = min(3, n)
+    rows    = (n + cols - 1) // cols
+    montage = Image.new("RGB", (cols * tile_size, rows * tile_size), (0, 0, 0))
+
+    for idx, img in enumerate(picks):
+        thumb = img.copy().convert("RGB")
+        thumb.thumbnail((tile_size, tile_size), Image.LANCZOS)
+        x = (idx % cols) * tile_size + (tile_size - thumb.width) // 2
+        y = (idx // cols) * tile_size + (tile_size - thumb.height) // 2
+        montage.paste(thumb, (x, y))
+
+    buf = io.BytesIO()
+    montage.save(buf, format="JPEG", quality=65)
+    return base64.b64encode(buf.getvalue()).decode()
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
@@ -432,15 +465,17 @@ def _dicoms_from_zip(zf: zipfile.ZipFile, dcm_names: list, modality: str) -> lis
             "which is not supported. Please ask your imaging centre for a modern DICOM export."
         )
 
-    # Case 7 guard — multiple series mixed in one ZIP
-    series_uids = {getattr(dcm, 'SeriesInstanceUID', None) for dcm in slices}
-    series_uids.discard(None)
-    if len(series_uids) > 1:
-        raise ValueError(
-            f"The ZIP contains {len(series_uids)} separate scan series. "
-            "Please ZIP only one series at a time "
-            "(e.g. just the axial CT, not the full study with scout + axial + coronal)."
-        )
+    # Multiple series in one ZIP — auto-select the largest (most slices).
+    # Hospital exports typically bundle scout + axial + coronal + sagittal in one study.
+    # The axial series always has the most slices and is the primary diagnostic series.
+    series_map: dict = {}
+    for dcm in slices:
+        uid = getattr(dcm, 'SeriesInstanceUID', '__none__')
+        series_map.setdefault(uid, []).append(dcm)
+    if len(series_map) > 1:
+        best_uid = max(series_map, key=lambda uid: len(series_map[uid]))
+        slices   = series_map[best_uid]
+        print(f"[MedGemma] {len(series_map)} series detected — auto-selected largest ({len(slices)} slices)")
 
     def _sort_key(dcm):
         try:
@@ -540,6 +575,7 @@ def analyze_ct_mri(req: CtMriRequest):
         selected_slices = [volume_images[idx] for idx in indices]
 
     result = _run_multi_slice_inference(_CT_MRI_INSTRUCTION, _CT_MRI_QUERY, selected_slices)
-    result["modality"]   = modality
-    result["model_used"] = "medgemma-1.5-4b"
+    result["modality"]       = modality
+    result["model_used"]     = "medgemma-1.5-4b"
+    result["thumbnail_b64"]  = _create_thumbnail_montage(selected_slices)
     return result
