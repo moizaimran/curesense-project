@@ -156,43 +156,47 @@ const getImageStatus = asyncHandler(async (req, res) => {
 async function _processInBackground(recordId, fileBase64, uploadType, mimeType, filename) {
   console.log(`[Images] Processing ${recordId} type=${uploadType} file=${filename}`);
   try {
-    // 1. Upload raw file to Cloudinary for durable storage
-    const cloudinaryType = uploadType === "pdf" ? "raw" : "image";
-    const dataUri        = `data:${mimeType || "application/octet-stream"};base64,${fileBase64}`;
+    // 1. Upload to Cloudinary for durable storage.
+    //    ct_mri ZIPs are skipped — they can be hundreds of MB, exceeding Cloudinary's
+    //    free-tier limit. The analysis result is persisted in MongoDB regardless.
+    if (uploadType !== "ct_mri") {
+      const cloudinaryType = uploadType === "pdf" ? "raw" : "image";
+      const dataUri        = `data:${mimeType || "application/octet-stream"};base64,${fileBase64}`;
 
-    let storageUrl = "";
-    try {
-      const up = await cloudinary.uploader.upload(dataUri, {
-        resource_type: cloudinaryType,
-        folder:        "curesense/images",
-        public_id:     recordId.toString(),
-        type:          "authenticated", // private — requires signed URL to access
-      });
-      storageUrl = up.secure_url;
-    } catch {
-      // Fallback: try as raw resource type (handles DICOM / unrecognised image formats)
+      let storageUrl = "";
       try {
         const up = await cloudinary.uploader.upload(dataUri, {
-          resource_type: "raw",
+          resource_type: cloudinaryType,
           folder:        "curesense/images",
-          public_id:     `${recordId}_raw`,
+          public_id:     recordId.toString(),
           type:          "authenticated",
         });
         storageUrl = up.secure_url;
-      } catch {}
-    }
+      } catch (err) {
+        console.warn(`[Images] Cloudinary ${cloudinaryType} upload failed: ${err?.message} — retrying as raw`);
+        try {
+          const up = await cloudinary.uploader.upload(dataUri, {
+            resource_type: "raw",
+            folder:        "curesense/images",
+            public_id:     `${recordId}_raw`,
+            type:          "authenticated",
+          });
+          storageUrl = up.secure_url;
+        } catch (err2) {
+          console.error(`[Images] Cloudinary raw upload also failed: ${err2?.message}`);
+        }
+      }
 
-    // If neither attempt succeeded the file is not stored — stop here rather than
-    // marking a result 'complete' when the underlying data was never saved.
-    if (!storageUrl) {
-      await ImageUpload.findOneAndUpdate(
-        { _id: recordId, status: "processing" },
-        { status: "error", error_message: "File could not be saved to storage. Please try again." }
-      );
-      return;
-    }
+      if (!storageUrl) {
+        await ImageUpload.findOneAndUpdate(
+          { _id: recordId, status: "processing" },
+          { status: "error", error_message: "File could not be saved to storage. Please try again." }
+        );
+        return;
+      }
 
-    await ImageUpload.findByIdAndUpdate(recordId, { storage_url: storageUrl });
+      await ImageUpload.findByIdAndUpdate(recordId, { storage_url: storageUrl });
+    }
 
     // 2. Route to AI service
     let result;
