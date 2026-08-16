@@ -40,7 +40,7 @@ import zipfile
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 app = FastAPI(title="CureSense MedGemma Service", version="1.0")
@@ -379,6 +379,14 @@ def _load_volume_from_zip(zip_bytes: bytes, modality: str) -> list:
                     pass
             dcm_names.sort()
 
+        # Case 8 guard — Philips PAR/REC format
+        par_files = [n for n in all_names if _ext(n) in {'.par', '.rec'}]
+        if par_files:
+            raise ValueError(
+                "Philips PAR/REC format is not supported. "
+                "Please ask your radiologist or imaging centre to export the scan as DICOM (.dcm) instead."
+            )
+
         if dcm_names:
             return _dicoms_from_zip(zf, dcm_names, modality)
 
@@ -395,9 +403,9 @@ def _load_volume_from_zip(zip_bytes: bytes, modality: str) -> list:
                 return images
 
     raise ValueError(
-        "ZIP contains no supported medical image files. "
-        "Expected .dcm files (or extensionless DICOM files inside a DICOM/ folder), "
-        "or .jpg/.png images."
+        "No recognised medical image files found in the ZIP. "
+        "Expected: a DICOM series (.dcm files or a DICOM/ folder from a hospital CD), "
+        "or JPEG/PNG image exports."
     )
 
 
@@ -418,7 +426,21 @@ def _dicoms_from_zip(zf: zipfile.ZipFile, dcm_names: list, modality: str) -> lis
             continue
 
     if not slices:
-        raise ValueError("No readable DICOM files found in ZIP.")
+        raise ValueError(
+            "No readable DICOM slices found. "
+            "The files may be old-format DICOM (pre-1993) without the standard header, "
+            "which is not supported. Please ask your imaging centre for a modern DICOM export."
+        )
+
+    # Case 7 guard — multiple series mixed in one ZIP
+    series_uids = {getattr(dcm, 'SeriesInstanceUID', None) for dcm in slices}
+    series_uids.discard(None)
+    if len(series_uids) > 1:
+        raise ValueError(
+            f"The ZIP contains {len(series_uids)} separate scan series. "
+            "Please ZIP only one series at a time "
+            "(e.g. just the axial CT, not the full study with scout + axial + coronal)."
+        )
 
     def _sort_key(dcm):
         try:
@@ -484,7 +506,10 @@ def analyze_ct_mri(req: CtMriRequest):
 
     # ── Path 1: ZIP archive (DICOM series or image folder) ────────────────────
     if _is_zip(img_bytes):
-        volume_images = _load_volume_from_zip(img_bytes, modality)
+        try:
+            volume_images = _load_volume_from_zip(img_bytes, modality)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     # ── Path 2: Single DICOM file ─────────────────────────────────────────────
     if volume_images is None:
