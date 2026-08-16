@@ -417,10 +417,7 @@ function ResultModal({ item, onClose }: { item: ImageUpload; onClose: () => void
   const r = item.analysis_result;
   const color = typeColor(item.upload_type);
 
-  const findings     = r?.key_findings?.length ? r.key_findings : r?.findings ?? [];
-  const abnormals    = r?.abnormal_items        ?? [];
-  const actions      = r?.recommended_actions   ?? [];
-  const medications  = r?.medications           ?? [];
+  const findings = r?.findings ?? [];
 
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -486,27 +483,6 @@ function ResultModal({ item, onClose }: { item: ImageUpload; onClose: () => void
               {findings.length > 0 && (
                 <ResultSection title="Findings" icon="list-outline">
                   {findings.map((f, i) => <BulletItem key={i} text={f} />)}
-                </ResultSection>
-              )}
-
-              {/* Abnormal items */}
-              {abnormals.length > 0 && (
-                <ResultSection title="Abnormal Items" icon="warning-outline" color="#FBBF24">
-                  {abnormals.map((a, i) => <BulletItem key={i} text={a} color="#FCD34D" />)}
-                </ResultSection>
-              )}
-
-              {/* Medications */}
-              {medications.length > 0 && (
-                <ResultSection title="Medications" icon="medkit-outline" color="#3B82F6">
-                  {medications.map((m, i) => <BulletItem key={i} text={m} />)}
-                </ResultSection>
-              )}
-
-              {/* Recommended actions */}
-              {actions.length > 0 && (
-                <ResultSection title="Recommended Actions" icon="checkmark-circle-outline" color="#22C55E">
-                  {actions.map((a, i) => <BulletItem key={i} text={a} />)}
                 </ResultSection>
               )}
 
