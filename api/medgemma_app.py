@@ -108,8 +108,8 @@ MAX_SLICES = 85
 
 # Slices sent to the model per CT/MRI request.
 # T4 memory budget: ~8 GB used by 4B weights leaves ~8 GB for activations.
-# Each image produces 256 vision tokens; 10 images → 2 560 tokens → ~560 MB KV
-# cache across 28 layers.  Inference time ≈ 60-90 s on T4 — within the 180 s
+# Each image produces 256 vision tokens; 8 images → 2 048 tokens → ~450 MB KV
+# cache across 28 layers.  Inference time ≈ 60-90 s on T4 — within the 360 s
 # axios timeout set in imageController.js.  Raising above 15 risks OOM.
 INFERENCE_SLICES = 8
 
