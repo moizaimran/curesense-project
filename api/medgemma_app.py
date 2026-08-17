@@ -124,10 +124,10 @@ MAX_SLICES = 85
 # Slices sent to the model per CT/MRI inference request.
 #
 # With attn_implementation="eager", SigLIP materialises the full QK^T matrix:
-#   N slices × 16 heads × 4096² patches × float16 = N × 2 GiB
-#   N=4 → 2 GiB peak per layer → fits in ~5 GiB free VRAM after model load ✓
-#   N=8 → 4 GiB peak per layer → OOM risk
-INFERENCE_SLICES = 4
+#   N slices × 16 heads × 4096² patches × float16 = N × 512 MB per layer
+#   N=2 → ~1 GiB peak per layer → fits in ~5 GiB free VRAM after model load ✓
+#   N=4 → ~2 GiB peak per layer → OOM (14.25 GiB used, only 93 MB free)
+INFERENCE_SLICES = 2
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
