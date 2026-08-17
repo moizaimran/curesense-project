@@ -34,10 +34,17 @@
 from __future__ import annotations
 
 import base64
+import gc
 import io
 import json
+import os
 import zipfile
 from typing import Optional
+
+# Must be set before torch is imported. Tells the CUDA allocator to use
+# expandable segments so a large contiguous request can be satisfied by
+# combining multiple non-contiguous free blocks, avoiding fragmentation OOM.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -348,13 +355,22 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
         return_tensors="pt",
     ).to(model.device, dtype=torch.bfloat16)
 
-    # Free fragmented VRAM before the generate call so the vision encoder
-    # attention allocation has the largest possible contiguous block.
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    with torch.inference_mode():
-        output_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)
+    try:
+        with torch.inference_mode():
+            output_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)
+    except Exception:
+        # OOM or other CUDA error: explicitly release input tensors so the
+        # CUDA allocator can reclaim them immediately rather than waiting for
+        # Python GC. Without this, each failed attempt permanently consumes
+        # ~4 GB until the kernel is restarted.
+        del inputs
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise
 
     prompt_len = inputs["input_ids"].shape[1]
     output     = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
