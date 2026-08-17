@@ -98,13 +98,16 @@ def _load_model():
         attn_implementation="sdpa",
     )
 
-    # Force memory-efficient SDPA globally — prevents math fallback even inside
-    # SigLIP. Must be set after model load (torch initialises CUDA during load).
+    # SigLIP uses a non-default attention scale which mem_efficient and flash
+    # kernels do not support — they would raise "Invalid backend". Math SDPA
+    # must stay enabled as the SigLIP fallback. float16 is the key gain here:
+    # it lets PyTorch pick mem_efficient for Gemma3 LM layers (which do use
+    # the default scale) while SigLIP falls through to math SDPA safely.
     if torch.cuda.is_available():
         torch.backends.cuda.enable_flash_sdp(True)
         torch.backends.cuda.enable_mem_efficient_sdp(True)
-        torch.backends.cuda.enable_math_sdp(False)
-        print("[MedGemma] SDPA: flash=on, mem_efficient=on, math=off")
+        torch.backends.cuda.enable_math_sdp(True)
+        print("[MedGemma] SDPA: flash=on, mem_efficient=on, math=on(SigLIP fallback)")
 
     print("[MedGemma] Model loaded (float16 + sdpa — T4 memory-efficient attention).")
 
@@ -138,7 +141,7 @@ MAX_SLICES = 85
 #   4 slices → 4 GiB → OOM on T4 ✗
 #   8 slices → 8 GiB → OOM on T4 ✗
 # To increase slices: upgrade to L4 (24 GB) → safe up to ~10 slices.
-INFERENCE_SLICES = 8
+INFERENCE_SLICES = 4
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
