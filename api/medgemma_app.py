@@ -308,6 +308,16 @@ def _parse_text_fallback(text: str) -> dict:
 
 # ── Inference helpers ─────────────────────────────────────────────────────────
 
+_LOG_PATH = "/tmp/medgemma_debug.log"
+
+def _log(msg: str) -> None:
+    """Write a timestamped line to the debug log file (visible from Colab cells)."""
+    import datetime
+    line = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}\n"
+    with open(_LOG_PATH, "a") as f:
+        f.write(line)
+
+
 def _run_inference(prompt: str, image) -> dict:
     """Run MedGemma on a single PIL image (X-ray path)."""
     import torch
@@ -341,9 +351,9 @@ def _run_inference(prompt: str, image) -> dict:
         with torch.inference_mode():
             output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
-        print(f"[MedGemma] xray — prompt_len={prompt_len} generated_len={generated_len}")
+        _log(f"xray — prompt_len={prompt_len} generated_len={generated_len}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
-        print(f"[MedGemma] xray raw output (first 300): {output[:300]!r}")
+        _log(f"xray raw output (first 300): {output[:300]!r}")
     finally:
         del inputs
         if output_ids is not None:
@@ -400,9 +410,9 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
         with torch.inference_mode():
             output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
-        print(f"[MedGemma] ct_mri — prompt_len={prompt_len} generated_len={generated_len} n_images={len(images)}")
+        _log(f"ct_mri — prompt_len={prompt_len} generated_len={generated_len} n_images={len(images)}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
-        print(f"[MedGemma] ct_mri raw output (first 500): {output[:500]!r}")
+        _log(f"ct_mri raw output (first 500): {output[:500]!r}")
     finally:
         del inputs
         if output_ids is not None:
