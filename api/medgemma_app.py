@@ -329,23 +329,27 @@ def _run_inference(prompt: str, image) -> dict:
         {"type": "text",  "text":  prompt},
     ]}]
 
-    # Two-step: format text first, then let processor handle image+text together.
-    # This matches the HuggingFace model card approach and avoids BatchEncoding dtype issues.
     text   = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
     inputs = processor(text=text, images=image, return_tensors="pt").to(model.device)
+    # token_type_ids is not used by Gemma3ForConditionalGeneration
+    inputs.pop("token_type_ids", None)
+    # pixel_values must match model dtype (float16) to avoid softmax NaN overflow on T4
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.float16)
 
     output_ids = None
     prompt_len = inputs["input_ids"].shape[1]
-    _log(f"xray keys={list(inputs.keys())} prompt_len={prompt_len}")
-    if "pixel_values" in inputs:
-        _log(f"xray pixel_values shape={list(inputs['pixel_values'].shape)} dtype={inputs['pixel_values'].dtype}")
+    _log(f"xray prompt_len={prompt_len} pixel_values dtype={inputs.get('pixel_values', [None]).__class__.__name__}")
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
     try:
+        # autocast keeps most ops in float16 but runs softmax/layernorm in float32,
+        # preventing the inf/inf=NaN that produces all-pad output on T4 (sm75)
         with torch.inference_mode():
-            output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
+            with torch.autocast("cuda", dtype=torch.float16):
+                output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
         _log(f"xray generated_len={generated_len} first_10={output_ids[0][prompt_len:prompt_len+10].tolist()}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
@@ -388,17 +392,21 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
 
     text   = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
     inputs = processor(text=text, images=images, return_tensors="pt").to(model.device)
+    inputs.pop("token_type_ids", None)
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.float16)
 
     output_ids = None
     prompt_len = inputs["input_ids"].shape[1]
-    _log(f"ct_mri keys={list(inputs.keys())} prompt_len={prompt_len} n_images={len(images)}")
+    _log(f"ct_mri prompt_len={prompt_len} n_images={len(images)}")
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
     try:
         with torch.inference_mode():
-            output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
+            with torch.autocast("cuda", dtype=torch.float16):
+                output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
         _log(f"ct_mri generated_len={generated_len} first_10={output_ids[0][prompt_len:prompt_len+10].tolist()}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
