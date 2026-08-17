@@ -64,7 +64,13 @@ def _load_model():
         return _model, _processor
 
     import torch
+    import torch._dynamo
     from transformers import AutoProcessor, AutoModelForImageTextToText
+
+    # T4 (SM75) cannot compile bfloat16 kernels natively. Without this,
+    # the first model.generate() call triggers torch.inductor for each kernel
+    # type, fails, and falls back — causing a 2–3 minute delay on first inference.
+    torch._dynamo.config.disable = True
 
     # VRAM before load — confirms both GPUs are visible and have headroom
     if torch.cuda.is_available():
