@@ -86,20 +86,16 @@ def _load_model():
         _device_map = "cpu"
         print("[MedGemma] No GPU — using CPU")
 
-    # attn_implementation="eager" — uses transformers' explicit Python attention path.
-    # In modeling_gemma3.py, eager_attention_forward runs:
-    #   nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    # This guarantees float32 softmax regardless of model dtype, preventing the
-    # inf/inf=NaN that occurs when float16 multimodal attention values overflow in
-    # SDPA's internal CUDA kernels (which do not respect torch.autocast precision rules).
+    # bfloat16: same exponent width as float32 (max ~3.4e38 vs float16's ~6.5e4).
+    # Vision encoder activations that overflow float16 → inf → NaN → all-pad output
+    # are handled safely in bfloat16. Confirmed fix from the official tutorial notebook.
     _model = AutoModelForImageTextToText.from_pretrained(
         "google/medgemma-1.5-4b-it",
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,
         device_map=_device_map,
-        attn_implementation="eager",
     )
 
-    print("[MedGemma] Model loaded (float16 + eager attention).")
+    print("[MedGemma] Model loaded (bfloat16).")
 
     # VRAM after load — confirms the split: GPU 0 still free for Flask, GPU 1 mostly used
     if torch.cuda.is_available():
@@ -123,10 +119,11 @@ MAX_SLICES = 85
 
 # Slices sent to the model per CT/MRI inference request.
 #
-# With attn_implementation="eager", SigLIP materialises the full QK^T matrix:
-#   N slices × 16 heads × 4096² patches × float16 = N × 512 MB per layer
-#   N=2 → ~1 GiB peak per layer → fits in ~5 GiB free VRAM after model load ✓
-#   N=4 → ~2 GiB peak per layer → OOM (14.25 GiB used, only 93 MB free)
+# bfloat16 is rejected by mem_efficient SDPA on SM75 (T4), so math SDPA is used.
+# Math SDPA materialises the full QK^T in float32:
+#   N slices × 16 heads × 4096² patches × 4 bytes = N × 1 GiB
+#   N=2 → ~2 GiB peak → fits in ~5 GiB free VRAM after model load ✓
+#   N=4 → ~4 GiB peak → OOM
 INFERENCE_SLICES = 2
 
 
@@ -309,25 +306,20 @@ def _run_inference(prompt: str, image) -> dict:
 
     text   = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
     inputs = processor(text=text, images=image, return_tensors="pt").to(model.device)
-    # token_type_ids is not used by Gemma3ForConditionalGeneration
     inputs.pop("token_type_ids", None)
-    # pixel_values must match model dtype (float16) to avoid softmax NaN overflow on T4
     if "pixel_values" in inputs:
-        inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.float16)
+        inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.bfloat16)
 
     output_ids = None
     prompt_len = inputs["input_ids"].shape[1]
-    _log(f"xray prompt_len={prompt_len} pixel_values dtype={inputs.get('pixel_values', [None]).__class__.__name__}")
+    _log(f"xray prompt_len={prompt_len} pixel_values dtype={inputs['pixel_values'].dtype if 'pixel_values' in inputs else 'none'}")
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
     try:
-        # autocast keeps most ops in float16 but runs softmax/layernorm in float32,
-        # preventing the inf/inf=NaN that produces all-pad output on T4 (sm75)
         with torch.inference_mode():
-            with torch.autocast("cuda", dtype=torch.float16):
-                output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
+            output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
         _log(f"xray generated_len={generated_len} first_10={output_ids[0][prompt_len:prompt_len+10].tolist()}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
@@ -372,7 +364,7 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
     inputs = processor(text=text, images=images, return_tensors="pt").to(model.device)
     inputs.pop("token_type_ids", None)
     if "pixel_values" in inputs:
-        inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.float16)
+        inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.bfloat16)
 
     output_ids = None
     prompt_len = inputs["input_ids"].shape[1]
@@ -383,8 +375,7 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
 
     try:
         with torch.inference_mode():
-            with torch.autocast("cuda", dtype=torch.float16):
-                output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
+            output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
         _log(f"ct_mri generated_len={generated_len} first_10={output_ids[0][prompt_len:prompt_len+10].tolist()}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
