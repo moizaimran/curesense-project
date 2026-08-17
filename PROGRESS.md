@@ -370,7 +370,7 @@ one ngrok URL → FastAPI proxy on port 5003
 - **GPU split**: Flask (Whisper + GLiNER) on GPU 0, MedGemma on GPU 1 via `device_map={"": 1}`
 - **Magic byte validation**: upload rejected before any AI call if file type doesn't match declared `upload_type`
 - **CT/MRI thumbnail**: after analysis, MedGemma returns a small JPEG montage (4 slices in a grid, ~30-80 KB) stored in Cloudinary — the raw ZIP is never stored permanently
-- **Slice count limit (4)**: T4 GPU (14.56 GB) uses ~9.5 GB for model weights, leaving ~5 GB free. SigLIP vision encoder computes global attention across ALL patch tokens of ALL images simultaneously — at 896×896 px with 14-px patch size that is 4096 patches per image. 8 images × 4096 = 32 768 patches → attention matrix = 8 GiB → OOM. 4 images → 16 384 patches → ~2 GiB → fits safely. `torch.cuda.empty_cache()` is called before each `model.generate()` to release fragmented allocations.
+- **Slice count limit (2)**: T4 GPU (14.56 GB) uses ~8.7 GB on GPU 1, leaving 6.9 GB free. Empirically each inference pass needs ~4.5 GB per 2 slices (SigLIP attention + intermediate activations + KV cache). 2 slices → ~4.5 GB → fits. 4 slices → ~9 GB → OOM. `torch.cuda.empty_cache()` + explicit `del inputs/output_ids` + `gc.collect()` in a `finally` block returns GPU to its post-load baseline after every request.
 
 #### How to improve CT/MRI quality in the future
 | Improvement | What to change | Expected gain |
@@ -378,7 +378,7 @@ one ngrok URL → FastAPI proxy on port 5003
 | More slices | Upgrade to A100 (40 GB VRAM) → raise `INFERENCE_SLICES` to 10-12 | Better coverage of subtle findings |
 | Better model | Switch to MedGemma 27B or a CT-specialist model | Significantly better accuracy |
 | All-slice analysis | Run inference in batches, aggregate results | Catches small nodules (<5mm) currently missed |
-| Current bottleneck | `INFERENCE_SLICES = 4` in `api/medgemma_app.py` (T4 VRAM limit) | — |
+| Current bottleneck | `INFERENCE_SLICES = 2` in `api/medgemma_app.py` (T4 VRAM limit — 4 slices OOMs) | — |
 
 ---
 

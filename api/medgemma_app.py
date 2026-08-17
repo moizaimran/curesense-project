@@ -114,13 +114,14 @@ def _load_model():
 MAX_SLICES = 85
 
 # Slices sent to the model per CT/MRI request.
-# T4 VRAM budget: model weights use ~9.5 GB, leaving ~5 GB free.
-# SigLIP vision encoder computes attention across ALL patch tokens from ALL images
-# at once (no flash-attention tiling). Each image = 4096 patches at 896×896/14px.
-# 8 images → 32 768 patches → attention matrix = 8 GiB → OOM on T4.
-# 4 images → 16 384 patches → attention matrix = ~2 GiB → fits safely.
-# To increase: upgrade to A100 (40 GB VRAM) — then 10-12 slices is safe.
-INFERENCE_SLICES = 4
+# T4 VRAM budget: model weights use ~8.7 GB on GPU 1, leaving 6.9 GB free.
+# Empirically, each inference pass needs ~4.5 GB per 2 slices of overhead
+# (SigLIP attention + intermediate activations + KV cache pre-allocation):
+#   2 slices → ~4.5 GB needed → fits in 6.9 GB free ✓
+#   4 slices → ~9.0 GB needed → OOM (only 6.9 GB available) ✗
+#   8 slices → ~18 GB needed → OOM ✗
+# To increase slice count: upgrade to A100 (40 GB VRAM) and raise to 8-10.
+INFERENCE_SLICES = 2
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
