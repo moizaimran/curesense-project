@@ -308,6 +308,31 @@ def _parse_text_fallback(text: str) -> dict:
 
 # ── Inference helper ──────────────────────────────────────────────────────────
 
+def _decode_output(processor, output_ids, inputs) -> str:
+    """
+    Decode model output using Gemma3's multimodal-aware method.
+
+    Matches the approach in Google's official high_dimensional_ct_hugging_face.ipynb:
+      1. post_process_image_text_to_text decodes the full generated sequence.
+      2. The input prefix is decoded the same way.
+      3. The input prefix is stripped from the output by text search.
+
+    This is more robust than slicing output_ids by prompt_len because
+    Gemma3 may add/remove special tokens during multimodal processing
+    that change the effective sequence length.
+    """
+    full_text  = processor.post_process_image_text_to_text(
+        output_ids, skip_special_tokens=True
+    )[0]
+    input_text = processor.post_process_image_text_to_text(
+        inputs["input_ids"], skip_special_tokens=True
+    )[0]
+    idx = full_text.find(input_text)
+    if 0 <= idx <= 2:
+        return full_text[idx + len(input_text):]
+    return full_text
+
+
 def _run_inference(prompt: str, image) -> dict:
     """Run MedGemma on a single PIL image with the given prompt."""
     import torch
@@ -338,13 +363,9 @@ def _run_inference(prompt: str, image) -> dict:
 
     try:
         with torch.inference_mode():
-            output_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)
-
-        prompt_len = inputs["input_ids"].shape[1]
-        output     = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
+            output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
+        output = _decode_output(processor, output_ids, inputs)
     finally:
-        # Always free GPU tensors immediately — not waiting for Python GC.
-        # Without this, each call permanently grows VRAM usage.
         del inputs
         if output_ids is not None:
             del output_ids
@@ -400,15 +421,9 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
 
     try:
         with torch.inference_mode():
-            output_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)
-
-        prompt_len = inputs["input_ids"].shape[1]
-        output     = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
+            output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
+        output = _decode_output(processor, output_ids, inputs)
     finally:
-        # Always free GPU tensors immediately — success or failure.
-        # Each CT/MRI inference allocates ~4 GB; without explicit cleanup
-        # that memory accumulates across requests and the kernel needs a
-        # restart after just a few calls.
         del inputs
         if output_ids is not None:
             del output_ids
