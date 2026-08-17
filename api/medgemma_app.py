@@ -86,12 +86,21 @@ def _load_model():
         print(f"[MedGemma] WARNING: only {_n_gpus} GPU(s) available — falling back to device_map='auto'")
         _device_map = "auto"
 
+    # attn_implementation="sdpa" routes every attention layer (SigLIP + Gemma3)
+    # through torch.nn.functional.scaled_dot_product_attention. PyTorch then
+    # dispatches to the best available kernel:
+    #   • Flash Attention 2  — sm80+ (L4, A100) — O(n) memory
+    #   • Memory-efficient   — sm75+ (T4)       — O(n) memory  ← our path
+    #   • Math (fallback)    — any GPU           — O(n²) memory — causes the 4 GiB OOM
+    # Without this flag the default is "eager" which always uses the O(n²) kernel,
+    # causing OOM even with 4 slices (4 × 4096 patches × 4096 patches × 2 bytes = 4 GiB).
     _model = AutoModelForImageTextToText.from_pretrained(
         "google/medgemma-1.5-4b-it",
         torch_dtype=torch.bfloat16,
         device_map=_device_map,
+        attn_implementation="sdpa",
     )
-    print("[MedGemma] Model loaded.")
+    print("[MedGemma] Model loaded (attn=sdpa — memory-efficient attention active).")
 
     # VRAM after load — confirms the split: GPU 0 still free for Flask, GPU 1 mostly used
     if torch.cuda.is_available():
@@ -114,14 +123,13 @@ def _load_model():
 MAX_SLICES = 85
 
 # Slices sent to the model per CT/MRI request.
-# T4 VRAM budget: model weights use ~8.7 GB on GPU 1, leaving 6.9 GB free.
-# Empirically, each inference pass needs ~4.5 GB per 2 slices of overhead
-# (SigLIP attention + intermediate activations + KV cache pre-allocation):
-#   2 slices → ~4.5 GB needed → fits in 6.9 GB free ✓
-#   4 slices → ~9.0 GB needed → OOM (only 6.9 GB available) ✗
-#   8 slices → ~18 GB needed → OOM ✗
-# To increase slice count: upgrade to A100 (40 GB VRAM) and raise to 8-10.
-INFERENCE_SLICES = 2
+# With attn_implementation="sdpa", PyTorch uses memory-efficient attention
+# (O(n) memory, not O(n²)). The official Google CT notebook uses 85 slices
+# on an L4 (24 GB). On a T4 (6.9 GB free) 8 slices is a safe target:
+#   8 slices × 256 vision tokens = 2 048 LM tokens → KV cache ~200 MB
+#   SigLIP attention: ~50 MB per image (memory-efficient, not 4 GiB)
+# Without sdpa (eager/math attention), even 4 slices caused 4 GiB OOM.
+INFERENCE_SLICES = 8
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
