@@ -324,33 +324,21 @@ def _run_inference(prompt: str, image) -> dict:
 
     model, processor = _load_model()
 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text",  "text":  prompt},
-            ],
-        }
-    ]
+    messages = [{"role": "user", "content": [
+        {"type": "image", "image": image},
+        {"type": "text",  "text":  prompt},
+    ]}]
 
-    inputs = processor.apply_chat_template(
-        messages,
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt",
-    ).to(model.device)
-    # Accelerate device hooks handle dtype casting internally — no manual cast needed.
+    # Two-step: format text first, then let processor handle image+text together.
+    # This matches the HuggingFace model card approach and avoids BatchEncoding dtype issues.
+    text   = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+    inputs = processor(text=text, images=image, return_tensors="pt").to(model.device)
+
     output_ids = None
     prompt_len = inputs["input_ids"].shape[1]
-
-    _log(f"xray inputs keys: {list(inputs.keys())}")
-    _log(f"xray input_ids dtype={inputs['input_ids'].dtype} attn_mask sum={inputs['attention_mask'].sum().item()}")
+    _log(f"xray keys={list(inputs.keys())} prompt_len={prompt_len}")
     if "pixel_values" in inputs:
-        pv = inputs["pixel_values"]
-        _log(f"xray pixel_values shape={list(pv.shape)} dtype={pv.dtype}")
-    _log(f"xray eos_token_id={model.generation_config.eos_token_id}")
+        _log(f"xray pixel_values shape={list(inputs['pixel_values'].shape)} dtype={inputs['pixel_values'].dtype}")
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -359,12 +347,9 @@ def _run_inference(prompt: str, image) -> dict:
         with torch.inference_mode():
             output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
-        _log(f"xray — prompt_len={prompt_len} generated_len={generated_len}")
-        _log(f"xray first 20 token ids: {output_ids[0][prompt_len:prompt_len+20].tolist()}")
+        _log(f"xray generated_len={generated_len} first_10={output_ids[0][prompt_len:prompt_len+10].tolist()}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
-        output_raw = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=False)
-        _log(f"xray skip_special=True  (first 300): {output[:300]!r}")
-        _log(f"xray skip_special=False (first 300): {output_raw[:300]!r}")
+        _log(f"xray output (first 300): {output[:300]!r}")
     finally:
         del inputs
         if output_ids is not None:
@@ -388,9 +373,6 @@ def _run_inference(prompt: str, image) -> dict:
 def _run_multi_slice_inference(instruction: str, query: str, images: list) -> dict:
     """
     Run MedGemma on multiple CT/MRI slices in a single forward pass.
-
-    Message format (mirrors high_dimensional_ct_hugging_face.ipynb):
-      [instruction] → [image][SLICE 1] → … → [image][SLICE N] → [query]
     """
     import torch
 
@@ -404,32 +386,23 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
 
     messages = [{"role": "user", "content": content}]
 
-    inputs = processor.apply_chat_template(
-        messages,
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt",
-    )
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
-    if "pixel_values" in inputs:
-        inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.float16)
+    text   = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+    inputs = processor(text=text, images=images, return_tensors="pt").to(model.device)
+
     output_ids = None
     prompt_len = inputs["input_ids"].shape[1]
+    _log(f"ct_mri keys={list(inputs.keys())} prompt_len={prompt_len} n_images={len(images)}")
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
     try:
         with torch.inference_mode():
-            output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
+            output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
-        _log(f"ct_mri — prompt_len={prompt_len} generated_len={generated_len} n_images={len(images)}")
-        _log(f"ct_mri first 20 token ids: {output_ids[0][prompt_len:prompt_len+20].tolist()}")
+        _log(f"ct_mri generated_len={generated_len} first_10={output_ids[0][prompt_len:prompt_len+10].tolist()}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
-        output_raw = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=False)
-        _log(f"ct_mri skip_special=True  (first 500): {output[:500]!r}")
-        _log(f"ct_mri skip_special=False (first 500): {output_raw[:500]!r}")
+        _log(f"ct_mri output (first 500): {output[:500]!r}")
     finally:
         del inputs
         if output_ids is not None:
