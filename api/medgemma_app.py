@@ -129,12 +129,10 @@ MAX_SLICES = 85
 
 # Slices sent to the model per CT/MRI inference request.
 #
-# bfloat16 is rejected by mem_efficient SDPA on SM75 (T4), so math SDPA is used.
-# Math SDPA materialises the full QK^T in float32:
-#   N slices × 16 heads × 4096² patches × 4 bytes = N × 1 GiB
-#   N=2 → ~2 GiB peak → fits in ~5 GiB free VRAM after model load ✓
-#   N=4 → ~4 GiB peak → OOM
-INFERENCE_SLICES = 2
+# Slices are stacked into a single montage and sent as one image, so SigLIP
+# always processes exactly 1 image regardless of slice count. Memory is no
+# longer slice-count-dependent — 4 slices give better scan coverage.
+INFERENCE_SLICES = 4
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
@@ -356,29 +354,43 @@ def _run_inference(prompt: str, image) -> dict:
 
 def _run_multi_slice_inference(instruction: str, query: str, images: list) -> dict:
     """
-    Run MedGemma on multiple CT/MRI slices in a single forward pass.
+    Run MedGemma on multiple CT/MRI slices packed into a single montage image.
+
+    MedGemma 1.5-4B was fine-tuned on single-image tasks. Passing multiple
+    images via the multi-image message format causes the model to refuse with
+    "I am a text-based AI and cannot process medical images." Stacking slices
+    into one image uses the identical single-image path that works for X-ray.
     """
     import torch
+    from PIL import Image as PILImage
 
     model, processor = _load_model()
 
-    content: list = [{"type": "text", "text": instruction}]
-    for i, img in enumerate(images, 1):
-        content.append({"type": "image", "image": img})
-        content.append({"type": "text",  "text":  f"SLICE {i}"})
-    content.append({"type": "text", "text": query})
+    n    = len(images)
+    TILE = 448  # each slice is scaled to TILE×TILE; processor resizes combined to 896×896
+    canvas = PILImage.new("RGB", (TILE, TILE * n))
+    for i, img in enumerate(images):
+        canvas.paste(img.resize((TILE, TILE), PILImage.LANCZOS), (0, i * TILE))
 
-    messages = [{"role": "user", "content": content}]
+    prompt = (
+        f"{instruction} "
+        f"The image shows {n} contiguous scan slices stacked vertically, top to bottom.\n\n"
+        f"{query}"
+    )
+    messages = [{"role": "user", "content": [
+        {"type": "image", "image": canvas},
+        {"type": "text",  "text":  prompt},
+    ]}]
 
     text   = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-    inputs = processor(text=text, images=images, return_tensors="pt").to(model.device)
+    inputs = processor(text=text, images=canvas, return_tensors="pt").to(model.device)
     inputs.pop("token_type_ids", None)
     if "pixel_values" in inputs:
         inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.bfloat16)
 
     output_ids = None
     prompt_len = inputs["input_ids"].shape[1]
-    _log(f"ct_mri prompt_len={prompt_len} n_images={len(images)}")
+    _log(f"ct_mri prompt_len={prompt_len} n_slices={n} canvas={canvas.size}")
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -391,7 +403,7 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
         _log(f"ct_mri output (first 500): {output[:500]!r}")
     finally:
-        del inputs
+        del inputs, canvas
         if output_ids is not None:
             del output_ids
         gc.collect()
