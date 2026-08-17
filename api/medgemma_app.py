@@ -582,8 +582,16 @@ def analyze_ct_mri(req: CtMriRequest):
         indices         = [int(round(i / (INFERENCE_SLICES - 1) * (n - 1))) for i in range(INFERENCE_SLICES)]
         selected_slices = [volume_images[idx] for idx in indices]
 
-    result = _run_multi_slice_inference(_CT_MRI_INSTRUCTION, _CT_MRI_QUERY, selected_slices)
-    result["modality"]       = modality
-    result["model_used"]     = "medgemma-1.5-4b"
-    result["thumbnail_b64"]  = _create_thumbnail_montage(selected_slices)
+    try:
+        result = _run_multi_slice_inference(_CT_MRI_INSTRUCTION, _CT_MRI_QUERY, selected_slices)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Inference failed: {exc}")
+
+    result["modality"]      = modality
+    result["model_used"]    = "medgemma-1.5-4b"
+    try:
+        result["thumbnail_b64"] = _create_thumbnail_montage(selected_slices)
+    except Exception:
+        result["thumbnail_b64"] = ""
+
     return result
