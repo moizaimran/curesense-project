@@ -86,21 +86,27 @@ def _load_model():
         print(f"[MedGemma] WARNING: only {_n_gpus} GPU(s) available — falling back to device_map='auto'")
         _device_map = "auto"
 
-    # attn_implementation="sdpa" routes every attention layer (SigLIP + Gemma3)
-    # through torch.nn.functional.scaled_dot_product_attention. PyTorch then
-    # dispatches to the best available kernel:
-    #   • Flash Attention 2  — sm80+ (L4, A100) — O(n) memory
-    #   • Memory-efficient   — sm75+ (T4)       — O(n) memory  ← our path
-    #   • Math (fallback)    — any GPU           — O(n²) memory — causes the 4 GiB OOM
-    # Without this flag the default is "eager" which always uses the O(n²) kernel,
-    # causing OOM even with 4 slices (4 × 4096 patches × 4096 patches × 2 bytes = 4 GiB).
+    # Root cause of OOM on T4: PyTorch memory-efficient SDPA requires sm80+ for
+    # bfloat16 (L4/A100). T4 is sm75 — bfloat16 falls back to math SDPA which
+    # materialises the full QK^T matrix: 8 slices × 4096 patches² × 2 B = 8 GiB.
+    # float16 memory-efficient SDPA works on sm75+ (T4), so switching dtype
+    # unlocks O(n) attention and lets 8 slices fit in ~6 GB of free VRAM.
     _model = AutoModelForImageTextToText.from_pretrained(
         "google/medgemma-1.5-4b-it",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.float16,
         device_map=_device_map,
         attn_implementation="sdpa",
     )
-    print("[MedGemma] Model loaded (attn=sdpa — memory-efficient attention active).")
+
+    # Force memory-efficient SDPA globally — prevents math fallback even inside
+    # SigLIP. Must be set after model load (torch initialises CUDA during load).
+    if torch.cuda.is_available():
+        torch.backends.cuda.enable_flash_sdp(True)
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+        torch.backends.cuda.enable_math_sdp(False)
+        print("[MedGemma] SDPA: flash=on, mem_efficient=on, math=off")
+
+    print("[MedGemma] Model loaded (float16 + sdpa — T4 memory-efficient attention).")
 
     # VRAM after load — confirms the split: GPU 0 still free for Flask, GPU 1 mostly used
     if torch.cuda.is_available():
@@ -132,7 +138,7 @@ MAX_SLICES = 85
 #   4 slices → 4 GiB → OOM on T4 ✗
 #   8 slices → 8 GiB → OOM on T4 ✗
 # To increase slices: upgrade to L4 (24 GB) → safe up to ~10 slices.
-INFERENCE_SLICES = 2
+INFERENCE_SLICES = 8
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
@@ -313,7 +319,7 @@ def _run_inference(prompt: str, image) -> dict:
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
-    ).to(model.device, dtype=torch.bfloat16)
+    ).to(model.device, dtype=torch.float16)
     output_ids = None
 
     if torch.cuda.is_available():
@@ -375,7 +381,7 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
-    ).to(model.device, dtype=torch.bfloat16)
+    ).to(model.device, dtype=torch.float16)
     output_ids = None
 
     if torch.cuda.is_available():
