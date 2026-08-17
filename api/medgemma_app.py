@@ -107,11 +107,13 @@ def _load_model():
 MAX_SLICES = 85
 
 # Slices sent to the model per CT/MRI request.
-# T4 memory budget: ~8 GB used by 4B weights leaves ~8 GB for activations.
-# Each image produces 256 vision tokens; 8 images → 2 048 tokens → ~450 MB KV
-# cache across 28 layers.  Inference time ≈ 60-90 s on T4 — within the 360 s
-# axios timeout set in imageController.js.  Raising above 15 risks OOM.
-INFERENCE_SLICES = 8
+# T4 VRAM budget: model weights use ~9.5 GB, leaving ~5 GB free.
+# SigLIP vision encoder computes attention across ALL patch tokens from ALL images
+# at once (no flash-attention tiling). Each image = 4096 patches at 896×896/14px.
+# 8 images → 32 768 patches → attention matrix = 8 GiB → OOM on T4.
+# 4 images → 16 384 patches → attention matrix = ~2 GiB → fits safely.
+# To increase: upgrade to A100 (40 GB VRAM) — then 10-12 slices is safe.
+INFERENCE_SLICES = 4
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
@@ -294,6 +296,9 @@ def _run_inference(prompt: str, image) -> dict:
         return_tensors="pt",
     ).to(model.device, dtype=torch.bfloat16)
 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     with torch.inference_mode():
         output_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)
 
@@ -342,6 +347,11 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
         return_dict=True,
         return_tensors="pt",
     ).to(model.device, dtype=torch.bfloat16)
+
+    # Free fragmented VRAM before the generate call so the vision encoder
+    # attention allocation has the largest possible contiguous block.
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     with torch.inference_mode():
         output_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)

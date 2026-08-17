@@ -369,16 +369,16 @@ one ngrok URL → FastAPI proxy on port 5003
 - **Privacy**: `storage_url` never sent to client; no PHI logged to console
 - **GPU split**: Flask (Whisper + GLiNER) on GPU 0, MedGemma on GPU 1 via `device_map={"": 1}`
 - **Magic byte validation**: upload rejected before any AI call if file type doesn't match declared `upload_type`
-- **CT/MRI thumbnail**: after analysis, MedGemma returns a small JPEG montage (8 slices in a grid, ~50-100 KB) stored in Cloudinary — the raw ZIP is never stored permanently
-- **Slice count limit (8)**: T4 GPU has ~8 GB free VRAM after model load; each image = 256 vision tokens; 8 images ≈ 450 MB KV cache. Safe ceiling on a single T4. Raising above 15 risks OOM.
+- **CT/MRI thumbnail**: after analysis, MedGemma returns a small JPEG montage (4 slices in a grid, ~30-80 KB) stored in Cloudinary — the raw ZIP is never stored permanently
+- **Slice count limit (4)**: T4 GPU (14.56 GB) uses ~9.5 GB for model weights, leaving ~5 GB free. SigLIP vision encoder computes global attention across ALL patch tokens of ALL images simultaneously — at 896×896 px with 14-px patch size that is 4096 patches per image. 8 images × 4096 = 32 768 patches → attention matrix = 8 GiB → OOM. 4 images → 16 384 patches → ~2 GiB → fits safely. `torch.cuda.empty_cache()` is called before each `model.generate()` to release fragmented allocations.
 
 #### How to improve CT/MRI quality in the future
 | Improvement | What to change | Expected gain |
 |---|---|---|
-| More slices | Upgrade to A100 (2× VRAM) → raise `INFERENCE_SLICES` to 20-25 | Better coverage of subtle findings |
+| More slices | Upgrade to A100 (40 GB VRAM) → raise `INFERENCE_SLICES` to 10-12 | Better coverage of subtle findings |
 | Better model | Switch to MedGemma 27B or a CT-specialist model | Significantly better accuracy |
 | All-slice analysis | Run inference in batches, aggregate results | Catches small nodules (<5mm) currently missed |
-| Current bottleneck | `INFERENCE_SLICES = 8` in `api/medgemma_app.py` | — |
+| Current bottleneck | `INFERENCE_SLICES = 4` in `api/medgemma_app.py` (T4 VRAM limit) | — |
 
 ---
 
