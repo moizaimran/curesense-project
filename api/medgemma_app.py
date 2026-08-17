@@ -334,13 +334,18 @@ def _run_inference(prompt: str, image) -> dict:
         }
     ]
 
-    inputs     = processor.apply_chat_template(
+    inputs = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
-    ).to(model.device, dtype=torch.float16)
+    )
+    # Move to device first (keeps input_ids as int64 — float16 cast corrupts token IDs > 2048)
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    # Cast only the vision tensor to float16 — text tensors stay int64
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.float16)
     output_ids = None
     prompt_len = inputs["input_ids"].shape[1]
 
@@ -352,8 +357,11 @@ def _run_inference(prompt: str, image) -> dict:
             output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
         _log(f"xray — prompt_len={prompt_len} generated_len={generated_len}")
+        _log(f"xray first 20 token ids: {output_ids[0][prompt_len:prompt_len+20].tolist()}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
-        _log(f"xray raw output (first 300): {output[:300]!r}")
+        output_raw = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=False)
+        _log(f"xray skip_special=True  (first 300): {output[:300]!r}")
+        _log(f"xray skip_special=False (first 300): {output_raw[:300]!r}")
     finally:
         del inputs
         if output_ids is not None:
@@ -393,13 +401,16 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
 
     messages = [{"role": "user", "content": content}]
 
-    inputs     = processor.apply_chat_template(
+    inputs = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
-    ).to(model.device, dtype=torch.float16)
+    )
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.float16)
     output_ids = None
     prompt_len = inputs["input_ids"].shape[1]
 
@@ -411,8 +422,11 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
             output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
         generated_len = output_ids.shape[1] - prompt_len
         _log(f"ct_mri — prompt_len={prompt_len} generated_len={generated_len} n_images={len(images)}")
+        _log(f"ct_mri first 20 token ids: {output_ids[0][prompt_len:prompt_len+20].tolist()}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
-        _log(f"ct_mri raw output (first 500): {output[:500]!r}")
+        output_raw = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=False)
+        _log(f"ct_mri skip_special=True  (first 500): {output[:500]!r}")
+        _log(f"ct_mri skip_special=False (first 500): {output_raw[:500]!r}")
     finally:
         del inputs
         if output_ids is not None:
