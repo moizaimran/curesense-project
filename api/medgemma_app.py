@@ -75,50 +75,31 @@ def _load_model():
     print("[MedGemma] Loading model google/medgemma-1.5-4b-it …")
     _processor = AutoProcessor.from_pretrained("google/medgemma-1.5-4b-it")
 
-    # Pin to GPU 1 so MedGemma never competes with Flask's Whisper + GLiNER on GPU 0.
-    # Fallback: Kaggle occasionally provisions only 1 T4 despite the "2x T4" setting —
-    # device_map={"": 1} would raise an error in that case, so we detect and fall back.
     _n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     if _n_gpus >= 2:
         _device_map = {"": 1}
         print("[MedGemma] Pinning to GPU 1 (2 GPUs detected)")
+    elif _n_gpus == 1:
+        _device_map = {"": 0}
+        print("[MedGemma] Pinning to GPU 0 (single GPU)")
     else:
-        print(f"[MedGemma] WARNING: only {_n_gpus} GPU(s) available — falling back to device_map='auto'")
-        _device_map = "auto"
+        _device_map = "cpu"
+        print("[MedGemma] No GPU — using CPU")
 
-    # dtype = float16 is required for memory-efficient SDPA on T4 (sm75).
-    #
-    # PyTorch SDPA backend selection on T4 (verified against sdp_utils.cpp):
-    #   • Flash attention:       sm80–sm121 required → NEVER fires on T4 (sm75)
-    #   • Memory-efficient:      sm50–sm121; sm<80 accepts float16 + float32 ONLY
-    #                            (bfloat16 rejected on sm<80 — falls to math)
-    #   • Math:                  always available; O(n²) memory
-    #
-    # attn_implementation="sdpa" propagates to SigLIP via Gemma3Config.sub_configs
-    # recursive setter (configuration_gemma3.py). SigLIP therefore calls
-    # F.scaled_dot_product_attention → PyTorch picks mem_efficient (float16, sm75 ✓).
-    # Mem_efficient attention is O(n·d) in memory, not O(n²):
-    #   8 slices × 16 heads × 4096 patches × 72 head_dim × 2 B ≈ 608 MB  ← fits
-    #   (math SDPA would be 8 × 16 × 4096² × 2 B = 8 GiB              ← OOM)
-    #
-    # Math SDPA stays enabled as a fallback for Gemma3 LM layers that use
-    # grouped-query attention (GQA). When the LM passes enable_gqa=True to SDPA
-    # and mem_efficient GQA support is unavailable on sm75, math handles it.
-    # LM sequence length is short (~2 k tokens) so math SDPA there is fine.
+    # attn_implementation="eager" — uses transformers' explicit Python attention path.
+    # In modeling_gemma3.py, eager_attention_forward runs:
+    #   nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    # This guarantees float32 softmax regardless of model dtype, preventing the
+    # inf/inf=NaN that occurs when float16 multimodal attention values overflow in
+    # SDPA's internal CUDA kernels (which do not respect torch.autocast precision rules).
     _model = AutoModelForImageTextToText.from_pretrained(
         "google/medgemma-1.5-4b-it",
         torch_dtype=torch.float16,
         device_map=_device_map,
-        attn_implementation="sdpa",
+        attn_implementation="eager",
     )
 
-    if torch.cuda.is_available():
-        torch.backends.cuda.enable_flash_sdp(True)         # won't fire on sm75
-        torch.backends.cuda.enable_mem_efficient_sdp(True) # fires for SigLIP (float16, sm75 ✓)
-        torch.backends.cuda.enable_math_sdp(True)          # fallback for Gemma3 GQA
-        print("[MedGemma] SDPA backends: flash=on(sm75→skip), mem_efficient=on, math=on(GQA fallback)")
-
-    print("[MedGemma] Model loaded (float16 + sdpa).")
+    print("[MedGemma] Model loaded (float16 + eager attention).")
 
     # VRAM after load — confirms the split: GPU 0 still free for Flask, GPU 1 mostly used
     if torch.cuda.is_available():
@@ -142,14 +123,11 @@ MAX_SLICES = 85
 
 # Slices sent to the model per CT/MRI inference request.
 #
-# With float16 + attn_implementation="sdpa" on T4 (sm75):
-#   SigLIP uses memory-efficient SDPA (O(n·d) memory, NOT O(n²)):
-#   8 slices × 16 heads × 4096 patches × 72 head_dim × 2 B ≈ 608 MB → fits ✓
-#   (Without mem_efficient, math SDPA would be 8 × 16 × 4096² × 2 B = 8 GiB → OOM)
-#
-# 8 matches Google's official notebook slice count (they use 85 on L4, 8 here
-# because we also run within a limited free-VRAM budget on the T4).
-INFERENCE_SLICES = 8
+# With attn_implementation="eager", SigLIP materialises the full QK^T matrix:
+#   N slices × 16 heads × 4096² patches × float16 = N × 2 GiB
+#   N=4 → 2 GiB peak per layer → fits in ~5 GiB free VRAM after model load ✓
+#   N=8 → 4 GiB peak per layer → OOM risk
+INFERENCE_SLICES = 4
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
