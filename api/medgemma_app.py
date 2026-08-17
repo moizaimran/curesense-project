@@ -295,23 +295,33 @@ def _run_inference(prompt: str, image) -> dict:
         }
     ]
 
-    inputs = processor.apply_chat_template(
+    inputs     = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
     ).to(model.device, dtype=torch.bfloat16)
+    output_ids = None
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    with torch.inference_mode():
-        output_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)
+    try:
+        with torch.inference_mode():
+            output_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)
 
-    # Decode only the newly generated tokens
-    prompt_len = inputs["input_ids"].shape[1]
-    output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
+        prompt_len = inputs["input_ids"].shape[1]
+        output     = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
+    finally:
+        # Always free GPU tensors immediately — not waiting for Python GC.
+        # Without this, each call permanently grows VRAM usage.
+        del inputs
+        if output_ids is not None:
+            del output_ids
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     start = output.find("{")
     end   = output.rfind("}") + 1
@@ -347,13 +357,14 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
 
     messages = [{"role": "user", "content": content}]
 
-    inputs = processor.apply_chat_template(
+    inputs     = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
     ).to(model.device, dtype=torch.bfloat16)
+    output_ids = None
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -361,19 +372,20 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
     try:
         with torch.inference_mode():
             output_ids = model.generate(**inputs, max_new_tokens=512, do_sample=False)
-    except Exception:
-        # OOM or other CUDA error: explicitly release input tensors so the
-        # CUDA allocator can reclaim them immediately rather than waiting for
-        # Python GC. Without this, each failed attempt permanently consumes
-        # ~4 GB until the kernel is restarted.
+
+        prompt_len = inputs["input_ids"].shape[1]
+        output     = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
+    finally:
+        # Always free GPU tensors immediately — success or failure.
+        # Each CT/MRI inference allocates ~4 GB; without explicit cleanup
+        # that memory accumulates across requests and the kernel needs a
+        # restart after just a few calls.
         del inputs
+        if output_ids is not None:
+            del output_ids
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        raise
-
-    prompt_len = inputs["input_ids"].shape[1]
-    output     = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
 
     start = output.find("{")
     end   = output.rfind("}") + 1
