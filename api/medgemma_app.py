@@ -87,15 +87,19 @@ def _load_model():
         print("[MedGemma] No GPU — using CPU")
 
     # bfloat16: same exponent width as float32 (max ~3.4e38 vs float16's ~6.5e4).
-    # Vision encoder activations that overflow float16 → inf → NaN → all-pad output
-    # are handled safely in bfloat16. Confirmed fix from the official tutorial notebook.
+    # Vision encoder activations that overflow float16 → inf → all-pad output
+    # are handled safely in bfloat16.
+    # attn_implementation="eager": T4 does not support native bfloat16 compilation,
+    # so SDPA triggers a torch.compile/dynamo path that crashes at generate() time.
+    # Eager uses plain Python attention — no JIT compilation, always works on T4.
     _model = AutoModelForImageTextToText.from_pretrained(
         "google/medgemma-1.5-4b-it",
         torch_dtype=torch.bfloat16,
         device_map=_device_map,
+        attn_implementation="eager",
     )
 
-    print("[MedGemma] Model loaded (bfloat16).")
+    print("[MedGemma] Model loaded (bfloat16 + eager attention).")
 
     # VRAM after load — confirms the split: GPU 0 still free for Flask, GPU 1 mostly used
     if torch.cuda.is_available():
