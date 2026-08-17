@@ -157,9 +157,29 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
   console.log(`[Images] Processing ${recordId} type=${uploadType} file=${filename}`);
   try {
     // 1. Upload to Cloudinary for durable storage.
-    //    ct_mri ZIPs are skipped — they can be hundreds of MB, exceeding Cloudinary's
-    //    free-tier limit. The analysis result is persisted in MongoDB regardless.
-    if (uploadType !== "ct_mri") {
+    //
+    // PDF / X-ray: upload the file itself. Required for the record — fail hard if it errors.
+    // CT/MRI ZIP:  upload the original ZIP (raw, authenticated). Best-effort — if it
+    //              exceeds Cloudinary's free-tier upload limit (~100 MB) the analysis
+    //              still continues; zip_url stays "" in that case.
+    if (uploadType === "ct_mri") {
+      // Best-effort ZIP upload — non-fatal
+      try {
+        const up = await cloudinary.uploader.upload(
+          `data:application/zip;base64,${fileBase64}`,
+          {
+            resource_type: "raw",
+            folder:        "curesense/ct_zip",
+            public_id:     `${recordId}_zip`,
+            type:          "authenticated",
+          }
+        );
+        await ImageUpload.findByIdAndUpdate(recordId, { zip_url: up.secure_url });
+        console.log(`[Images] CT/MRI ZIP saved to Cloudinary for ${recordId}`);
+      } catch (err) {
+        console.warn(`[Images] CT/MRI ZIP Cloudinary upload skipped (${err?.message}) — continuing without ZIP storage`);
+      }
+    } else {
       const cloudinaryType = uploadType === "pdf" ? "raw" : "image";
       const dataUri        = `data:${mimeType || "application/octet-stream"};base64,${fileBase64}`;
 
@@ -204,6 +224,64 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
       result = await _analyzePdf(fileBase64, filename);
     } else {
       result = await _analyzeMedgemma(fileBase64, uploadType);
+    }
+
+    // 3. For ct_mri: extract and upload both assets returned by MedGemma, then strip
+    //    the base64 blobs from analysis_result before saving to DB.
+    //
+    //    canvas_b64  → the 4-slice inference montage fed to MedGemma (canvas_url)
+    //    thumbnail_b64 → smaller display montage for the app UI (storage_url)
+    //
+    //    Both are uploaded as authenticated Cloudinary assets. The document _id is
+    //    the common key that links ZIP (zip_url), canvas (canvas_url), and thumbnail
+    //    (storage_url) — all three can be fetched together from a single DB record.
+    if (uploadType === "ct_mri" && result.status === "complete") {
+      const updates = {};
+
+      // canvas: inference image (what MedGemma actually saw)
+      const canvasB64 = result.analysis_result?.canvas_b64;
+      if (canvasB64) {
+        delete result.analysis_result.canvas_b64;
+        try {
+          const up = await cloudinary.uploader.upload(
+            `data:image/jpeg;base64,${canvasB64}`,
+            {
+              resource_type: "image",
+              folder:        "curesense/ct_canvas",
+              public_id:     `${recordId}_canvas`,
+              type:          "authenticated",
+            }
+          );
+          updates.canvas_url = up.secure_url;
+          console.log(`[Images] CT/MRI canvas saved to Cloudinary for ${recordId}`);
+        } catch (err) {
+          console.warn(`[Images] CT/MRI canvas Cloudinary upload failed: ${err?.message}`);
+        }
+      }
+
+      // thumbnail: compact display image for the app
+      const thumbB64 = result.analysis_result?.thumbnail_b64;
+      if (thumbB64) {
+        delete result.analysis_result.thumbnail_b64;
+        try {
+          const up = await cloudinary.uploader.upload(
+            `data:image/jpeg;base64,${thumbB64}`,
+            {
+              resource_type: "image",
+              folder:        "curesense/images",
+              public_id:     recordId.toString(),
+              type:          "authenticated",
+            }
+          );
+          updates.storage_url = up.secure_url;
+        } catch (err) {
+          console.warn(`[Images] CT/MRI thumbnail Cloudinary upload failed: ${err?.message}`);
+        }
+      }
+
+      if (Object.keys(updates).length) {
+        await ImageUpload.findByIdAndUpdate(recordId, updates);
+      }
     }
 
     // Guard against the timeout having already flipped the status while AI was running
@@ -287,9 +365,9 @@ async function _analyzeMedgemma(imageBase64, uploadType) {
       const resp = await axios.post(
         `${MEDGEMMA_URL}${endpoint}`,
         { image_base64: imageBase64, modality: uploadType === "ct_mri" ? "ct" : undefined },
-        { timeout: 180_000, validateStatus: () => true }
+        { timeout: 360_000, validateStatus: () => true }
       );
-      console.log(`[Images] MedGemma HTTP ${resp.status} for attempt ${attempt + 1}`);
+      console.log(`[Images] MedGemma HTTP ${resp.status} for attempt ${attempt + 1} — body: ${JSON.stringify(resp.data)?.slice(0, 200)}`);
       if (resp.status === 200) {
         return {
           status:          "complete",

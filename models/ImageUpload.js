@@ -21,7 +21,11 @@ const ImageUploadSchema = new mongoose.Schema(
     upload_type:       { type: String, enum: ["pdf", "xray", "ct_mri"], required: true },
     original_filename: { type: String, default: "" },
     mime_type:         { type: String, default: "" },
+    // storage_url: primary file asset (X-ray image, PDF, or CT/MRI thumbnail montage)
     storage_url:       { type: String, default: "" },
+    // CT/MRI only — both assets share the same document _id as the link between them
+    zip_url:           { type: String, default: "" },  // original ZIP (Cloudinary raw, authenticated)
+    canvas_url:        { type: String, default: "" },  // 4-slice inference montage (Cloudinary image, authenticated)
     status:            { type: String, enum: ["processing", "complete", "error", "unavailable"], default: "processing" },
     model_used:        { type: String, default: "" },
     analysis_result:   { type: AnalysisResultSchema, default: null },
