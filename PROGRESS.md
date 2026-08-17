@@ -339,19 +339,27 @@ scan.tsx → POST /api/images (file_base64, upload_type:"xray")
   → Backend: save to MongoDB → Mobile: result modal with structured sections
 ```
 
-**CT / MRI Analysis (MedGemma multi-slice)**
+**CT / MRI Analysis (MedGemma montage)**
 ```
 scan.tsx → POST /api/images (file_base64, upload_type:"ct_mri")
-  → Backend: create record (no Cloudinary at this stage — ZIP too large)
+  → Backend:
+      create ImageUpload record (status: processing)
+      → try upload original ZIP to Cloudinary (raw, authenticated) → zip_url
+        (best-effort; if >~100 MB free-tier limit, zip_url stays "" — analysis continues)
   → POST ngrok/analyze/ct-mri → proxy:5003 → MedGemma FastAPI:5002 (GPU 1)
   → MedGemma:
       CT:  DICOM → HU windowing → 3-channel RGB (wide/soft-tissue/brain windows)
       MRI: DICOM → min-max normalise → grayscale RGB
-      Up to 85 slices extracted, sampled to 8 → single forward pass
-      Generates compressed thumbnail montage (8 key slices, JPEG ~50-100 KB)
-  → Returns: { summary, modality, findings[], flagged_abnormal, impression, thumbnail_b64 }
-  → Backend: extracts thumbnail_b64 → uploads to Cloudinary as small JPEG
-  → Saves analysis to MongoDB (thumbnail_b64 stripped — already in Cloudinary)
+      Up to 85 slices extracted, sampled to INFERENCE_SLICES=4 evenly-spaced
+      Stack 4 slices at 448×448 each → single 448×1792 canvas image → feed to model
+      Generates thumbnail montage (up to 9 tiles, ~30-100 KB)
+  → Returns: { summary, modality, findings[], flagged_abnormal, impression,
+               canvas_b64, thumbnail_b64 }
+  → Backend:
+      canvas_b64 → upload to Cloudinary (image, authenticated) → canvas_url
+      thumbnail_b64 → upload to Cloudinary (image, authenticated) → storage_url
+      All three (zip_url, canvas_url, storage_url) on same MongoDB document — _id is the link
+  → Saves analysis to MongoDB (base64 blobs stripped — already in Cloudinary)
   → Mobile: polls GET /api/images/:id → renders result modal
 ```
 
@@ -369,16 +377,25 @@ one ngrok URL → FastAPI proxy on port 5003
 - **Privacy**: `storage_url` never sent to client; no PHI logged to console
 - **GPU split**: Flask (Whisper + GLiNER) on GPU 0, MedGemma on GPU 1 via `device_map={"": 1}`
 - **Magic byte validation**: upload rejected before any AI call if file type doesn't match declared `upload_type`
-- **CT/MRI thumbnail**: after analysis, MedGemma returns a small JPEG montage (4 slices in a grid, ~30-80 KB) stored in Cloudinary — the raw ZIP is never stored permanently
-- **Slice count (8) — attn_implementation="sdpa"**: Root cause of OOM was the default `attn_implementation="eager"` in `from_pretrained`. "Eager" manually computes the full QK^T attention matrix: 4 images × 4096 patches × 4096 patches × 2 bytes = 4 GiB per attention layer → OOM even with 4 slices. Switching to `attn_implementation="sdpa"` routes all attention (SigLIP vision tower + Gemma3 LM) through `torch.nn.functional.scaled_dot_product_attention`, which automatically picks memory-efficient attention (O(n) memory) on T4 (sm75+). The official Google MedGemma CT notebook uses 85 slices on an L4; on T4 with 8 slices the SigLIP attention uses ~50 MB/image instead of 4 GB/4-images. `try/finally` cleanup still runs after every inference to prevent tensor accumulation.
+- **CT/MRI storage — three linked assets per record** (all linked by MongoDB document `_id`):
+  - `zip_url` — original ZIP (Cloudinary raw, authenticated). Best-effort; empty if file exceeds free-tier upload limit
+  - `canvas_url` — the 4-slice inference montage (448×1792 JPEG) MedGemma actually analyzed
+  - `storage_url` — compact display thumbnail (up to 9 tiles, 128px each, ~30-100 KB)
+  None of these URLs are sent to the mobile client — they are backend/audit only
+- **MedGemma working config (T4 free tier, confirmed)**:
+  - `torch_dtype=torch.bfloat16` — fixes all-pad output; float16 overflows vision encoder activations
+  - `attn_implementation="eager"` — prevents dynamo/torch.compile crash; T4 cannot compile bfloat16 natively
+  - `torch._dynamo.config.disable = True` (set before `from_pretrained`) — prevents per-token JIT attempts
+  - `INFERENCE_SLICES = 4` — safe with montage approach (always 1 SigLIP forward pass regardless of slice count)
+- **CT/MRI montage approach**: MedGemma 1.5-4B was fine-tuned on single-image tasks. Multi-image format causes "I am a text-based AI" refusal. Slices are stacked into a single 448×(448×N) canvas image and processed identically to X-ray inference
 
 #### How to improve CT/MRI quality in the future
 | Improvement | What to change | Expected gain |
 |---|---|---|
-| More slices | Raise `INFERENCE_SLICES` to 20-50 (already have sdpa — just limited by KV cache) | Better coverage of subtle findings |
+| More slices | Raise `INFERENCE_SLICES` (memory flat — always 1 SigLIP pass) | Better scan coverage |
 | Better model | Switch to MedGemma 27B or a CT-specialist model | Significantly better accuracy |
 | All-slice analysis | Run inference in batches, aggregate results | Catches small nodules (<5mm) currently missed |
-| Current config | `INFERENCE_SLICES = 8`, `attn_implementation="sdpa"` — should work on T4 | — |
+| Current config | `INFERENCE_SLICES = 4`, montage approach, bfloat16 + eager — confirmed working on T4 | — |
 
 ---
 

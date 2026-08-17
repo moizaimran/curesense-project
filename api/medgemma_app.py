@@ -395,6 +395,8 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    canvas_b64 = ""
+    output     = ""
     try:
         with torch.inference_mode():
             output_ids = model.generate(**inputs, max_new_tokens=500, do_sample=False)
@@ -402,6 +404,11 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
         _log(f"ct_mri generated_len={generated_len} first_10={output_ids[0][prompt_len:prompt_len+10].tolist()}")
         output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
         _log(f"ct_mri output (first 500): {output[:500]!r}")
+        # Encode the inference canvas for durable storage before cleanup.
+        # This is the exact image fed to MedGemma — useful for audit and replay.
+        _cbuf = io.BytesIO()
+        canvas.save(_cbuf, format="JPEG", quality=85)
+        canvas_b64 = base64.b64encode(_cbuf.getvalue()).decode()
     finally:
         del inputs, canvas
         if output_ids is not None:
@@ -414,12 +421,15 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
     end   = output.rfind("}") + 1
 
     if start == -1 or end == 0:
-        return _parse_text_fallback(output.strip())
+        parsed = _parse_text_fallback(output.strip())
+    else:
+        try:
+            parsed = json.loads(output[start:end])
+        except json.JSONDecodeError:
+            parsed = _parse_text_fallback(output.strip())
 
-    try:
-        return json.loads(output[start:end])
-    except json.JSONDecodeError:
-        return _parse_text_fallback(output.strip())
+    parsed["canvas_b64"] = canvas_b64
+    return parsed
 
 
 # ── ZIP extraction ────────────────────────────────────────────────────────────
