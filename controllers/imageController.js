@@ -180,10 +180,11 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
         console.warn(`[Images] CT/MRI ZIP Cloudinary upload skipped (${err?.message}) — continuing without ZIP storage`);
       }
     } else {
+      // X-ray / PDF: best-effort upload — Cloudinary failure does NOT block the AI call.
+      // Analysis is always saved to MongoDB; storage_url stays "" if upload fails.
       const cloudinaryType = uploadType === "pdf" ? "raw" : "image";
       const dataUri        = `data:${mimeType || "application/octet-stream"};base64,${fileBase64}`;
 
-      let storageUrl = "";
       try {
         const up = await cloudinary.uploader.upload(dataUri, {
           resource_type: cloudinaryType,
@@ -191,7 +192,7 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
           public_id:     recordId.toString(),
           type:          "authenticated",
         });
-        storageUrl = up.secure_url;
+        await ImageUpload.findByIdAndUpdate(recordId, { storage_url: up.secure_url });
       } catch (err) {
         console.warn(`[Images] Cloudinary ${cloudinaryType} upload failed: ${err?.message} — retrying as raw`);
         try {
@@ -201,21 +202,11 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
             public_id:     `${recordId}_raw`,
             type:          "authenticated",
           });
-          storageUrl = up.secure_url;
+          await ImageUpload.findByIdAndUpdate(recordId, { storage_url: up.secure_url });
         } catch (err2) {
-          console.error(`[Images] Cloudinary raw upload also failed: ${err2?.message}`);
+          console.warn(`[Images] Cloudinary raw upload also failed: ${err2?.message} — continuing without file storage`);
         }
       }
-
-      if (!storageUrl) {
-        await ImageUpload.findOneAndUpdate(
-          { _id: recordId, status: "processing" },
-          { status: "error", error_message: "File could not be saved to storage. Please try again." }
-        );
-        return;
-      }
-
-      await ImageUpload.findByIdAndUpdate(recordId, { storage_url: storageUrl });
     }
 
     // 2. Route to AI service
