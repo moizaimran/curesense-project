@@ -123,13 +123,16 @@ def _load_model():
 MAX_SLICES = 85
 
 # Slices sent to the model per CT/MRI request.
-# With attn_implementation="sdpa", PyTorch uses memory-efficient attention
-# (O(n) memory, not O(n²)). The official Google CT notebook uses 85 slices
-# on an L4 (24 GB). On a T4 (6.9 GB free) 8 slices is a safe target:
-#   8 slices × 256 vision tokens = 2 048 LM tokens → KV cache ~200 MB
-#   SigLIP attention: ~50 MB per image (memory-efficient, not 4 GiB)
-# Without sdpa (eager/math attention), even 4 slices caused 4 GiB OOM.
-INFERENCE_SLICES = 8
+# SigLIP (vision encoder) computes self-attention across ALL patch tokens of
+# ALL images in one batch. attn_implementation="sdpa" only affects Gemma3 LM
+# layers — SigLIP uses its own implementation and ignores that flag.
+# SigLIP attention cost: n_slices × n_heads × n_patches² × 2 bytes
+#   n_patches = (896/14)² = 4096 per image,  n_heads = 16
+#   2 slices → 2 × 16 × 4096² × 2 = 1 GiB  → fits in ~6.4 GB free on T4 ✓
+#   4 slices → 4 GiB → OOM on T4 ✗
+#   8 slices → 8 GiB → OOM on T4 ✗
+# To increase slices: upgrade to L4 (24 GB) → safe up to ~10 slices.
+INFERENCE_SLICES = 2
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
