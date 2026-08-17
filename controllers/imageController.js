@@ -276,16 +276,25 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
     }
 
     // Guard against the timeout having already flipped the status while AI was running
-    await ImageUpload.findOneAndUpdate(
+    const saved = await ImageUpload.findOneAndUpdate(
       { _id: recordId, status: "processing" },
       {
-        status:           result.status,
-        model_used:       result.model_used,
-        analysis_result:  result.analysis_result,
-        flagged_abnormal: result.analysis_result?.flagged_abnormal ?? false,
-        error_message:    result.error_message || "",
-      }
+        $set: {
+          status:           result.status,
+          model_used:       result.model_used,
+          analysis_result:  result.analysis_result,
+          flagged_abnormal: result.analysis_result?.flagged_abnormal ?? false,
+          error_message:    result.error_message || "",
+        },
+      },
+      { new: true }
     );
+    if (saved) {
+      console.log(`[Images] Saved ${recordId} status=${saved.status} analysis_keys=${Object.keys(saved.analysis_result || {}).join(",")}`);
+    } else {
+      console.warn(`[Images] Save skipped for ${recordId} — status was no longer "processing"`);
+    }
+
   } catch (err) {
     console.error(`[Images] Unexpected error for ${recordId}:`, err?.message || err);
     await ImageUpload.findOneAndUpdate(

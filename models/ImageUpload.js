@@ -5,16 +5,6 @@
 // =============================================================================
 const mongoose = require("mongoose");
 
-const AnalysisResultSchema = new mongoose.Schema(
-  {
-    summary:          String,
-    findings:         [String],
-    flagged_abnormal: Boolean,
-    impression:       String,
-  },
-  { _id: false, strict: false }
-);
-
 const ImageUploadSchema = new mongoose.Schema(
   {
     user_id:           { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
@@ -28,7 +18,10 @@ const ImageUploadSchema = new mongoose.Schema(
     canvas_url:        { type: String, default: "" },  // 4-slice inference montage (Cloudinary image, authenticated)
     status:            { type: String, enum: ["processing", "complete", "error", "unavailable"], default: "processing" },
     model_used:        { type: String, default: "" },
-    analysis_result:   { type: AnalysisResultSchema, default: null },
+    // Mixed: PDF returns { summary, key_findings, recommendations },
+    //        X-ray returns { summary, findings, flagged_abnormal, impression },
+    //        CT/MRI returns the same as X-ray. Mixed stores any shape without stripping.
+    analysis_result:   { type: mongoose.Schema.Types.Mixed, default: null },
     flagged_abnormal:  { type: Boolean, default: false },
     error_message:     { type: String, default: "" },
   },
