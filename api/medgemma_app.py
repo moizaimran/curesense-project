@@ -86,11 +86,25 @@ def _load_model():
         print(f"[MedGemma] WARNING: only {_n_gpus} GPU(s) available — falling back to device_map='auto'")
         _device_map = "auto"
 
-    # Root cause of OOM on T4: PyTorch memory-efficient SDPA requires sm80+ for
-    # bfloat16 (L4/A100). T4 is sm75 — bfloat16 falls back to math SDPA which
-    # materialises the full QK^T matrix: 8 slices × 4096 patches² × 2 B = 8 GiB.
-    # float16 memory-efficient SDPA works on sm75+ (T4), so switching dtype
-    # unlocks O(n) attention and lets 8 slices fit in ~6 GB of free VRAM.
+    # dtype = float16 is required for memory-efficient SDPA on T4 (sm75).
+    #
+    # PyTorch SDPA backend selection on T4 (verified against sdp_utils.cpp):
+    #   • Flash attention:       sm80–sm121 required → NEVER fires on T4 (sm75)
+    #   • Memory-efficient:      sm50–sm121; sm<80 accepts float16 + float32 ONLY
+    #                            (bfloat16 rejected on sm<80 — falls to math)
+    #   • Math:                  always available; O(n²) memory
+    #
+    # attn_implementation="sdpa" propagates to SigLIP via Gemma3Config.sub_configs
+    # recursive setter (configuration_gemma3.py). SigLIP therefore calls
+    # F.scaled_dot_product_attention → PyTorch picks mem_efficient (float16, sm75 ✓).
+    # Mem_efficient attention is O(n·d) in memory, not O(n²):
+    #   8 slices × 16 heads × 4096 patches × 72 head_dim × 2 B ≈ 608 MB  ← fits
+    #   (math SDPA would be 8 × 16 × 4096² × 2 B = 8 GiB              ← OOM)
+    #
+    # Math SDPA stays enabled as a fallback for Gemma3 LM layers that use
+    # grouped-query attention (GQA). When the LM passes enable_gqa=True to SDPA
+    # and mem_efficient GQA support is unavailable on sm75, math handles it.
+    # LM sequence length is short (~2 k tokens) so math SDPA there is fine.
     _model = AutoModelForImageTextToText.from_pretrained(
         "google/medgemma-1.5-4b-it",
         torch_dtype=torch.float16,
@@ -98,18 +112,13 @@ def _load_model():
         attn_implementation="sdpa",
     )
 
-    # SigLIP uses a non-default attention scale which mem_efficient and flash
-    # kernels do not support — they would raise "Invalid backend". Math SDPA
-    # must stay enabled as the SigLIP fallback. float16 is the key gain here:
-    # it lets PyTorch pick mem_efficient for Gemma3 LM layers (which do use
-    # the default scale) while SigLIP falls through to math SDPA safely.
     if torch.cuda.is_available():
-        torch.backends.cuda.enable_flash_sdp(True)
-        torch.backends.cuda.enable_mem_efficient_sdp(True)
-        torch.backends.cuda.enable_math_sdp(True)
-        print("[MedGemma] SDPA: flash=on, mem_efficient=on, math=on(SigLIP fallback)")
+        torch.backends.cuda.enable_flash_sdp(True)         # won't fire on sm75
+        torch.backends.cuda.enable_mem_efficient_sdp(True) # fires for SigLIP (float16, sm75 ✓)
+        torch.backends.cuda.enable_math_sdp(True)          # fallback for Gemma3 GQA
+        print("[MedGemma] SDPA backends: flash=on(sm75→skip), mem_efficient=on, math=on(GQA fallback)")
 
-    print("[MedGemma] Model loaded (float16 + sdpa — T4 memory-efficient attention).")
+    print("[MedGemma] Model loaded (float16 + sdpa).")
 
     # VRAM after load — confirms the split: GPU 0 still free for Flask, GPU 1 mostly used
     if torch.cuda.is_available():
@@ -131,17 +140,16 @@ def _load_model():
 
 MAX_SLICES = 85
 
-# Slices sent to the model per CT/MRI request.
-# SigLIP (vision encoder) computes self-attention across ALL patch tokens of
-# ALL images in one batch. attn_implementation="sdpa" only affects Gemma3 LM
-# layers — SigLIP uses its own implementation and ignores that flag.
-# SigLIP attention cost: n_slices × n_heads × n_patches² × 2 bytes
-#   n_patches = (896/14)² = 4096 per image,  n_heads = 16
-#   2 slices → 2 × 16 × 4096² × 2 = 1 GiB  → fits in ~6.4 GB free on T4 ✓
-#   4 slices → 4 GiB → OOM on T4 ✗
-#   8 slices → 8 GiB → OOM on T4 ✗
-# To increase slices: upgrade to L4 (24 GB) → safe up to ~10 slices.
-INFERENCE_SLICES = 4
+# Slices sent to the model per CT/MRI inference request.
+#
+# With float16 + attn_implementation="sdpa" on T4 (sm75):
+#   SigLIP uses memory-efficient SDPA (O(n·d) memory, NOT O(n²)):
+#   8 slices × 16 heads × 4096 patches × 72 head_dim × 2 B ≈ 608 MB → fits ✓
+#   (Without mem_efficient, math SDPA would be 8 × 16 × 4096² × 2 B = 8 GiB → OOM)
+#
+# 8 matches Google's official notebook slice count (they use 85 on L4, 8 here
+# because we also run within a limited free-VRAM budget on the T4).
+INFERENCE_SLICES = 8
 
 
 def _apply_hu_window(arr: np.ndarray, wl: float, ww: float) -> np.ndarray:
