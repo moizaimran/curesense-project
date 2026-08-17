@@ -306,35 +306,10 @@ def _parse_text_fallback(text: str) -> dict:
     return result
 
 
-# ── Inference helper ──────────────────────────────────────────────────────────
-
-def _decode_output(processor, output_ids, inputs) -> str:
-    """
-    Decode model output using Gemma3's multimodal-aware method.
-
-    Matches the approach in Google's official high_dimensional_ct_hugging_face.ipynb:
-      1. post_process_image_text_to_text decodes the full generated sequence.
-      2. The input prefix is decoded the same way.
-      3. The input prefix is stripped from the output by text search.
-
-    This is more robust than slicing output_ids by prompt_len because
-    Gemma3 may add/remove special tokens during multimodal processing
-    that change the effective sequence length.
-    """
-    full_text  = processor.post_process_image_text_to_text(
-        output_ids, skip_special_tokens=True
-    )[0]
-    input_text = processor.post_process_image_text_to_text(
-        inputs["input_ids"], skip_special_tokens=True
-    )[0]
-    idx = full_text.find(input_text)
-    if 0 <= idx <= 2:
-        return full_text[idx + len(input_text):]
-    return full_text
-
+# ── Inference helpers ─────────────────────────────────────────────────────────
 
 def _run_inference(prompt: str, image) -> dict:
-    """Run MedGemma on a single PIL image with the given prompt."""
+    """Run MedGemma on a single PIL image (X-ray path)."""
     import torch
 
     model, processor = _load_model()
@@ -357,6 +332,7 @@ def _run_inference(prompt: str, image) -> dict:
         return_tensors="pt",
     ).to(model.device, dtype=torch.float16)
     output_ids = None
+    prompt_len = inputs["input_ids"].shape[1]
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -364,7 +340,10 @@ def _run_inference(prompt: str, image) -> dict:
     try:
         with torch.inference_mode():
             output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
-        output = _decode_output(processor, output_ids, inputs)
+        generated_len = output_ids.shape[1] - prompt_len
+        print(f"[MedGemma] xray — prompt_len={prompt_len} generated_len={generated_len}")
+        output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
+        print(f"[MedGemma] xray raw output (first 300): {output[:300]!r}")
     finally:
         del inputs
         if output_ids is not None:
@@ -387,13 +366,10 @@ def _run_inference(prompt: str, image) -> dict:
 
 def _run_multi_slice_inference(instruction: str, query: str, images: list) -> dict:
     """
-    Run MedGemma on multiple slices in a single forward pass.
+    Run MedGemma on multiple CT/MRI slices in a single forward pass.
 
-    Message structure (mirrors high_dimensional_ct_hugging_face.ipynb):
-      [instruction text] → [image][SLICE 1] → … → [image][SLICE N] → [query text]
-
-    All PIL images are passed directly to apply_chat_template; the processor
-    encodes them into vision tokens alongside the text tokens.
+    Message format (mirrors high_dimensional_ct_hugging_face.ipynb):
+      [instruction] → [image][SLICE 1] → … → [image][SLICE N] → [query]
     """
     import torch
 
@@ -415,6 +391,7 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
         return_tensors="pt",
     ).to(model.device, dtype=torch.float16)
     output_ids = None
+    prompt_len = inputs["input_ids"].shape[1]
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -422,7 +399,10 @@ def _run_multi_slice_inference(instruction: str, query: str, images: list) -> di
     try:
         with torch.inference_mode():
             output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
-        output = _decode_output(processor, output_ids, inputs)
+        generated_len = output_ids.shape[1] - prompt_len
+        print(f"[MedGemma] ct_mri — prompt_len={prompt_len} generated_len={generated_len} n_images={len(images)}")
+        output = processor.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
+        print(f"[MedGemma] ct_mri raw output (first 500): {output[:500]!r}")
     finally:
         del inputs
         if output_ids is not None:
