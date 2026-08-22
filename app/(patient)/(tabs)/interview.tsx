@@ -19,6 +19,8 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAudioRecorder, AudioModule, RecordingPresets } from "expo-audio";
+import * as FileSystem from "expo-file-system";
 
 import MCQInput from "@/components/interview/MCQInput";
 import NumberInput from "@/components/interview/NumberInput";
@@ -53,13 +55,20 @@ export default function InterviewScreen() {
   const [textInput, setTextInput] = useState("");
   const { bodyMapAnswer } = useLocalSearchParams<{ bodyMapAnswer?: string }>();
 
+  const [isRecording, setIsRecording] = useState(false);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
   const opacity = useRef(new Animated.Value(1)).current;
   const translateY = useRef(new Animated.Value(0)).current;
+  const bodyMapSent = useRef(false);
+
+  // Pre-fill text input with body map selection — user reviews and sends manually
   useEffect(() => {
-    if (bodyMapAnswer && sessionId && stage === "question") {
-      sendTurn(bodyMapAnswer);
+    if (bodyMapAnswer && sessionId && stage === "question" && !bodyMapSent.current) {
+      bodyMapSent.current = true;
+      setTextInput(bodyMapAnswer);
     }
-  }, [bodyMapAnswer]);
+  }, [bodyMapAnswer, sessionId, stage]);
 
   useEffect(() => {
     checkLatestSession();
@@ -238,6 +247,74 @@ export default function InterviewScreen() {
     }
   }
 
+  // ── Voice recording ───────────────────────────────────────────────────────────
+
+  async function toggleRecording() {
+    if (isRecording) {
+      // Stop and send
+      await audioRecorder.stop();
+      setIsRecording(false);
+      const uri = audioRecorder.uri;
+      if (!uri) return;
+      try {
+        const base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        await sendAudioTurn(base64, "audio/m4a");
+      } catch {
+        Alert.alert("Error", "Could not read recording.");
+      }
+    } else {
+      // Request permission and start
+      const status = await AudioModule.requestRecordingPermissionsAsync();
+      if (!status.granted) {
+        Alert.alert("Permission required", "Microphone access is needed to record.");
+        return;
+      }
+      audioRecorder.record();
+      setIsRecording(true);
+    }
+  }
+
+  async function sendAudioTurn(base64: string, mimeType: string) {
+    if (sending || !sessionId) return;
+    setSending(true);
+    setIsFirstQ(false);
+    try {
+      const token = await Storage.getItemAsync("token");
+      const res = await fetch(`${API_URL}/api/sessions/${sessionId}/turn`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ patient_audio_base64: base64, mime_type: mimeType }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        opacity.setValue(1);
+        Alert.alert("Error", data.error ?? "Something went wrong.");
+        return;
+      }
+      setTurnCount((t) => t + 1);
+      if (data.status === "complete") {
+        await Storage.deleteItemAsync(SESSION_KEY);
+        router.push({ pathname: "/transcript", params: { session_id: sessionId } } as any);
+      } else {
+        transitionToQuestion(
+          data.message ?? "",
+          (data.questionType as QuestionType) ?? "text",
+          data.options ?? [],
+        );
+      }
+    } catch {
+      opacity.setValue(1);
+      Alert.alert("Connection Error", "Could not reach the server.");
+    } finally {
+      setSending(false);
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   if (stage === "checking") {
@@ -300,6 +377,8 @@ export default function InterviewScreen() {
               sendTurn,
               textInput,
               setTextInput,
+              toggleRecording,
+              isRecording,
             )}
 
             {isFirstQ && (
@@ -331,6 +410,8 @@ function renderInput(
   onSend: (t: string) => void,
   textInput: string,
   setTextInput: (v: string) => void,
+  onMic: () => void,
+  isRecording: boolean,
 ) {
   switch (type) {
     case "yes_no":
@@ -348,21 +429,37 @@ function renderInput(
             style={s.textInput}
             value={textInput}
             onChangeText={setTextInput}
-            placeholder="Type your answer…"
-            placeholderTextColor="rgba(255,255,255,0.28)"
+            placeholder={isRecording ? "Recording… tap mic to send" : "Type your answer…"}
+            placeholderTextColor={isRecording ? "rgba(239,68,68,0.70)" : "rgba(255,255,255,0.28)"}
             multiline
             maxLength={600}
-            blurOnSubmit={false}
-            autoFocus
+            autoFocus={!isRecording}
+            editable={!isRecording}
           />
+
+          {/* Mic button — always visible on text input */}
           <TouchableOpacity
-            style={[s.sendBtn, !textInput.trim() && s.sendBtnOff]}
-            onPress={() => onSend(textInput)}
-            disabled={!textInput.trim()}
+            style={[s.micBtn, isRecording && s.micBtnActive]}
+            onPress={onMic}
             activeOpacity={0.8}
           >
-            <Ionicons name="send" size={18} color="#fff" />
+            <Ionicons
+              name={isRecording ? "stop" : "mic"}
+              size={18}
+              color="#fff"
+            />
           </TouchableOpacity>
+
+          {/* Send button — only shown when there's typed text and not recording */}
+          {!isRecording && textInput.trim().length > 0 && (
+            <TouchableOpacity
+              style={s.sendBtn}
+              onPress={() => onSend(textInput)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="send" size={18} color="#fff" />
+            </TouchableOpacity>
+          )}
         </View>
       );
   }
@@ -722,6 +819,21 @@ const s = StyleSheet.create({
     flexShrink: 0,
   },
   sendBtnOff: { opacity: 0.3 },
+  micBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  micBtnActive: {
+    backgroundColor: "rgba(239,68,68,0.85)",
+    borderColor: "#EF4444",
+  },
 
   bodyBtn: {
     flexDirection: "row",

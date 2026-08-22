@@ -87,6 +87,7 @@ export default function ScaleInput({ onSubmit, disabled }: Props) {
 
       {/* Slider */}
       <Slider
+        testID="pain-slider"
         style={s.slider}
         minimumValue={1}
         maximumValue={10}

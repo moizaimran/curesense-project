@@ -6,6 +6,7 @@ export default function PatientLayout() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="transcript" />
       <Stack.Screen name="report-sheet" />
+      <Stack.Screen name="body-map" />
     </Stack>
   );
 }

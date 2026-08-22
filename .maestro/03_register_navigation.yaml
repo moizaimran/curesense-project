@@ -1,0 +1,17 @@
+appId: com.curesense.patient
+---
+# Tapping Register on the landing screen navigates to the registration screen.
+# Run with: maestro test .maestro/03_register_navigation.yaml
+
+- launchApp
+
+# Confirm landing is shown
+- assertVisible: "CureSense"
+
+# Tap the Register button
+- tapOn: "Register"
+
+# Registration screen renders its heading and key form fields
+- assertVisible: "Create Account"
+- assertVisible: "Email"
+- assertVisible: "Password"

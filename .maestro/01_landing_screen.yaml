@@ -1,0 +1,22 @@
+appId: com.curesense.patient
+---
+# Landing screen renders key branding and navigation elements.
+# Run with: maestro test .maestro/01_landing_screen.yaml
+
+- launchApp
+
+# CureSense brand name is visible in the hero nav bar
+- assertVisible: "CureSense"
+
+# The hero headline and key trust indicators render
+- assertVisible: "Smarter"
+- assertVisible: "HIPAA-Aligned"
+
+# Both primary nav actions are present
+- assertVisible: "Register"
+- assertVisible: "Login"
+
+# Platform features section is visible after scroll
+- scroll
+- assertVisible: "AI-Powered"
+- assertVisible: "Secure by Design"

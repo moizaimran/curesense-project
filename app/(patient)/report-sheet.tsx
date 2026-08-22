@@ -48,6 +48,7 @@ interface Diagnosis {
 }
 
 interface ReportData {
+  _id: string;
   patient_summary: {
     patientComplaintSummary: string;
     referralSpecialty: string;
@@ -581,8 +582,21 @@ export default function ReportSheetScreen() {
           />
         </TouchableOpacity>
 
-        {/* Continue / Book Appointment — placeholder, no action yet */}
-        <TouchableOpacity style={s.continueBtn} activeOpacity={0.8}>
+        {/* Continue to Appointment — routes to doctor search */}
+        <TouchableOpacity
+          style={s.continueBtn}
+          activeOpacity={0.8}
+          onPress={() =>
+            router.push({
+              pathname: "/(patient)/find-doctor",
+              params: {
+                report_id: report?._id ?? "",
+                specialty: ps.referralSpecialty ?? "",
+                session_id: session_id ?? "",
+              },
+            } as any)
+          }
+        >
           <Ionicons
             name="calendar-outline"
             size={16}
@@ -601,6 +615,19 @@ export default function ReportSheetScreen() {
             color="rgba(74,222,128,0.55)"
             style={{ flexShrink: 0 }}
           />
+        </TouchableOpacity>
+
+        {/* Keep for Myself — explicit self-report: save without scheduling */}
+        <TouchableOpacity
+          style={s.doneBtn}
+          activeOpacity={0.8}
+          onPress={() => router.navigate('/(patient)/(tabs)/interview' as any)}
+        >
+          <Ionicons name="lock-closed-outline" size={16} color="rgba(255,255,255,0.55)" style={{ flexShrink: 0 }} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.doneBtnText}>Keep for Myself</Text>
+            <Text style={s.doneBtnSub}>Save this report without booking an appointment</Text>
+          </View>
         </TouchableOpacity>
 
         <Text style={s.disclaimer}>
@@ -819,6 +846,15 @@ const s = StyleSheet.create({
     fontSize: 14,
   },
   continueSub: { color: "rgba(255,255,255,0.38)", fontSize: 12, marginTop: 1 },
+
+  doneBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 14, padding: 14, marginTop: 4,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  doneBtnText: { color: 'rgba(255,255,255,0.70)', fontWeight: '700', fontSize: 14 },
+  doneBtnSub: { color: 'rgba(255,255,255,0.32)', fontSize: 12, marginTop: 1 },
 
   disclaimer: {
     color: "rgba(255,255,255,0.20)",

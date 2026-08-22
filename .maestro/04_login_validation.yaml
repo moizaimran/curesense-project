@@ -1,0 +1,26 @@
+appId: com.curesense.patient
+---
+# Login screen shows "Email is required." when Sign In is tapped with an empty form.
+# Run with: maestro test .maestro/04_login_validation.yaml
+
+- launchApp
+
+# Navigate to login
+- tapOn: "Login"
+
+# Verify login screen has loaded
+- assertVisible: "Welcome Back"
+- assertVisible: "Sign In"
+
+# Tap Sign In without filling anything
+- tapOn: "Sign In"
+
+# Inline validation error should appear
+- assertVisible: "Email is required."
+
+# Fill email but leave password empty, then try again
+- tapOn:
+    text: "john@example.com"
+- inputText: "test@example.com"
+- tapOn: "Sign In"
+- assertVisible: "Password is required."

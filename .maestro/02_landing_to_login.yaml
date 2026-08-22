@@ -1,0 +1,18 @@
+appId: com.curesense.patient
+---
+# Tapping the Login button on the landing screen navigates to the login screen.
+# Run with: maestro test .maestro/02_landing_to_login.yaml
+
+- launchApp
+
+# Confirm landing is shown
+- assertVisible: "CureSense"
+
+# Tap the Login button in the navbar
+- tapOn: "Login"
+
+# Login screen heading and form are visible
+- assertVisible: "Welcome Back"
+- assertVisible: "Email"
+- assertVisible: "Password"
+- assertVisible: "Sign In"

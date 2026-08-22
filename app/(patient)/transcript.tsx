@@ -235,12 +235,7 @@ export default function TranscriptScreen() {
           {meta?.status === "completed" && (
             <TouchableOpacity
               style={s.viewReportBtn}
-              onPress={() =>
-                router.push({
-                  pathname: "/report-sheet",
-                  params: { session_id },
-                } as any)
-              }
+              onPress={() => router.replace({ pathname: '/report-sheet', params: { session_id } } as any)}
               activeOpacity={0.85}
             >
               <LinearGradient

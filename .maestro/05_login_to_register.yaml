@@ -1,0 +1,19 @@
+appId: com.curesense.patient
+---
+# From the login screen, tapping "Create a New Account" navigates to the register screen.
+# Run with: maestro test .maestro/05_login_to_register.yaml
+
+- launchApp
+
+# Navigate to login
+- tapOn: "Login"
+
+# Confirm login screen is visible
+- assertVisible: "Welcome Back"
+
+# Tap the outline button that switches to registration
+- tapOn: "Create a New Account"
+
+# Register screen renders its heading and subtitle
+- assertVisible: "Create Account"
+- assertVisible: "Start your AI-powered health journey today."

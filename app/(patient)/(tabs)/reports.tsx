@@ -33,6 +33,7 @@ interface Session {
 interface Report {
   _id: string;
   session_id: string;
+  appointment_id: string | null;
   patient_summary: {
     referralSpecialty: string;
   };
@@ -266,9 +267,7 @@ export default function ReportsScreen() {
                     {hoursLeft(sess.last_activity_at)}
                   </Text>
                   <View style={{ flex: 1 }} />
-                  <TouchableOpacity
-                    onPress={() => router.push("/(patient)/interview" as any)}
-                  >
+                  <TouchableOpacity onPress={() => router.navigate('/(patient)/(tabs)/interview' as any)}>
                     <Text style={s.cardAction}>Resume →</Text>
                   </TouchableOpacity>
                 </View>
@@ -343,6 +342,18 @@ export default function ReportsScreen() {
                       <Text style={s.referralText}>
                         Referred to {report.patient_summary.referralSpecialty}
                       </Text>
+                    </View>
+                  ) : null}
+
+                  {/* Appointment booked badge */}
+                  {report?.appointment_id ? (
+                    <View style={s.apptBadge}>
+                      <Ionicons
+                        name="checkmark-circle-outline"
+                        size={11}
+                        color="rgba(34,197,94,0.80)"
+                      />
+                      <Text style={s.apptBadgeText}>Appointment booked</Text>
                     </View>
                   ) : null}
                 </TouchableOpacity>
@@ -567,6 +578,14 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
   referralText: { color: "rgba(96,165,250,0.65)", fontSize: 11 },
+
+  apptBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 4,
+  },
+  apptBadgeText: { color: "rgba(34,197,94,0.75)", fontSize: 11, fontWeight: "600" },
 
   cardSub: { color: "rgba(255,255,255,0.40)", fontSize: 12 },
   cardFooter: { flexDirection: "row", alignItems: "center", gap: 5 },

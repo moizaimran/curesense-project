@@ -526,7 +526,7 @@ function HistoryRow({
             </Text>
           </View>
         </View>
-        {item.flagged_abnormal && (
+        {item.flagged_abnormal && (item.analysis_result?.findings?.length ?? 0) > 0 && (
           <View style={s.abnormalRow}>
             <Ionicons name="warning-outline" size={11} color="#FBBF24" />
             <Text style={s.abnormalText}>Abnormal findings flagged</Text>
@@ -632,17 +632,9 @@ function ResultModal({
 
           {r && (
             <>
-              {/* Abnormal banner */}
-              {r.flagged_abnormal && (
-                <View
-                  style={[
-                    s.infoBox,
-                    {
-                      borderColor: "rgba(251,191,36,0.35)",
-                      backgroundColor: "rgba(251,191,36,0.08)",
-                    },
-                  ]}
-                >
+              {/* Abnormal banner — only show if flagged AND there are specific findings */}
+              {r.flagged_abnormal && findings.length > 0 && (
+                <View style={[s.infoBox, { borderColor: 'rgba(251,191,36,0.35)', backgroundColor: 'rgba(251,191,36,0.08)' }]}>
                   <Ionicons name="warning-outline" size={18} color="#FBBF24" />
                   <Text style={[s.infoBoxText, { color: "#FCD34D" }]}>
                     Abnormal findings detected — please consult your healthcare
