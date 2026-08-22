@@ -13,9 +13,6 @@ const UserSchema = new mongoose.Schema(
 
     // patient only — links to their Patient profile
     patient_id: { type: mongoose.Schema.Types.ObjectId, ref: "Patient", default: null },
-
-    // doctor only — admin-assigned patient IDs
-    assigned_patients: { type: [mongoose.Schema.Types.ObjectId], ref: "Patient", default: [] },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );

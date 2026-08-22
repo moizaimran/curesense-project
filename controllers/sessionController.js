@@ -74,6 +74,8 @@ const processTurn = async (req, res) => {
     let patient_audio_url = null;
     const { patient_text, patient_audio_base64, mime_type } = req.body;
 
+    const TEXT_MAX_CHARS = 2000;
+
     if (patient_audio_base64) {
       const uploadResult = await cloudinary.uploader.upload(
         `data:${mime_type || "audio/webm"};base64,${patient_audio_base64}`,
@@ -83,6 +85,8 @@ const processTurn = async (req, res) => {
       patient_audio_url = voice_message_url;
     } else if (!patient_text) {
       return res.status(400).json({ error: "patient_text or patient_audio_base64 is required" });
+    } else if (patient_text.length > TEXT_MAX_CHARS) {
+      return res.status(400).json({ error: `patient_text must be ${TEXT_MAX_CHARS} characters or fewer` });
     }
 
     // ── Build history from stored transcript for Flask ────────────────────────
@@ -158,9 +162,16 @@ const processTurn = async (req, res) => {
 
   } catch (err) {
     if (err.response) {
+      // AI service returned an HTTP error — log status and body, never the patient transcript
+      req.log.error(
+        { req_id: req.id, session_id: req.params.id, ai_status: err.response.status },
+        "AI service returned an error response"
+      );
       return res.status(502).json({ error: "AI service error", detail: err.response.data });
     }
-    res.status(500).json({ error: err.message });
+    // Unexpected error — log with full context, return generic message to client
+    req.log.error({ err, req_id: req.id, session_id: req.params.id }, "Unexpected error in processTurn");
+    res.status(500).json({ error: "An unexpected error occurred. Please try again." });
   }
 };
 
@@ -168,7 +179,7 @@ const processTurn = async (req, res) => {
 const getSession = asyncHandler(async (req, res) => {
   const session = await Session.findById(req.params.id);
   if (!session || session.is_deleted) return res.status(404).json({ error: "Session not found" });
-  if (!canAccessPatient(req.user, session.patient_id)) {
+  if (!(await canAccessPatient(req.user, session.patient_id))) {
     return res.status(403).json({ error: "Access denied" });
   }
   res.json(session);
@@ -176,7 +187,7 @@ const getSession = asyncHandler(async (req, res) => {
 
 // ── GET /api/sessions/patient/:patientId ──────────────────────────────────────
 const getSessionsForPatient = asyncHandler(async (req, res) => {
-  if (!canAccessPatient(req.user, req.params.patientId)) {
+  if (!(await canAccessPatient(req.user, req.params.patientId))) {
     return res.status(403).json({ error: "Access denied" });
   }
   const sessions = await Session.find({ patient_id: req.params.patientId, is_deleted: { $ne: true } })
@@ -186,7 +197,7 @@ const getSessionsForPatient = asyncHandler(async (req, res) => {
 
 // ── GET /api/sessions/patient/:patientId/latest ───────────────────────────────
 const getLatestSession = asyncHandler(async (req, res) => {
-  if (!canAccessPatient(req.user, req.params.patientId)) {
+  if (!(await canAccessPatient(req.user, req.params.patientId))) {
     return res.status(403).json({ error: "Access denied" });
   }
   const session = await Session.findOne({
@@ -200,7 +211,7 @@ const getLatestSession = asyncHandler(async (req, res) => {
 const softDeleteSession = asyncHandler(async (req, res) => {
   const session = await Session.findById(req.params.id);
   if (!session || session.is_deleted) return res.status(404).json({ error: "Session not found" });
-  if (!canAccessPatient(req.user, session.patient_id)) {
+  if (!(await canAccessPatient(req.user, session.patient_id))) {
     return res.status(403).json({ error: "Access denied" });
   }
   session.is_deleted = true;

@@ -32,13 +32,34 @@ const authorize = (...roles) => (req, res, next) => {
 // Returns true if the current user may read/write the given patient's data.
 //   admin  → always yes
 //   patient → only their own patient_id
-//   doctor  → only assigned patients
-const canAccessPatient = (user, patientId) => {
+//   doctor  → only patients where a PatientDoctorAssignment with status:"active"
+//              exists for this doctor-patient pair (patient-initiated relationship)
+//
+// IMPORTANT: This is ASYNC. Every caller must await it.
+// PatientDoctorAssignment is the sole access-control source of truth for doctors.
+const canAccessPatient = async (user, patientId) => {
   if (!patientId) return false;
   const pid = patientId.toString();
+
   if (user.role === "admin")   return true;
   if (user.role === "patient") return user.patient_id?.toString() === pid;
-  if (user.role === "doctor")  return user.assigned_patients.some(id => id.toString() === pid);
+
+  if (user.role === "doctor") {
+    // Lazy-require to avoid loading these models before Mongoose is ready
+    const DoctorProfile           = require("../models/DoctorProfile");
+    const PatientDoctorAssignment = require("../models/PatientDoctorAssignment");
+
+    const profile = await DoctorProfile.findOne({ user_id: user._id }).select("_id");
+    if (!profile) return false;
+
+    const assignment = await PatientDoctorAssignment.findOne({
+      doctor_id:  profile._id,
+      patient_id: patientId,
+      status:     "active",
+    });
+    return !!assignment;
+  }
+
   return false;
 };
 

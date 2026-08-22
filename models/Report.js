@@ -119,10 +119,24 @@ const ReportSchema = new mongoose.Schema(
     // likely/possible entries via patientNote (patientNote is "" for unlikely).
     interpreted_diagnoses: { type: [InterpretedDiagnosisSchema], default: [] },
     is_deleted:            { type: Boolean, default: false },
+
+    // Set when the patient books an appointment for this report.
+    // null = self-only report (patient ran the interview but hasn't shared it with a doctor yet).
+    // Non-null = report is linked to an appointment booking.
+    // Written by POST /api/appointments when the patient selects which report to share.
+    appointment_id: {
+      type:    mongoose.Schema.Types.ObjectId,
+      ref:     "Appointment",
+      default: null,
+    },
+
+    // Flags attached by the doctor (e.g. "urgent", "abnormal_finding", "medication_interaction").
+    flags: { type: [String], default: [] },
   },
   { timestamps: false }
 );
 
 ReportSchema.index({ patient_id: 1 });
+ReportSchema.index({ appointment_id: 1 });
 
 module.exports = mongoose.model("Report", ReportSchema);

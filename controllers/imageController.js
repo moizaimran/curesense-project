@@ -14,6 +14,7 @@ const cloudinary   = require("../config/cloudinary");
 const ImageUpload  = require("../models/ImageUpload");
 const asyncHandler = require("../utils/asyncHandler");
 const axios        = require("axios");
+const logger       = require("../utils/logger");
 
 const AI_SERVICE_URL      = process.env.AI_SERVICE_URL       || "";
 const MEDGEMMA_URL        = process.env.MEDGEMMA_SERVICE_URL  || "";
@@ -104,9 +105,43 @@ const uploadImage = asyncHandler(async (req, res) => {
         { status: "error", error_message: "Analysis timed out. Please try again." }
       );
     } catch {}
-  }, ANALYSIS_TIMEOUT_MS);
+  }, ANALYSIS_TIMEOUT_MS).unref();
 
   res.status(202).json({ id: record._id, status: "processing" });
+});
+
+// ── List a patient's uploads (doctor/admin access) ────────────────────────────
+// Used by the web case-detail page so a doctor can see the patient's scan analyses.
+// Returns the same shape as listImages. Never returns storage_url/zip_url/canvas_url.
+const listPatientImages = asyncHandler(async (req, res) => {
+  const Patient          = require("../models/Patient");
+  const { canAccessPatient } = require("../middleware/auth");
+
+  if (!(await canAccessPatient(req.user, req.params.patientId))) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  const patient = await Patient.findById(req.params.patientId).select("user_id");
+  if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+  const records = await ImageUpload
+    .find({ user_id: patient.user_id })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .select("-storage_url -zip_url -canvas_url -__v");
+
+  res.json(records.map(r => ({
+    id:                r._id,
+    status:            r.status,
+    upload_type:       r.upload_type,
+    original_filename: r.original_filename,
+    model_used:        r.model_used,
+    analysis_result:   r.analysis_result,
+    flagged_abnormal:  r.flagged_abnormal,
+    error_message:     r.error_message,
+    created_at:        r.createdAt,
+    updated_at:        r.updatedAt,
+  })));
 });
 
 // ── List ──────────────────────────────────────────────────────────────────────
@@ -154,7 +189,9 @@ const getImageStatus = asyncHandler(async (req, res) => {
 // ── Background processing ─────────────────────────────────────────────────────
 
 async function _processInBackground(recordId, fileBase64, uploadType, mimeType, filename) {
-  console.log(`[Images] Processing ${recordId} type=${uploadType} file=${filename}`);
+  // Background jobs have no request context — use a child logger bound to the record.
+  const log = logger.child({ record_id: recordId.toString(), upload_type: uploadType });
+  log.info({ filename }, "Starting image analysis");
   try {
     // 1. Upload to Cloudinary for durable storage.
     //
@@ -175,9 +212,9 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
           }
         );
         await ImageUpload.findByIdAndUpdate(recordId, { zip_url: up.secure_url });
-        console.log(`[Images] CT/MRI ZIP saved to Cloudinary for ${recordId}`);
+        log.info("CT/MRI ZIP saved to Cloudinary");
       } catch (err) {
-        console.warn(`[Images] CT/MRI ZIP Cloudinary upload skipped (${err?.message}) — continuing without ZIP storage`);
+        log.warn({ err: err?.message }, "CT/MRI ZIP Cloudinary upload skipped — continuing without ZIP storage");
       }
     } else {
       // X-ray / PDF: best-effort upload — Cloudinary failure does NOT block the AI call.
@@ -194,7 +231,7 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
         });
         await ImageUpload.findByIdAndUpdate(recordId, { storage_url: up.secure_url });
       } catch (err) {
-        console.warn(`[Images] Cloudinary ${cloudinaryType} upload failed: ${err?.message} — retrying as raw`);
+        log.warn({ err: err?.message, cloudinaryType }, "Cloudinary upload failed — retrying as raw");
         try {
           const up = await cloudinary.uploader.upload(dataUri, {
             resource_type: "raw",
@@ -204,17 +241,17 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
           });
           await ImageUpload.findByIdAndUpdate(recordId, { storage_url: up.secure_url });
         } catch (err2) {
-          console.warn(`[Images] Cloudinary raw upload also failed: ${err2?.message} — continuing without file storage`);
+          log.warn({ err: err2?.message }, "Cloudinary raw upload also failed — continuing without file storage");
         }
       }
     }
 
-    // 2. Route to AI service
+    // 2. Route to AI service — pass log so helper functions share the record_id context
     let result;
     if (uploadType === "pdf") {
-      result = await _analyzePdf(fileBase64, filename);
+      result = await _analyzePdf(fileBase64, filename, log);
     } else {
-      result = await _analyzeMedgemma(fileBase64, uploadType);
+      result = await _analyzeMedgemma(fileBase64, uploadType, log);
     }
 
     // 3. For ct_mri: extract and upload both assets returned by MedGemma, then strip
@@ -244,9 +281,9 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
             }
           );
           updates.canvas_url = up.secure_url;
-          console.log(`[Images] CT/MRI canvas saved to Cloudinary for ${recordId}`);
+          log.info("CT/MRI canvas saved to Cloudinary");
         } catch (err) {
-          console.warn(`[Images] CT/MRI canvas Cloudinary upload failed: ${err?.message}`);
+          log.warn({ err: err?.message }, "CT/MRI canvas Cloudinary upload failed");
         }
       }
 
@@ -266,7 +303,7 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
           );
           updates.storage_url = up.secure_url;
         } catch (err) {
-          console.warn(`[Images] CT/MRI thumbnail Cloudinary upload failed: ${err?.message}`);
+          log.warn({ err: err?.message }, "CT/MRI thumbnail Cloudinary upload failed");
         }
       }
 
@@ -290,13 +327,13 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
       { new: true }
     );
     if (saved) {
-      console.log(`[Images] Saved ${recordId} status=${saved.status} analysis_keys=${Object.keys(saved.analysis_result || {}).join(",")}`);
+      log.info({ status: saved.status, analysis_keys: Object.keys(saved.analysis_result || {}) }, "Analysis result saved");
     } else {
-      console.warn(`[Images] Save skipped for ${recordId} — status was no longer "processing"`);
+      log.warn("Save skipped — status was no longer 'processing' (likely timed out)");
     }
 
   } catch (err) {
-    console.error(`[Images] Unexpected error for ${recordId}:`, err?.message || err);
+    log.error({ err: err?.message }, "Unexpected error in image analysis background job");
     await ImageUpload.findOneAndUpdate(
       { _id: recordId, status: "processing" },
       { status: "error", error_message: "An unexpected error occurred. Please try again." }
@@ -306,7 +343,7 @@ async function _processInBackground(recordId, fileBase64, uploadType, mimeType, 
 
 // ── PDF → Flask/GPT ───────────────────────────────────────────────────────────
 
-async function _analyzePdf(pdfBase64, filename) {
+async function _analyzePdf(pdfBase64, filename, log) {
   if (!AI_SERVICE_URL) {
     return { status: "unavailable", model_used: "gpt", analysis_result: null, error_message: "AI service URL not configured." };
   }
@@ -318,7 +355,7 @@ async function _analyzePdf(pdfBase64, filename) {
         { pdf_base64: pdfBase64, filename },
         { timeout: 120_000, validateStatus: () => true }
       );
-      console.log(`[Images] PDF analysis HTTP ${resp.status} for attempt ${attempt + 1}`);
+      log.debug({ http_status: resp.status, attempt: attempt + 1 }, "PDF analysis response");
       if (resp.status === 200) {
         return {
           status:          "complete",
@@ -329,11 +366,11 @@ async function _analyzePdf(pdfBase64, filename) {
       }
       // Flask returned an error response — don't retry, surface the real message
       const msg = resp.data?.error || `Analysis failed (HTTP ${resp.status})`;
-      console.error(`[Images] PDF analysis error from Flask: ${msg}`);
+      log.error({ http_status: resp.status }, "PDF analysis error from Flask");
       return { status: "error", model_used: "gpt", analysis_result: null, error_message: msg };
     } catch (err) {
       // Only network/timeout errors reach here — retry those
-      console.warn(`[Images] PDF attempt ${attempt + 1} network error: ${err?.message}`);
+      log.warn({ err: err?.message, attempt: attempt + 1 }, "PDF analysis network error");
       if (attempt < 2) await _delay(RETRY_DELAYS_MS[attempt]);
     }
   }
@@ -348,7 +385,7 @@ async function _analyzePdf(pdfBase64, filename) {
 
 // ── CT/MRI/X-ray → Kaggle MedGemma ───────────────────────────────────────────
 
-async function _analyzeMedgemma(imageBase64, uploadType) {
+async function _analyzeMedgemma(imageBase64, uploadType, log) {
   if (!MEDGEMMA_URL) {
     return {
       status:          "unavailable",
@@ -367,7 +404,7 @@ async function _analyzeMedgemma(imageBase64, uploadType) {
         { image_base64: imageBase64, modality: uploadType === "ct_mri" ? "ct" : undefined },
         { timeout: 360_000, validateStatus: () => true }
       );
-      console.log(`[Images] MedGemma HTTP ${resp.status} for attempt ${attempt + 1} — body: ${JSON.stringify(resp.data)?.slice(0, 200)}`);
+      log.debug({ http_status: resp.status, attempt: attempt + 1 }, "MedGemma response");
       if (resp.status === 200) {
         return {
           status:          "complete",
@@ -377,10 +414,10 @@ async function _analyzeMedgemma(imageBase64, uploadType) {
         };
       }
       const msg = resp.data?.detail || resp.data?.error || `Analysis failed (HTTP ${resp.status})`;
-      console.error(`[Images] MedGemma error: ${msg}`);
+      log.error({ http_status: resp.status }, "MedGemma returned an error");
       return { status: "error", model_used: "medgemma", analysis_result: null, error_message: msg };
     } catch (err) {
-      console.warn(`[Images] MedGemma attempt ${attempt + 1} network error: ${err?.message}`);
+      log.warn({ err: err?.message, attempt: attempt + 1 }, "MedGemma network error");
       if (attempt < 2) await _delay(RETRY_DELAYS_MS[attempt]);
     }
   }
@@ -395,4 +432,4 @@ async function _analyzeMedgemma(imageBase64, uploadType) {
 
 const _delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = { uploadImage, listImages, getImageStatus };
+module.exports = { uploadImage, listImages, listPatientImages, getImageStatus };
