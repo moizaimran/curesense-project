@@ -4,7 +4,7 @@ import SearchBar from "./SearchBar";
 import NotificationBell from "./NotificationBell";
 import DoctorProfile from "./DoctorProfile";
 import { useLocation } from "react-router-dom";
-import NotificationDropdown from "../Notifcation/NotificationDropdown";
+import NotificationDropdown from "../Notification/NotificationDropdown";
 
 import { useState,useEffect,useRef } from "react";
 import { useSelector } from "react-redux";

@@ -3,7 +3,10 @@ import {
     UserCheck,
     Users,
     BarChart3,
-    Settings,HeartPulse,
+    Settings,
+    HeartPulse,
+    CalendarCheck,
+    ShieldCheck,
 } from "lucide-react";
 
 import { NavLink } from "react-router-dom";
@@ -23,6 +26,16 @@ const menuItems = [
         name: "Manage Patients",
         icon: <Users size={22} />,
         path: "/admin/patients",
+    },
+    {
+        name: "Appointment Review",
+        icon: <CalendarCheck size={22} />,
+        path: "/admin/appointments",
+    },
+    {
+        name: "Manage Admins",
+        icon: <ShieldCheck size={22} />,
+        path: "/admin/admins",
     },
     {
         name: "Reports",

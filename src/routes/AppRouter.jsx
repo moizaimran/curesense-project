@@ -2,12 +2,13 @@ import { createBrowserRouter } from "react-router-dom";
 import DashboardLayout from "../layouts/DashboardLayout";
 import  Dashboard from '../pages/Dashboard';
 import Notifications from  '../pages/Notifications'
-import PatientDetails from '../pages/PatientDetails'
 import Patients from '../pages/Patients'
 import Profile from '../pages/Profile'
 import DoctorLogin from "../pages/auth/DoctorLogin";
 import DoctorSignup from "../pages/auth/DoctorSignup";
 import ForgotPassword from "../pages/auth/ForgotPassword";
+import CaseDiagnosis from "../pages/CaseDiagnosis";
+import Availability from "../pages/Availability";
 import AdminLayout from "../layouts/AdminLayout";
 
 import AdminDashboard from "../pages/admin/AdminDashboard";
@@ -18,6 +19,8 @@ import Settings from "../pages/admin/Settings";
 import DoctorDetails from "../pages/admin/DoctorDetails"
 import PatientDetail from "../pages/admin/PatientDetail";
 import AdminProfile from "../pages/admin/AdminProfile";
+import AppointmentReview from "../pages/admin/AppointmentReview";
+import ManageAdmins from "../pages/admin/ManageAdmins";
 import AdminLogin from "../pages/adminAuth/AdminLogin";
 import AdminForgotPassword from "../pages/adminAuth/AdminForgotPassword"
 const router = createBrowserRouter([
@@ -60,16 +63,20 @@ const router = createBrowserRouter([
                 element:<Notifications/>
             },
             {
-                path: "patients/:id",
-                element:<PatientDetails/>
-            },
-            {
                 path: 'patients',
                 element:<Patients/>
             },
             {
                 path:'profile',
                 element: <Profile/>
+            },
+            {
+                path: 'cases/:appointmentId',
+                element: <CaseDiagnosis />
+            },
+            {
+                path: 'availability',
+                element: <Availability />
             },
             
             
@@ -115,7 +122,15 @@ const router = createBrowserRouter([
         {
           path: "profile",
           element: <AdminProfile />
-}
+        },
+        {
+          path: "appointments",
+          element: <AppointmentReview />
+        },
+        {
+          path: "admins",
+          element: <ManageAdmins />
+        }
        
     ]
 

@@ -41,9 +41,9 @@ export default function FilterDropDown({
             cursor-pointer
           "
         >
-          <option value="All">All Patients</option>
-          <option value="Pending">Pending</option>
-          <option value="Reviewed">Reviewed</option>
+          <option value="All">All Appointments</option>
+          <option value="Ongoing">Ongoing</option>
+          <option value="Completed">Completed</option>
         </select>
 
         {/* Custom Arrow */}

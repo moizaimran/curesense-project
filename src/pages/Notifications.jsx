@@ -1,5 +1,5 @@
 import { useSelector } from "react-redux";
-import NotificationCard from "../components/Notifications/NotificationCard";
+import NotificationCard from "../components/Notification/NotificationCard";
 
 export default function Notifications() {
     const notifications = useSelector(

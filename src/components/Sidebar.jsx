@@ -1,29 +1,14 @@
-import { LayoutDashboard, Users, Bell, User, LogOut } from "lucide-react";
+import { LayoutDashboard, Users, Bell, User, LogOut, CalendarDays } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { useNavigate } from "react-router-dom";
 import { HeartPulse } from "lucide-react";
 
 const menuItems = [
-    {
-        title: 'Dashboard',
-        icon: LayoutDashboard,
-        path: '/'
-    },
-    {
-        title: 'Patients',
-        icon: Users,
-        path:'/patients'
-    },
-    {
-        title: 'Notifications',
-        icon: Bell,
-        path:'/notifications'
-    },
-    {
-        title:'Profile',
-        icon: User,
-        path:'/profile'
-    }
+    { title: 'Dashboard',    icon: LayoutDashboard, path: '/'              },
+    { title: 'Patients',     icon: Users,           path: '/patients'      },
+    { title: 'Availability', icon: CalendarDays,    path: '/availability'  },
+    { title: 'Notifications',icon: Bell,            path: '/notifications' },
+    { title: 'Profile',      icon: User,            path: '/profile'       },
 ];
 
 

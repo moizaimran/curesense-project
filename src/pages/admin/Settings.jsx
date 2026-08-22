@@ -1,35 +1,59 @@
-import { useState } from "react";
-import { useDispatch, useSelector } from "react-redux";
-import { updateSettings } from "../../features/admin/adminSlice";
+import { useEffect, useState } from "react";
+import { useSelector } from "react-redux";
+// Redux fake-data usage commented out — component now uses the real API.
+// import { useDispatch } from "react-redux";
+// import { updateSettings } from "../../features/admin/adminSlice";
+// const settings = useSelector((state) => state.admin.settings);
+
+import { selectToken } from "../../features/auth/authSlice";
+import { api } from "../../utils/api";
+
+const DEFAULTS = {
+    systemName: "CureSense", supportEmail: "", supportPhone: "",
+    aiConfidence: 85, aiDiagnosis: true, imageAnalysis: true,
+    sessionTimeout: 30, twoFactorAuth: false,
+    doctorApprovalEmails: true, patientRegistrationEmails: true, systemAlerts: true,
+};
 
 export default function Settings() {
+    const token = useSelector(selectToken);
 
-    const dispatch = useDispatch();
+    const [formData, setFormData] = useState(DEFAULTS);
+    const [loading,  setLoading]  = useState(true);
+    const [saving,   setSaving]   = useState(false);
+    const [msg,      setMsg]      = useState(null);
 
-    const settings = useSelector(
-        (state) => state.admin.settings
-    );
-
-    const [formData, setFormData] = useState(settings);
+    useEffect(() => {
+        if (!token) return;
+        api.get("/api/auth/settings", token)
+            .then(data => setFormData(data))
+            .catch(() => {})
+            .finally(() => setLoading(false));
+    }, [token]);
 
     const handleChange = (e) => {
-
         const { name, value, type, checked } = e.target;
-
         setFormData((prev) => ({
             ...prev,
             [name]: type === "checkbox" ? checked : value,
         }));
-
     };
 
-    const handleSave = () => {
-
-        dispatch(updateSettings(formData));
-
-        alert("Settings updated successfully!");
-
+    const handleSave = async () => {
+        setSaving(true);
+        setMsg(null);
+        try {
+            const updated = await api.patch("/api/auth/settings", formData, token);
+            setFormData(updated);
+            setMsg({ ok: true, text: "Settings saved." });
+        } catch (err) {
+            setMsg({ ok: false, text: err.message });
+        } finally {
+            setSaving(false);
+        }
     };
+
+    if (loading) return <div className="p-8 text-gray-400">Loading settings…</div>;
 
     return (
 
@@ -274,15 +298,23 @@ export default function Settings() {
 
             </div>
 
+            {msg && (
+                <div className={`px-5 py-3 rounded-xl text-sm font-medium ${msg.ok ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-700"}`}>
+                    {msg.text}
+                </div>
+            )}
+
             {/* Save Button */}
 
             <div className="flex justify-end">
 
                 <button
+                    type="button"
                     onClick={handleSave}
-                    className="bg-[#264296] hover:bg-[#1f3678] text-white px-8 py-3 rounded-xl font-semibold transition"
+                    disabled={saving}
+                    className="bg-[#264296] hover:bg-[#1f3678] disabled:opacity-50 text-white px-8 py-3 rounded-xl font-semibold transition"
                 >
-                    Save Changes
+                    {saving ? "Saving…" : "Save Changes"}
                 </button>
 
             </div>

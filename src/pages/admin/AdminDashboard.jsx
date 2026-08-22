@@ -1,95 +1,71 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
-
+import { UserCheck, Clock3, Users, CalendarCheck } from "lucide-react";
 import SummaryCard from "../../components/Dashboard/SummaryCard";
 import PendingDoctorApproval from "../../components/admin/Doctors/PendingDoctorApproval";
-
-import {
-    UserCheck,
-    Clock3,
-    Users,
-    Brain,
-} from "lucide-react";
+import { selectToken } from "../../features/auth/authSlice";
+import { api } from "../../utils/api";
 
 export default function AdminDashboard() {
+    const token    = useSelector(selectToken);
+    const navigate = useNavigate();
 
-    const doctors = useSelector(
-        (state) => state.admin.doctors
-    );
+    const [stats,         setStats]         = useState({ totalDoctors: 0, pendingDoctors: 0, totalPatients: 0, pendingAppts: 0 });
+    const [statsLoading,  setStatsLoading]  = useState(true);
 
-    const patients = useSelector(
-        (state) => state.admin.patients
-    );
-
-    const totalDoctors = doctors.length;
-
-    const pendingDoctors = doctors.filter(
-        (doctor) => doctor.status === "Pending"
-    ).length;
-
-    const registeredPatients = patients.length;
-
-    const totalDiagnoses = patients.filter(
-        (patient) => patient.aiDiagnosis
-    ).length;
-
-
+    useEffect(() => {
+        if (!token) return;
+        Promise.all([
+            api.get("/api/doctors/admin/all?limit=1",               token),
+            api.get("/api/doctors/admin/all?status=pending&limit=1", token),
+            api.get("/api/patients?limit=1",                         token),
+            api.get("/api/appointments/admin?limit=1",               token),
+        ])
+            .then(([doctors, pending, patients, appts]) => {
+                setStats({
+                    totalDoctors:   doctors.total  ?? 0,
+                    pendingDoctors: pending.total  ?? 0,
+                    totalPatients:  patients.total ?? 0,
+                    pendingAppts:   appts.total    ?? 0,
+                });
+            })
+            .catch(() => {})
+            .finally(() => setStatsLoading(false));
+    }, [token]);
 
     return (
-
         <div>
-
-            {/* Welcome */}
-
             <div>
-
-                <h1 className="text-4xl font-bold text-slate-800">
-
-                    Good Afternoon, Admin 👋
-
-                </h1>
-
-                <p className="text-gray-500 mt-2">
-
-                    Here's an overview of today's system activities.
-
-                </p>
-
+                <h1 className="text-4xl font-bold text-slate-800">Good Afternoon, Admin 👋</h1>
+                <p className="text-gray-500 mt-2">Here's an overview of today's system activities.</p>
             </div>
 
-            {/* Summary Cards */}
-
             <div className="grid grid-cols-4 gap-6 mt-10">
-
                 <SummaryCard
                     title="Total Doctors"
-                    value={totalDoctors}
+                    value={statsLoading ? "…" : stats.totalDoctors}
                     icon={<UserCheck size={32} />}
                 />
-
                 <SummaryCard
                     title="Pending Approvals"
-                    value={pendingDoctors}
+                    value={statsLoading ? "…" : stats.pendingDoctors}
                     icon={<Clock3 size={32} />}
                 />
-
                 <SummaryCard
                     title="Registered Patients"
-                    value={registeredPatients}
+                    value={statsLoading ? "…" : stats.totalPatients}
                     icon={<Users size={32} />}
                 />
-
                 <SummaryCard
-                    title="AI Diagnoses"
-                    value={totalDiagnoses}
-                    icon={<Brain size={32} />}
+                    title="Pending Reviews"
+                    value={statsLoading ? "…" : stats.pendingAppts}
+                    icon={<CalendarCheck size={32} />}
+                    onClick={() => navigate("/admin/appointments")}
                 />
-
             </div>
 
             <PendingDoctorApproval />
-
         </div>
-
     );
-
 }
