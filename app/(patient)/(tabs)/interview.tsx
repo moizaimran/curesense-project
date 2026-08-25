@@ -19,7 +19,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAudioRecorder, AudioModule, RecordingPresets } from "expo-audio";
+import { useAudioRecorder, requestRecordingPermissionsAsync, RecordingPresets } from "expo-audio";
 import * as FileSystem from "expo-file-system";
 
 import MCQInput from "@/components/interview/MCQInput";
@@ -251,10 +251,10 @@ export default function InterviewScreen() {
 
   async function toggleRecording() {
     if (isRecording) {
-      // Stop and send
+      // Stop — capture uri before stopping (it's the prepared file path)
+      const uri = audioRecorder.uri;
       await audioRecorder.stop();
       setIsRecording(false);
-      const uri = audioRecorder.uri;
       if (!uri) return;
       try {
         const base64 = await FileSystem.readAsStringAsync(uri, {
@@ -265,12 +265,13 @@ export default function InterviewScreen() {
         Alert.alert("Error", "Could not read recording.");
       }
     } else {
-      // Request permission and start
-      const status = await AudioModule.requestRecordingPermissionsAsync();
+      // Request permission, prepare, then start
+      const status = await requestRecordingPermissionsAsync();
       if (!status.granted) {
         Alert.alert("Permission required", "Microphone access is needed to record.");
         return;
       }
+      await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
       setIsRecording(true);
     }
