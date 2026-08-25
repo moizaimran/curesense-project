@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { MultiSelect } from "@/components/MultiSelect";
 import { API_URL } from "@/constants/api";
+import * as Storage from "@/utils/storage";
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -195,22 +196,16 @@ export default function RegisterScreen() {
         return;
       }
 
-      // Store JWT securely
-      // await SecureStore.setItemAsync("token", data.token);
-      // await SecureStore.setItemAsync("role", data.user.role);
-      // await SecureStore.setItemAsync(
-      //   "patient_id",
-      //   data.patient_id?.toString() ?? "",
-      // );
-      console.log("REGISTRATION SUCCESS:", data);
-      console.log("TOKEN:", data.token);
-      console.log("USER:", data.user);
-      console.log("PATIENT ID:", data.patient_id);
+      await Storage.setItemAsync("token", data.token);
+      await Storage.setItemAsync("role", data.user.role);
+      await Storage.setItemAsync(
+        "patient_id",
+        data.user.patient_id?.toString() ?? "",
+      );
 
       router.replace("/(patient)/profile" as any);
-    } catch {
-      console.log("REGISTER ERROR:", error);
-      setError(`Registration error: ${String(error)}`);
+    } catch (e: any) {
+      setError(e?.message ?? "Registration error. Please try again.");
     } finally {
       setLoading(false);
     }
