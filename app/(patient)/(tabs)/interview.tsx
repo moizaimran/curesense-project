@@ -1,5 +1,7 @@
 import * as Storage from "@/utils/storage";
 import { Ionicons } from "@expo/vector-icons";
+import { AudioModule, RecordingPresets, useAudioRecorder } from "expo-audio";
+import * as FileSystem from "expo-file-system";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -19,8 +21,6 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAudioRecorder, AudioModule, RecordingPresets } from "expo-audio";
-import * as FileSystem from "expo-file-system";
 
 import MCQInput from "@/components/interview/MCQInput";
 import NumberInput from "@/components/interview/NumberInput";
@@ -64,7 +64,12 @@ export default function InterviewScreen() {
 
   // Pre-fill text input with body map selection — user reviews and sends manually
   useEffect(() => {
-    if (bodyMapAnswer && sessionId && stage === "question" && !bodyMapSent.current) {
+    if (
+      bodyMapAnswer &&
+      sessionId &&
+      stage === "question" &&
+      !bodyMapSent.current
+    ) {
       bodyMapSent.current = true;
       setTextInput(bodyMapAnswer);
     }
@@ -268,7 +273,10 @@ export default function InterviewScreen() {
       // Request permission and start
       const status = await AudioModule.requestRecordingPermissionsAsync();
       if (!status.granted) {
-        Alert.alert("Permission required", "Microphone access is needed to record.");
+        Alert.alert(
+          "Permission required",
+          "Microphone access is needed to record.",
+        );
         return;
       }
       audioRecorder.record();
@@ -288,7 +296,10 @@ export default function InterviewScreen() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ patient_audio_base64: base64, mime_type: mimeType }),
+        body: JSON.stringify({
+          patient_audio_base64: base64,
+          mime_type: mimeType,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -299,7 +310,10 @@ export default function InterviewScreen() {
       setTurnCount((t) => t + 1);
       if (data.status === "complete") {
         await Storage.deleteItemAsync(SESSION_KEY);
-        router.push({ pathname: "/transcript", params: { session_id: sessionId } } as any);
+        router.push({
+          pathname: "/transcript",
+          params: { session_id: sessionId },
+        } as any);
       } else {
         transitionToQuestion(
           data.message ?? "",
@@ -429,8 +443,12 @@ function renderInput(
             style={s.textInput}
             value={textInput}
             onChangeText={setTextInput}
-            placeholder={isRecording ? "Recording… tap mic to send" : "Type your answer…"}
-            placeholderTextColor={isRecording ? "rgba(239,68,68,0.70)" : "rgba(255,255,255,0.28)"}
+            placeholder={
+              isRecording ? "Recording… tap mic to send" : "Type your answer…"
+            }
+            placeholderTextColor={
+              isRecording ? "rgba(239,68,68,0.70)" : "rgba(255,255,255,0.28)"
+            }
             multiline
             maxLength={600}
             autoFocus={!isRecording}
