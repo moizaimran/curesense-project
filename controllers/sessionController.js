@@ -112,12 +112,14 @@ const processTurn = async (req, res) => {
 
     // ── Save turn (pair) to session ───────────────────────────────────────────
     session.transcript.push({
-      turn_number:       session.turn_count + 1,
-      patient_raw:       rawPatientText,
-      patient_corrected: correctedPatientText,
-      assistant_message: message,
-      voice_message_url: voice_message_url,
-    });
+  turn_number:       session.turn_count + 1,
+  patient_raw:       rawPatientText,
+  patient_corrected: correctedPatientText,
+  assistant_message: message,
+  voice_message_url: voice_message_url,
+  question_type:     questionType ?? "text",
+  question_options:  options ?? [],
+});
     session.turn_count += 1;
     // last_activity_at is also refreshed by the pre-save hook on transcript change
 
