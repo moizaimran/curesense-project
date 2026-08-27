@@ -28,16 +28,31 @@ interface TimeSlot {
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function toIsoDate(date: Date) {
-  return date.toISOString().split("T")[0];
+  // Build the date string from LOCAL components — never use toISOString()
+  // here, since that converts to UTC first and can shift the date back
+  // a day for timezones ahead of UTC (e.g. PKT, UTC+5).
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
-
 function calendarDays(year: number, month: number): (Date | null)[] {
   const firstDay = new Date(year, month, 1).getDay();
   const lastDate = new Date(year, month + 1, 0).getDate();
@@ -120,19 +135,14 @@ function SlotPill({
 export default function BookAppointmentScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const {
-    doctor_profile_id,
-    doctor_name,
-    specialty,
-    report_id,
-    session_id,
-  } = useLocalSearchParams<{
-    doctor_profile_id: string;
-    doctor_name: string;
-    specialty: string;
-    report_id: string;
-    session_id: string;
-  }>();
+  const { doctor_profile_id, doctor_name, specialty, report_id, session_id } =
+    useLocalSearchParams<{
+      doctor_profile_id: string;
+      doctor_name: string;
+      specialty: string;
+      report_id: string;
+      session_id: string;
+    }>();
 
   const today = useRef(new Date()).current;
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -173,19 +183,26 @@ export default function BookAppointmentScreen() {
 
   // ── Month navigation ──────────────────────────────────────────────────────────
   function prevMonth() {
-    if (viewMonth === 0) { setViewYear((y) => y - 1); setViewMonth(11); }
-    else setViewMonth((m) => m - 1);
+    if (viewMonth === 0) {
+      setViewYear((y) => y - 1);
+      setViewMonth(11);
+    } else setViewMonth((m) => m - 1);
   }
   function nextMonth() {
-    if (viewMonth === 11) { setViewYear((y) => y + 1); setViewMonth(0); }
-    else setViewMonth((m) => m + 1);
+    if (viewMonth === 11) {
+      setViewYear((y) => y + 1);
+      setViewMonth(0);
+    } else setViewMonth((m) => m + 1);
   }
 
   // ── Confirm booking ───────────────────────────────────────────────────────────
   async function confirmBooking() {
     if (!selectedDate || !selectedSlot) return;
     if (!report_id) {
-      Alert.alert("No report linked", "Please select a report to share with the doctor before booking.");
+      Alert.alert(
+        "No report linked",
+        "Please select a report to share with the doctor before booking.",
+      );
       return;
     }
     setBooking(true);
@@ -219,8 +236,7 @@ export default function BookAppointmentScreen() {
         [
           {
             text: "OK",
-            onPress: () =>
-              router.replace("/(patient)/(tabs)/chat" as any),
+            onPress: () => router.replace("/(patient)/(tabs)/chat" as any),
           },
         ],
       );
@@ -274,22 +290,35 @@ export default function BookAppointmentScreen() {
             <TouchableOpacity
               onPress={prevMonth}
               style={cal.navBtn}
-              disabled={viewYear === today.getFullYear() && viewMonth === today.getMonth()}
+              disabled={
+                viewYear === today.getFullYear() &&
+                viewMonth === today.getMonth()
+              }
             >
-              <Ionicons name="chevron-back" size={18} color="rgba(255,255,255,0.60)" />
+              <Ionicons
+                name="chevron-back"
+                size={18}
+                color="rgba(255,255,255,0.60)"
+              />
             </TouchableOpacity>
             <Text style={cal.navTitle}>
               {MONTH_NAMES[viewMonth]} {viewYear}
             </Text>
             <TouchableOpacity onPress={nextMonth} style={cal.navBtn}>
-              <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.60)" />
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color="rgba(255,255,255,0.60)"
+              />
             </TouchableOpacity>
           </View>
 
           {/* Day headers */}
           <View style={cal.dayHeaders}>
             {DAY_NAMES.map((d) => (
-              <Text key={d} style={cal.dayHeader}>{d}</Text>
+              <Text key={d} style={cal.dayHeader}>
+                {d}
+              </Text>
             ))}
           </View>
 
@@ -316,14 +345,21 @@ export default function BookAppointmentScreen() {
         {selectedDate && (
           <View style={s.section}>
             <View style={s.sectionHeader}>
-              <Ionicons name="time-outline" size={15} color="rgba(255,255,255,0.40)" />
+              <Ionicons
+                name="time-outline"
+                size={15}
+                color="rgba(255,255,255,0.40)"
+              />
               <Text style={s.sectionLabel}>
                 Available slots · {selectedDate}
               </Text>
             </View>
 
             {slotsLoading ? (
-              <ActivityIndicator color="#2563EB" style={{ marginVertical: 20 }} />
+              <ActivityIndicator
+                color="#2563EB"
+                style={{ marginVertical: 20 }}
+              />
             ) : slotsError ? (
               <Text style={s.slotsError}>{slotsError}</Text>
             ) : slots.length === 0 ? (
@@ -369,7 +405,11 @@ export default function BookAppointmentScreen() {
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
                 <>
-                  <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
+                  <Ionicons
+                    name="checkmark-circle-outline"
+                    size={18}
+                    color="#fff"
+                  />
                   <Text style={s.confirmBtnText}>Confirm Appointment</Text>
                 </>
               )}
@@ -429,7 +469,12 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
   },
-  sectionHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 12 },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 12,
+  },
   sectionLabel: {
     color: "rgba(255,255,255,0.40)",
     fontSize: 11,
@@ -438,8 +483,18 @@ const s = StyleSheet.create({
     letterSpacing: 0.8,
   },
 
-  slotsError: { color: "#F87171", fontSize: 13, textAlign: "center", marginVertical: 12 },
-  slotsEmpty: { color: "rgba(255,255,255,0.30)", fontSize: 13, textAlign: "center", marginVertical: 12 },
+  slotsError: {
+    color: "#F87171",
+    fontSize: 13,
+    textAlign: "center",
+    marginVertical: 12,
+  },
+  slotsEmpty: {
+    color: "rgba(255,255,255,0.30)",
+    fontSize: 13,
+    textAlign: "center",
+    marginVertical: 12,
+  },
 
   summary: {
     backgroundColor: "rgba(37,99,235,0.08)",
@@ -449,7 +504,12 @@ const s = StyleSheet.create({
     borderColor: "rgba(37,99,235,0.25)",
     gap: 10,
   },
-  summaryTitle: { color: "#fff", fontSize: 15, fontWeight: "800", marginBottom: 4 },
+  summaryTitle: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
   summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -548,6 +608,10 @@ const slotS = StyleSheet.create({
     backgroundColor: "rgba(37,99,235,0.30)",
     borderColor: "rgba(37,99,235,0.65)",
   },
-  pillText: { color: "rgba(255,255,255,0.70)", fontSize: 13, fontWeight: "600" },
+  pillText: {
+    color: "rgba(255,255,255,0.70)",
+    fontSize: 13,
+    fontWeight: "600",
+  },
   pillTextSelected: { color: "#93C5FD", fontWeight: "700" },
 });

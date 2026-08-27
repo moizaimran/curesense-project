@@ -96,9 +96,7 @@ function DoctorCard({
         ) : null}
         {doc.gender ? (
           <MetaChip
-            icon={
-              doc.gender === "female" ? "person-outline" : "person-outline"
-            }
+            icon={doc.gender === "female" ? "person-outline" : "person-outline"}
             label={doc.gender.charAt(0).toUpperCase() + doc.gender.slice(1)}
             color="#94A3B8"
           />
@@ -168,13 +166,13 @@ export default function FindDoctorScreen() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState(specialty ?? "");
+  const [search, setSearch] = useState("");
   const [cityFilter, setCityFilter] = useState("");
   const [genderFilter, setGenderFilter] = useState<"" | "male" | "female">("");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
-  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Monotonically-increasing ID — each new fetch increments it; stale responses
   // whose ID doesn't match the current one are silently discarded.
   const requestIdRef = useRef(0);
@@ -199,7 +197,10 @@ export default function FindDoctorScreen() {
     setError("");
     try {
       const token = await Storage.getItemAsync("token");
-      const params = new URLSearchParams({ page: String(targetPage), limit: "20" });
+      const params = new URLSearchParams({
+        page: String(targetPage),
+        limit: "20",
+      });
       if (search.trim()) params.set("specialty", search.trim());
       if (cityFilter.trim()) params.set("city", cityFilter.trim());
       if (genderFilter) params.set("gender", genderFilter);
@@ -214,9 +215,7 @@ export default function FindDoctorScreen() {
       if (myId !== requestIdRef.current) return;
 
       setTotal(data.total);
-      setDoctors((prev) =>
-        reset ? data.results : [...prev, ...data.results],
-      );
+      setDoctors((prev) => (reset ? data.results : [...prev, ...data.results]));
       setPage(targetPage);
     } catch (e: any) {
       if (myId !== requestIdRef.current) return;
@@ -256,10 +255,7 @@ export default function FindDoctorScreen() {
 
       {/* Header */}
       <View
-        style={[
-          s.header,
-          { paddingTop: insets.top + 12, paddingBottom: 12 },
-        ]}
+        style={[s.header, { paddingTop: insets.top + 12, paddingBottom: 12 }]}
       >
         <TouchableOpacity
           onPress={() => router.back()}
@@ -339,10 +335,7 @@ export default function FindDoctorScreen() {
           {(["", "male", "female"] as const).map((g) => (
             <TouchableOpacity
               key={g || "any"}
-              style={[
-                s.genderPill,
-                genderFilter === g && s.genderPillActive,
-              ]}
+              style={[s.genderPill, genderFilter === g && s.genderPillActive]}
               onPress={() => setGenderFilter(g)}
               activeOpacity={0.75}
             >
@@ -352,7 +345,9 @@ export default function FindDoctorScreen() {
                   genderFilter === g && s.genderPillTextActive,
                 ]}
               >
-                {g === "" ? "Any gender" : g.charAt(0).toUpperCase() + g.slice(1)}
+                {g === ""
+                  ? "Any gender"
+                  : g.charAt(0).toUpperCase() + g.slice(1)}
               </Text>
             </TouchableOpacity>
           ))}
@@ -483,7 +478,11 @@ const s = StyleSheet.create({
     backgroundColor: "rgba(37,99,235,0.30)",
     borderColor: "rgba(37,99,235,0.60)",
   },
-  genderPillText: { color: "rgba(255,255,255,0.50)", fontSize: 12, fontWeight: "600" },
+  genderPillText: {
+    color: "rgba(255,255,255,0.50)",
+    fontSize: 12,
+    fontWeight: "600",
+  },
   genderPillTextActive: { color: "#93C5FD" },
 
   resultCount: { paddingHorizontal: 16, paddingVertical: 8 },
@@ -493,7 +492,13 @@ const s = StyleSheet.create({
     fontWeight: "600",
   },
 
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 32 },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    padding: 32,
+  },
   errorText: { color: "#F87171", fontSize: 14, textAlign: "center" },
   retryBtn: {
     backgroundColor: "rgba(248,113,113,0.15)",
@@ -502,7 +507,11 @@ const s = StyleSheet.create({
     paddingHorizontal: 20,
   },
   retryText: { color: "#F87171", fontWeight: "700", fontSize: 13 },
-  emptyTitle: { color: "rgba(255,255,255,0.40)", fontSize: 17, fontWeight: "700" },
+  emptyTitle: {
+    color: "rgba(255,255,255,0.40)",
+    fontSize: 17,
+    fontWeight: "700",
+  },
   emptySub: { color: "rgba(255,255,255,0.25)", fontSize: 13 },
 
   list: { paddingHorizontal: 16, paddingTop: 8, gap: 12 },

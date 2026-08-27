@@ -1,6 +1,10 @@
 import * as Storage from "@/utils/storage";
 import { Ionicons } from "@expo/vector-icons";
-import { RecordingPresets, requestRecordingPermissionsAsync, useAudioRecorder } from "expo-audio";
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  useAudioRecorder,
+} from "expo-audio";
 import * as FileSystem from "expo-file-system";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -31,9 +35,11 @@ import { API_URL } from "@/constants/api";
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Stage = "checking" | "greeting" | "question";
+
 type QuestionType = "yes_no" | "mcq" | "scale" | "text" | "number";
 
 const SESSION_KEY = "current_session_id";
+
 const OPENING_QUESTION =
   "What's been bothering you lately? Please describe your main symptom or concern.";
 
@@ -53,16 +59,20 @@ export default function InterviewScreen() {
   const [sending, setSending] = useState(false);
   const [starting, setStarting] = useState(false);
   const [textInput, setTextInput] = useState("");
+
   const { bodyMapAnswer } = useLocalSearchParams<{ bodyMapAnswer?: string }>();
 
   const [isRecording, setIsRecording] = useState(false);
+
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const opacity = useRef(new Animated.Value(1)).current;
   const translateY = useRef(new Animated.Value(0)).current;
+
   const bodyMapSent = useRef(false);
 
-  // Pre-fill text input with body map selection — user reviews and sends manually
+  // ── Pre-fill text input with body map selection ──────────────────────────────
+
   useEffect(() => {
     if (
       bodyMapAnswer &&
@@ -72,8 +82,12 @@ export default function InterviewScreen() {
     ) {
       bodyMapSent.current = true;
       setTextInput(bodyMapAnswer);
+      // Clear the param from the route so a refresh doesn't re-populate it
+      router.setParams({ bodyMapAnswer: undefined });
     }
   }, [bodyMapAnswer, sessionId, stage]);
+
+  // ── Check latest session on screen load ─────────────────────────────────────
 
   useEffect(() => {
     checkLatestSession();
@@ -83,15 +97,20 @@ export default function InterviewScreen() {
 
   async function checkLatestSession() {
     setStage("checking");
+
     try {
       const token = await Storage.getItemAsync("token");
       const patient_id = await Storage.getItemAsync("patient_id");
+
       const res = await fetch(
         `${API_URL}/api/sessions/patient/${patient_id}/latest`,
         {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
       );
+
       if (!res.ok) {
         setStage("greeting");
         return;
@@ -106,46 +125,100 @@ export default function InterviewScreen() {
 
       const hoursIdle =
         (Date.now() - new Date(session.last_activity_at).getTime()) / 36e5;
+
       if (hoursIdle >= 48) {
         setStage("greeting");
         return;
       }
 
-      // Resume directly into question screen — skip greeting
+      // ── Resume the existing interview ─────────────────────────────────────
+
       await Storage.setItemAsync(SESSION_KEY, session._id);
+
       const transcript: any[] = session.transcript ?? [];
-      const lastQ =
-        transcript.length > 0
-          ? transcript[transcript.length - 1].assistant_message
-          : OPENING_QUESTION;
+
+      const lastTurn =
+        transcript.length > 0 ? transcript[transcript.length - 1] : null;
+
+      const lastQ = lastTurn?.assistant_message ?? OPENING_QUESTION;
+
+      /*
+       * IMPORTANT:
+       *
+       * The backend stores:
+       *   question_type
+       *   question_options
+       *
+       * Previously the frontend was doing:
+       *
+       *   setQuestionType("text");
+       *   setOptions([]);
+       *
+       * which caused every resumed question to become
+       * a text question.
+       *
+       * Now we restore the actual saved question type
+       * and options.
+       */
+
+      const savedQuestionType = lastTurn?.question_type;
+
+      const validQuestionTypes: QuestionType[] = [
+        "yes_no",
+        "mcq",
+        "scale",
+        "text",
+        "number",
+      ];
+
+      const resumedQuestionType: QuestionType = validQuestionTypes.includes(
+        savedQuestionType,
+      )
+        ? savedQuestionType
+        : "text";
+
+      const resumedOptions = Array.isArray(lastTurn?.question_options)
+        ? lastTurn.question_options
+        : [];
 
       setSessionId(session._id);
-      setTurnCount(session.turn_count);
-      setIsFirstQ(session.turn_count === 0);
+      setTurnCount(session.turn_count ?? 0);
+
+      setIsFirstQ((session.turn_count ?? 0) === 0);
+
       setCurrentQ(lastQ);
-      setQuestionType("text");
-      setOptions([]);
+
+      // Restore the actual question type
+      setQuestionType(resumedQuestionType);
+
+      // Restore MCQ options
+      setOptions(resumedOptions);
+
+      setTextInput("");
+
       setStage("question");
-    } catch {
+    } catch (error) {
       setStage("greeting");
     }
   }
 
-  // ── Blink + slide transition ──────────────────────────────────────────────────
+  // ── Blink + slide transition ────────────────────────────────────────────────
 
   function transitionToQuestion(q: string, type: QuestionType, opts: string[]) {
-    // opacity is already 0 (CoolLoader is covering the area); skip fade-out, go straight to spring-in
     setCurrentQ(q);
     setQuestionType(type);
     setOptions(opts);
+
     opacity.setValue(0);
     translateY.setValue(28);
+
     Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
         duration: 400,
         useNativeDriver: true,
       }),
+
       Animated.spring(translateY, {
         toValue: 0,
         tension: 90,
@@ -155,12 +228,14 @@ export default function InterviewScreen() {
     ]).start();
   }
 
-  // ── Start new session ─────────────────────────────────────────────────────────
+  // ── Start new session ───────────────────────────────────────────────────────
 
   const startInterview = useCallback(async () => {
     setStarting(true);
+
     try {
       const token = await Storage.getItemAsync("token");
+
       const res = await fetch(`${API_URL}/api/sessions`, {
         method: "POST",
         headers: {
@@ -168,26 +243,36 @@ export default function InterviewScreen() {
           "Content-Type": "application/json",
         },
       });
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Could not start session");
+
+      if (!res.ok) {
+        throw new Error(data.error ?? "Could not start session");
+      }
 
       await Storage.setItemAsync(SESSION_KEY, data._id);
+
       setSessionId(data._id);
       setTurnCount(0);
       setIsFirstQ(true);
+
       setCurrentQ(OPENING_QUESTION);
       setQuestionType("text");
       setOptions([]);
+      setTextInput("");
 
       opacity.setValue(0);
       translateY.setValue(30);
+
       setStage("question");
+
       Animated.parallel([
         Animated.timing(opacity, {
           toValue: 1,
           duration: 500,
           useNativeDriver: true,
         }),
+
         Animated.spring(translateY, {
           toValue: 0,
           tension: 80,
@@ -196,36 +281,48 @@ export default function InterviewScreen() {
         }),
       ]).start();
     } catch (e: any) {
-      Alert.alert("Error", e.message ?? "Failed to start session.");
+      Alert.alert("Error", e?.message ?? "Failed to start session.");
     } finally {
       setStarting(false);
     }
   }, []);
 
-  // ── Send turn ─────────────────────────────────────────────────────────────────
+  // ── Send text turn ───────────────────────────────────────────────────────────
 
   async function sendTurn(patientText: string) {
-    if (!patientText.trim() || sending || !sessionId) return;
+    if (!patientText.trim() || sending || !sessionId) {
+      return;
+    }
+
     const sid = sessionId;
+
     setSending(true);
     setTextInput("");
     setIsFirstQ(false);
-    // CoolLoader takes over the full content area — no opacity animation needed here
 
     try {
       const token = await Storage.getItemAsync("token");
+
       const res = await fetch(`${API_URL}/api/sessions/${sid}/turn`, {
         method: "POST",
+
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ patient_text: patientText }),
+
+        body: JSON.stringify({
+          patient_text: patientText,
+        }),
       });
+
       const data = await res.json();
+
       if (!res.ok) {
-        opacity.setValue(1); // restore question visibility on API error
+        opacity.setValue(1);
+
         Alert.alert("Error", data.error ?? "Something went wrong.");
+
         return;
       }
 
@@ -233,97 +330,134 @@ export default function InterviewScreen() {
 
       if (data.status === "complete") {
         await Storage.deleteItemAsync(SESSION_KEY);
+
         router.push({
           pathname: "/transcript",
-          params: { session_id: sid },
+          params: {
+            session_id: sid,
+          },
         } as any);
       } else {
         transitionToQuestion(
           data.message ?? "",
+
           (data.questionType as QuestionType) ?? "text",
-          data.options ?? [],
+
+          Array.isArray(data.options) ? data.options : [],
         );
       }
-    } catch {
-      opacity.setValue(1); // restore question visibility on network error
+    } catch (error) {
+      opacity.setValue(1);
+
       Alert.alert("Connection Error", "Could not reach the server.");
     } finally {
       setSending(false);
     }
   }
 
-  // ── Voice recording ───────────────────────────────────────────────────────────
+  // ── Voice recording ──────────────────────────────────────────────────────────
 
   async function toggleRecording() {
     if (isRecording) {
-      // Stop — capture uri before stopping (it's the prepared file path)
       const uri = audioRecorder.uri;
+
       await audioRecorder.stop();
+
       setIsRecording(false);
-      if (!uri) return;
+
+      if (!uri) {
+        return;
+      }
+
       try {
         const base64 = await FileSystem.readAsStringAsync(uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
+
         await sendAudioTurn(base64, "audio/m4a");
       } catch {
         Alert.alert("Error", "Could not read recording.");
       }
     } else {
-      // Request permission, prepare, then start
       const status = await requestRecordingPermissionsAsync();
+
       if (!status.granted) {
         Alert.alert(
           "Permission required",
           "Microphone access is needed to record.",
         );
+
         return;
       }
+
       await audioRecorder.prepareToRecordAsync();
+
       audioRecorder.record();
+
       setIsRecording(true);
     }
   }
 
+  // ── Send audio turn ──────────────────────────────────────────────────────────
+
   async function sendAudioTurn(base64: string, mimeType: string) {
-    if (sending || !sessionId) return;
+    if (sending || !sessionId) {
+      return;
+    }
+
     setSending(true);
     setIsFirstQ(false);
+
     try {
       const token = await Storage.getItemAsync("token");
+
       const res = await fetch(`${API_URL}/api/sessions/${sessionId}/turn`, {
         method: "POST",
+
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
+
         body: JSON.stringify({
           patient_audio_base64: base64,
           mime_type: mimeType,
         }),
       });
+
       const data = await res.json();
+
       if (!res.ok) {
         opacity.setValue(1);
+
         Alert.alert("Error", data.error ?? "Something went wrong.");
+
         return;
       }
+
       setTurnCount((t) => t + 1);
+
       if (data.status === "complete") {
         await Storage.deleteItemAsync(SESSION_KEY);
+
         router.push({
           pathname: "/transcript",
-          params: { session_id: sessionId },
+          params: {
+            session_id: sessionId,
+          },
         } as any);
       } else {
         transitionToQuestion(
           data.message ?? "",
+
           (data.questionType as QuestionType) ?? "text",
-          data.options ?? [],
+
+          Array.isArray(data.options) ? data.options : [],
         );
       }
     } catch {
       opacity.setValue(1);
+
       Alert.alert("Connection Error", "Could not reach the server.");
     } finally {
       setSending(false);
@@ -351,41 +485,67 @@ export default function InterviewScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#0B1437" }}>
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: "#0B1437",
+      }}
+    >
       <StatusBar style="light" />
 
       <LinearGradient
         colors={["#0B1437", "#0B1437"]}
-        style={[s.header, { paddingTop: insets.top + 14 }]}
+        style={[
+          s.header,
+          {
+            paddingTop: insets.top + 14,
+          },
+        ]}
       >
         <View style={s.headerLeft}>
           <LinearGradient colors={["#1D4ED8", "#2563EB"]} style={s.aiBadge}>
             <Ionicons name="medical" size={13} color="#fff" />
           </LinearGradient>
+
           <Text style={s.headerLabel}>CureSense AI</Text>
         </View>
+
         <View style={s.qBadge}>
           <Text style={s.qBadgeText}>Q {turnCount + 1}</Text>
         </View>
       </LinearGradient>
 
       {sending ? (
-        /* CoolLoader takes over the full content area while API processes */
         <CoolLoader />
       ) : (
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
         >
-          {/* Question — blinks in with slide when next question arrives */}
           <Animated.View
-            style={[s.questionArea, { opacity, transform: [{ translateY }] }]}
+            style={[
+              s.questionArea,
+              {
+                opacity,
+                transform: [
+                  {
+                    translateY,
+                  },
+                ],
+              },
+            ]}
           >
             <Text style={s.questionText}>{currentQ}</Text>
           </Animated.View>
 
-          {/* Input panel */}
-          <View style={[s.inputPanel, { paddingBottom: insets.bottom + 16 }]}>
+          <View
+            style={[
+              s.inputPanel,
+              {
+                paddingBottom: insets.bottom + 16,
+              },
+            ]}
+          >
             {renderInput(
               questionType,
               options,
@@ -407,6 +567,7 @@ export default function InterviewScreen() {
                   size={15}
                   color="rgba(255,255,255,0.35)"
                 />
+
                 <Text style={s.bodyBtnText}>Point on body</Text>
               </TouchableOpacity>
             )}
@@ -431,12 +592,16 @@ function renderInput(
   switch (type) {
     case "yes_no":
       return <YesNoInput onSubmit={onSend} />;
+
     case "mcq":
       return <MCQInput options={options} onSubmit={onSend} />;
+
     case "scale":
       return <ScaleInput onSubmit={onSend} />;
+
     case "number":
       return <NumberInput onSubmit={onSend} />;
+
     default:
       return (
         <View style={s.textRow}>
@@ -456,7 +621,6 @@ function renderInput(
             editable={!isRecording}
           />
 
-          {/* Mic button — always visible on text input */}
           <TouchableOpacity
             style={[s.micBtn, isRecording && s.micBtnActive]}
             onPress={onMic}
@@ -469,7 +633,6 @@ function renderInput(
             />
           </TouchableOpacity>
 
-          {/* Send button — only shown when there's typed text and not recording */}
           {!isRecording && textInput.trim().length > 0 && (
             <TouchableOpacity
               style={s.sendBtn}
@@ -501,12 +664,14 @@ function SonarRing({ delay, size }: { delay: number; size: number }) {
     Animated.loop(
       Animated.sequence([
         Animated.delay(delay),
+
         Animated.timing(anim, {
           toValue: 1,
           duration: 2400,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
+
         Animated.delay(Math.max(0, 3200 - delay - 2400)),
       ]),
     ).start();
@@ -516,6 +681,7 @@ function SonarRing({ delay, size }: { delay: number; size: number }) {
     inputRange: [0, 1],
     outputRange: [0.35, 2.4],
   });
+
   const opacity = anim.interpolate({
     inputRange: [0, 0.2, 1],
     outputRange: [0, 0.55, 0],
@@ -539,11 +705,12 @@ function SonarRing({ delay, size }: { delay: number; size: number }) {
 
 function CoolLoader() {
   const orbit = useRef(new Animated.Value(0)).current;
+
   const orb = useRef(new Animated.Value(1)).current;
+
   const [msgIdx, setMsgIdx] = useState(0);
 
   useEffect(() => {
-    // Orbital rotation
     Animated.loop(
       Animated.timing(orbit, {
         toValue: 1,
@@ -553,7 +720,6 @@ function CoolLoader() {
       }),
     ).start();
 
-    // Orb pulse
     Animated.loop(
       Animated.sequence([
         Animated.timing(orb, {
@@ -562,6 +728,7 @@ function CoolLoader() {
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
+
         Animated.timing(orb, {
           toValue: 1.0,
           duration: 900,
@@ -571,11 +738,11 @@ function CoolLoader() {
       ]),
     ).start();
 
-    // Message cycling
     const id = setInterval(
       () => setMsgIdx((i) => (i + 1) % LOADING_MESSAGES.length),
       2600,
     );
+
     return () => clearInterval(id);
   }, []);
 
@@ -586,23 +753,44 @@ function CoolLoader() {
 
   return (
     <View style={l.wrap}>
-      {/* Sonar rings */}
       <View style={l.orbWrap}>
         <SonarRing delay={0} size={90} />
+
         <SonarRing delay={1066} size={90} />
+
         <SonarRing delay={2133} size={90} />
 
-        {/* Orbiting dots */}
         <Animated.View
-          style={[l.orbitRing, { transform: [{ rotate: rotateDeg }] }]}
+          style={[
+            l.orbitRing,
+            {
+              transform: [
+                {
+                  rotate: rotateDeg,
+                },
+              ],
+            },
+          ]}
         >
           <View style={[l.orbitDot, l.orbitDot1]} />
+
           <View style={[l.orbitDot, l.orbitDot2]} />
+
           <View style={[l.orbitDot, l.orbitDot3]} />
         </Animated.View>
 
-        {/* Center orb */}
-        <Animated.View style={[l.orbOuter, { transform: [{ scale: orb }] }]}>
+        <Animated.View
+          style={[
+            l.orbOuter,
+            {
+              transform: [
+                {
+                  scale: orb,
+                },
+              ],
+            },
+          ]}
+        >
           <LinearGradient
             colors={["#1D4ED8", "#2563EB", "#3B82F6"]}
             style={l.orbInner}
@@ -612,10 +800,10 @@ function CoolLoader() {
         </Animated.View>
       </View>
 
-      {/* Cycling status text */}
       <Text style={l.message} key={msgIdx}>
         {LOADING_MESSAGES[msgIdx]}
       </Text>
+
       <Text style={l.subLabel}>CureSense AI</Text>
     </View>
   );
@@ -642,6 +830,7 @@ function GreetingScreen({
           duration: 1400,
           useNativeDriver: true,
         }),
+
         Animated.timing(pulseAnim, {
           toValue: 1.0,
           duration: 1400,
@@ -654,18 +843,33 @@ function GreetingScreen({
   return (
     <LinearGradient
       colors={["#0B1437", "#0F2060", "#112080"]}
-      style={{ flex: 1 }}
+      style={{
+        flex: 1,
+      }}
     >
       <StatusBar style="light" />
+
       <ScrollView
         contentContainerStyle={[
           g.container,
-          { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 },
+          {
+            paddingTop: insets.top + 40,
+            paddingBottom: insets.bottom + 40,
+          },
         ]}
         showsVerticalScrollIndicator={false}
       >
         <Animated.View
-          style={[g.orbOuter, { transform: [{ scale: pulseAnim }] }]}
+          style={[
+            g.orbOuter,
+            {
+              transform: [
+                {
+                  scale: pulseAnim,
+                },
+              ],
+            },
+          ]}
         >
           <LinearGradient
             colors={["#1D4ED8", "#2563EB", "#3B82F6"]}
@@ -677,7 +881,9 @@ function GreetingScreen({
 
         <View style={g.titleWrap}>
           <Text style={g.brand}>CureSense AI</Text>
+
           <Text style={g.title}>Medical Interview</Text>
+
           <Text style={g.sub}>
             Answer a few questions about your symptoms so your doctor can
             prepare before your appointment.
@@ -687,18 +893,23 @@ function GreetingScreen({
         <View style={g.chips}>
           <View style={g.chip}>
             <Ionicons name="time-outline" size={15} color="#60A5FA" />
+
             <Text style={g.chipText}>~5 minutes</Text>
           </View>
+
           <View style={g.chip}>
             <Ionicons
               name="shield-checkmark-outline"
               size={15}
               color="#60A5FA"
             />
+
             <Text style={g.chipText}>Private & secure</Text>
           </View>
+
           <View style={g.chip}>
             <Ionicons name="person-outline" size={15} color="#60A5FA" />
+
             <Text style={g.chipText}>AI-assisted</Text>
           </View>
         </View>
@@ -722,13 +933,19 @@ function GreetingScreen({
               <View style={g.stepIcon}>
                 <Ionicons name={step.icon} size={18} color="#2563EB" />
               </View>
+
               <Text style={g.stepText}>{step.text}</Text>
             </View>
           ))}
         </View>
 
         <TouchableOpacity
-          style={[g.startBtn, starting && { opacity: 0.6 }]}
+          style={[
+            g.startBtn,
+            starting && {
+              opacity: 0.6,
+            },
+          ]}
           onPress={onStart}
           disabled={starting}
           activeOpacity={0.85}
@@ -742,6 +959,7 @@ function GreetingScreen({
             ) : (
               <>
                 <Text style={g.startBtnText}>Begin Interview</Text>
+
                 <Ionicons name="arrow-forward" size={18} color="#fff" />
               </>
             )}
@@ -759,7 +977,11 @@ function GreetingScreen({
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   header: {
     flexDirection: "row",
@@ -770,8 +992,19 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "rgba(255,255,255,0.06)",
   },
-  headerLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
-  headerLabel: { color: "#60A5FA", fontSize: 13, fontWeight: "700" },
+
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  headerLabel: {
+    color: "#60A5FA",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
   aiBadge: {
     width: 26,
     height: 26,
@@ -779,6 +1012,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
   qBadge: {
     backgroundColor: "rgba(37,99,235,0.25)",
     borderRadius: 10,
@@ -787,7 +1021,12 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(37,99,235,0.40)",
   },
-  qBadgeText: { color: "#60A5FA", fontSize: 12, fontWeight: "800" },
+
+  qBadgeText: {
+    color: "#60A5FA",
+    fontSize: 12,
+    fontWeight: "800",
+  },
 
   questionArea: {
     flex: 1,
@@ -796,6 +1035,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 28,
     paddingVertical: 24,
   },
+
   questionText: {
     color: "#fff",
     fontSize: 23,
@@ -814,7 +1054,12 @@ const s = StyleSheet.create({
     gap: 12,
   },
 
-  textRow: { flexDirection: "row", alignItems: "flex-end", gap: 10 },
+  textRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 10,
+  },
+
   textInput: {
     flex: 1,
     backgroundColor: "rgba(255,255,255,0.07)",
@@ -828,6 +1073,7 @@ const s = StyleSheet.create({
     fontSize: 16,
     maxHeight: 130,
   },
+
   sendBtn: {
     width: 48,
     height: 48,
@@ -837,7 +1083,11 @@ const s = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
-  sendBtnOff: { opacity: 0.3 },
+
+  sendBtnOff: {
+    opacity: 0.3,
+  },
+
   micBtn: {
     width: 48,
     height: 48,
@@ -849,6 +1099,7 @@ const s = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
+
   micBtnActive: {
     backgroundColor: "rgba(239,68,68,0.85)",
     borderColor: "#EF4444",
@@ -866,8 +1117,14 @@ const s = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.09)",
     alignSelf: "center",
   },
-  bodyBtnText: { color: "rgba(255,255,255,0.35)", fontSize: 12 },
+
+  bodyBtnText: {
+    color: "rgba(255,255,255,0.35)",
+    fontSize: 12,
+  },
 });
+
+// ── Loader styles ─────────────────────────────────────────────────────────────
 
 const l = StyleSheet.create({
   wrap: {
@@ -891,11 +1148,36 @@ const l = StyleSheet.create({
     borderColor: "#2563EB",
   },
 
-  orbitRing: { position: "absolute", width: 148, height: 148 },
-  orbitDot: { position: "absolute", width: 11, height: 11, borderRadius: 6 },
-  orbitDot1: { backgroundColor: "#60A5FA", top: -1, left: 69 },
-  orbitDot2: { backgroundColor: "#3B82F6", bottom: 18, right: 3 },
-  orbitDot3: { backgroundColor: "#93C5FD", bottom: 18, left: 3 },
+  orbitRing: {
+    position: "absolute",
+    width: 148,
+    height: 148,
+  },
+
+  orbitDot: {
+    position: "absolute",
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+  },
+
+  orbitDot1: {
+    backgroundColor: "#60A5FA",
+    top: -1,
+    left: 69,
+  },
+
+  orbitDot2: {
+    backgroundColor: "#3B82F6",
+    bottom: 18,
+    right: 3,
+  },
+
+  orbitDot3: {
+    backgroundColor: "#93C5FD",
+    bottom: 18,
+    left: 3,
+  },
 
   orbOuter: {
     width: 86,
@@ -907,6 +1189,7 @@ const l = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: "rgba(37,99,235,0.35)",
   },
+
   orbInner: {
     width: 70,
     height: 70,
@@ -922,6 +1205,7 @@ const l = StyleSheet.create({
     textAlign: "center",
     letterSpacing: -0.2,
   },
+
   subLabel: {
     color: "rgba(255,255,255,0.20)",
     fontSize: 12,
@@ -931,8 +1215,15 @@ const l = StyleSheet.create({
   },
 });
 
+// ── Greeting styles ───────────────────────────────────────────────────────────
+
 const g = StyleSheet.create({
-  container: { alignItems: "center", paddingHorizontal: 28, gap: 32 },
+  container: {
+    alignItems: "center",
+    paddingHorizontal: 28,
+    gap: 32,
+  },
+
   orbOuter: {
     width: 110,
     height: 110,
@@ -943,6 +1234,7 @@ const g = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: "rgba(37,99,235,0.30)",
   },
+
   orbInner: {
     width: 80,
     height: 80,
@@ -950,7 +1242,12 @@ const g = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  titleWrap: { alignItems: "center", gap: 8 },
+
+  titleWrap: {
+    alignItems: "center",
+    gap: 8,
+  },
+
   brand: {
     color: "rgba(255,255,255,0.45)",
     fontSize: 12,
@@ -958,24 +1255,28 @@ const g = StyleSheet.create({
     letterSpacing: 2.5,
     textTransform: "uppercase",
   },
+
   title: {
     color: "#fff",
     fontSize: 30,
     fontWeight: "900",
     textAlign: "center",
   },
+
   sub: {
     color: "rgba(255,255,255,0.50)",
     fontSize: 14,
     lineHeight: 22,
     textAlign: "center",
   },
+
   chips: {
     flexDirection: "row",
     gap: 8,
     flexWrap: "wrap",
     justifyContent: "center",
   },
+
   chip: {
     flexDirection: "row",
     alignItems: "center",
@@ -987,9 +1288,24 @@ const g = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(37,99,235,0.30)",
   },
-  chipText: { color: "#93C5FD", fontSize: 12, fontWeight: "600" },
-  steps: { width: "100%", gap: 12 },
-  step: { flexDirection: "row", alignItems: "center", gap: 14 },
+
+  chipText: {
+    color: "#93C5FD",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+
+  steps: {
+    width: "100%",
+    gap: 12,
+  },
+
+  step: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+
   stepIcon: {
     width: 38,
     height: 38,
@@ -1001,8 +1317,17 @@ const g = StyleSheet.create({
     borderColor: "rgba(37,99,235,0.25)",
     flexShrink: 0,
   },
-  stepText: { color: "rgba(255,255,255,0.65)", fontSize: 14, flex: 1 },
-  startBtn: { width: "100%" },
+
+  stepText: {
+    color: "rgba(255,255,255,0.65)",
+    fontSize: 14,
+    flex: 1,
+  },
+
+  startBtn: {
+    width: "100%",
+  },
+
   startBtnGrad: {
     borderRadius: 16,
     paddingVertical: 18,
@@ -1011,7 +1336,13 @@ const g = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
   },
-  startBtnText: { color: "#fff", fontWeight: "800", fontSize: 17 },
+
+  startBtnText: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: 17,
+  },
+
   disclaimer: {
     color: "rgba(255,255,255,0.22)",
     fontSize: 11,
