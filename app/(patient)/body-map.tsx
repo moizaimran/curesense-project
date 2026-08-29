@@ -1,15 +1,31 @@
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useState } from "react";
 import {
-    Image,
-    Pressable,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  Image,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
+
+// ── Design tokens (matches landing page) ────────────────────────────────────
+const C = {
+  navy: "#070B1F",
+  navyMid: "#0B1437",
+  navyDeep: "#0F2060",
+  blue: "#2563EB",
+  blueLight: "#60A5FA",
+  violet: "#8B5CF6",
+  white: "#FFFFFF",
+  faint: "rgba(255,255,255,0.06)",
+  faintBorder: "rgba(255,255,255,0.10)",
+  muted: "rgba(255,255,255,0.55)",
+  mutedMore: "rgba(255,255,255,0.35)",
+};
 
 type ViewMode = "front" | "back";
 
@@ -412,6 +428,13 @@ export default function BodyMapScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <LinearGradient
+        colors={[C.navy, C.navyDeep, "#16247A"]}
+        start={{ x: 0.1, y: 0 }}
+        end={{ x: 0.9, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+
       <View style={styles.header}>
         <Pressable
           onPress={() => router.back()}
@@ -511,10 +534,6 @@ export default function BodyMapScreen() {
                   style={[getRegionStyle("Mouth"), styles.mouthRegion]}
                   onPress={() => selectBodyPart("Mouth")}
                 />
-                <Pressable
-                  style={[getRegionStyle("Jaw"), styles.jawRegion]}
-                  onPress={() => selectBodyPart("Jaw")}
-                />
 
                 {/* ---- NECK ---- */}
                 <Pressable
@@ -523,10 +542,7 @@ export default function BodyMapScreen() {
                 />
 
                 {/* ---- CHEST / ORGANS ---- */}
-                <Pressable
-                  style={[getRegionStyle("Chest"), styles.chestRegion]}
-                  onPress={() => selectBodyPart("Chest")}
-                />
+
                 <Pressable
                   style={[getRegionStyle("Right Lung"), styles.rightLungRegion]}
                   onPress={() => selectBodyPart("Right Lung")}
@@ -644,13 +660,6 @@ export default function BodyMapScreen() {
                   ]}
                   onPress={() => selectBodyPart("Small Intestine")}
                 />
-                <Pressable
-                  style={[
-                    getRegionStyle("Abdominal Muscles"),
-                    styles.abdominalMusclesRegion,
-                  ]}
-                  onPress={() => selectBodyPart("Abdominal Muscles")}
-                />
 
                 {/* ---- PELVIS ---- */}
                 <Pressable
@@ -659,10 +668,6 @@ export default function BodyMapScreen() {
                     styles.pelvicMusclesRegion,
                   ]}
                   onPress={() => selectBodyPart("Pelvic Muscles")}
-                />
-                <Pressable
-                  style={[getRegionStyle("Groin"), styles.groinRegion]}
-                  onPress={() => selectBodyPart("Groin")}
                 />
 
                 {/* ---- THIGHS / KNEES / CALVES ---- */}
@@ -738,28 +743,7 @@ export default function BodyMapScreen() {
                   ]}
                   onPress={() => selectBodyPart("Back of Head")}
                 />
-                <Pressable
-                  style={[getRegionStyle("Upper Neck"), styles.upperNeckRegion]}
-                  onPress={() => selectBodyPart("Upper Neck")}
-                />
-                <Pressable
-                  style={[getRegionStyle("Lower Neck"), styles.lowerNeckRegion]}
-                  onPress={() => selectBodyPart("Lower Neck")}
-                />
-                <Pressable
-                  style={[
-                    getRegionStyle("Right Rear Shoulder"),
-                    styles.rightRearShoulderRegion,
-                  ]}
-                  onPress={() => selectBodyPart("Right Rear Shoulder")}
-                />
-                <Pressable
-                  style={[
-                    getRegionStyle("Left Rear Shoulder"),
-                    styles.leftRearShoulderRegion,
-                  ]}
-                  onPress={() => selectBodyPart("Left Rear Shoulder")}
-                />
+
                 <Pressable
                   style={[
                     getRegionStyle("Upper Back Muscles"),
@@ -845,16 +829,20 @@ export default function BodyMapScreen() {
               value={otherProblems[selectedPart] || ""}
               onChangeText={updateOtherProblem}
               placeholder="Describe your problem..."
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor={C.mutedMore}
               multiline
               textAlignVertical="top"
             />
 
-            <Pressable
-              style={styles.continueButton}
-              onPress={continueToInterview}
-            >
-              <Text style={styles.continueText}>Continue</Text>
+            <Pressable onPress={continueToInterview}>
+              <LinearGradient
+                colors={[C.blue, C.violet]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.continueButton}
+              >
+                <Text style={styles.continueText}>Continue</Text>
+              </LinearGradient>
             </Pressable>
           </View>
         )}
@@ -864,7 +852,7 @@ export default function BodyMapScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F8FAFC" },
+  container: { flex: 1, backgroundColor: C.navy },
 
   header: {
     flexDirection: "row",
@@ -872,20 +860,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 10,
     paddingBottom: 10,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "transparent",
     borderBottomWidth: 1,
-    borderBottomColor: "#E2E8F0",
+    borderBottomColor: C.faintBorder,
   },
   backButtonContainer: { width: 40, height: 40, justifyContent: "center" },
-  backButton: { fontSize: 38, lineHeight: 38, color: "#264296" },
-  title: { fontSize: 22, fontWeight: "700", color: "#1E293B" },
-  subtitle: { fontSize: 13, color: "#64748B", marginTop: 3 },
+  backButton: { fontSize: 38, lineHeight: 38, color: C.blueLight },
+  title: { fontSize: 22, fontWeight: "700", color: C.white },
+  subtitle: { fontSize: 13, color: C.muted, marginTop: 3 },
 
   viewButtons: {
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "transparent",
     paddingVertical: 12,
   },
   viewButton: {
@@ -893,19 +881,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderRadius: 28,
-    backgroundColor: "#EEF2FF",
+    backgroundColor: C.faint,
+    borderWidth: 1,
+    borderColor: C.faintBorder,
     marginHorizontal: 5,
   },
-  activeViewButton: { backgroundColor: "#29479E" },
-  viewText: { fontSize: 16, fontWeight: "600", color: "#264296" },
-  activeViewText: { color: "#FFFFFF" },
+  activeViewButton: { backgroundColor: C.blue, borderColor: C.blue },
+  viewText: { fontSize: 16, fontWeight: "600", color: C.muted },
+  activeViewText: { color: C.white },
 
   scrollContent: { paddingBottom: 40 },
 
   bodyContainer: {
     width: "100%",
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "transparent",
     paddingTop: 8,
     paddingBottom: 8,
   },
@@ -921,20 +911,20 @@ const styles = StyleSheet.create({
 
   region: {
     position: "absolute",
-    backgroundColor: "rgba(38, 66, 150, 0.22)",
+    backgroundColor: "rgba(96, 165, 250, 0.18)",
     borderWidth: 1.5,
-    borderColor: "rgba(38, 66, 150, 0.60)",
+    borderColor: "rgba(96, 165, 250, 0.45)",
     borderRadius: 8,
     zIndex: 20,
   },
   activeRegion: {
-    backgroundColor: "rgba(38, 66, 150, 0.50)",
-    borderColor: "#264296",
+    backgroundColor: "rgba(139, 92, 246, 0.42)",
+    borderColor: C.violet,
     borderWidth: 2,
   },
   savedRegion: {
-    backgroundColor: "rgba(38, 66, 150, 0.34)",
-    borderColor: "#264296",
+    backgroundColor: "rgba(37, 99, 235, 0.32)",
+    borderColor: C.blue,
     borderWidth: 2,
   },
 
@@ -991,14 +981,6 @@ const styles = StyleSheet.create({
     marginLeft: -8,
     borderRadius: 5,
   },
-  //   jawRegion: {
-  //     width: 26,
-  //     height: 12,
-  //     top: "14.1%",
-  //     left: "50%",
-  //     marginLeft: -13,
-  //     borderRadius: 8,
-  //   },
 
   // ===================== FRONT NECK =====================
   neckRegion: {
@@ -1011,14 +993,6 @@ const styles = StyleSheet.create({
   },
 
   // ===================== FRONT CHEST =====================
-  //   chestRegion: {
-  //     width: 108,
-  //     height: 75,
-  //     top: "21%",
-  //     left: "50%",
-  //     marginLeft: -54,
-  //     borderRadius: 22,
-  //   },
   rightLungRegion: {
     width: 39,
     height: 65,
@@ -1163,14 +1137,6 @@ const styles = StyleSheet.create({
     marginLeft: -25,
     borderRadius: 22,
   },
-  //   abdominalMusclesRegion: {
-  //     width: 58,
-  //     height: 76,
-  //     top: "29.5%",
-  //     left: "50%",
-  //     marginLeft: -29,
-  //     borderRadius: 20,
-  //   },
 
   // ===================== FRONT PELVIS =====================
   pelvicMusclesRegion: {
@@ -1181,14 +1147,6 @@ const styles = StyleSheet.create({
     marginLeft: -26,
     borderRadius: 15,
   },
-  //   groinRegion: {
-  //     width: 40,
-  //     height: 24,
-  //     top: "44.5%",
-  //     left: "50%",
-  //     marginLeft: -20,
-  //     borderRadius: 13,
-  //   },
 
   // ===================== FRONT LEGS =====================
   rightThighRegion: {
@@ -1273,38 +1231,6 @@ const styles = StyleSheet.create({
     marginLeft: -24,
     borderRadius: 20,
   },
-  //   upperNeckRegion: {
-  //     width: 40,
-  //     height: 28,
-  //     top: "11%",
-  //     left: "50%",
-  //     marginLeft: -20,
-  //     borderRadius: 12,
-  //   },
-  //   lowerNeckRegion: {
-  //     width: 48,
-  //     height: 26,
-  //     top: "13%",
-  //     left: "50%",
-  //     marginLeft: -24,
-  //     borderRadius: 12,
-  //   },
-
-  // ===================== BACK SHOULDERS =====================
-  //   LeftRearShoulderRegion: {
-  //     width: 50,
-  //     height: 44,
-  //     top: "20%",
-  //     left: "28%",
-  //     borderRadius: 20,
-  //   },
-  //   RightRearShoulderRegion: {
-  //     width: 50,
-  //     height: 44,
-  //     top: "20%",
-  //     right: "28%",
-  //     borderRadius: 20,
-  //   },
 
   // ===================== BACK MUSCLES =====================
   upperBackRegion: {
@@ -1350,60 +1276,59 @@ const styles = StyleSheet.create({
 
   // ===================== SYMPTOM PANEL =====================
   problemContainer: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "transparent",
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 30,
     borderTopWidth: 1,
-    borderTopColor: "#E2E8F0",
+    borderTopColor: C.faintBorder,
   },
-  selectedLabel: { fontSize: 12, color: "#64748B" },
+  selectedLabel: { fontSize: 12, color: C.muted },
   selectedPart: {
     fontSize: 21,
     fontWeight: "700",
-    color: "#264296",
+    color: C.blueLight,
     marginTop: 3,
     marginBottom: 20,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#1E293B",
+    color: C.white,
     marginBottom: 5,
   },
-  sectionSubtitle: { fontSize: 13, color: "#64748B", marginBottom: 15 },
+  sectionSubtitle: { fontSize: 13, color: C.muted, marginBottom: 15 },
   problemList: { flexDirection: "row", flexWrap: "wrap", marginBottom: 20 },
   problemButton: {
     paddingHorizontal: 15,
     paddingVertical: 11,
     borderRadius: 22,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: C.faint,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
+    borderColor: C.faintBorder,
     marginRight: 8,
     marginBottom: 10,
   },
-  selectedProblemButton: { backgroundColor: "#264296", borderColor: "#264296" },
-  problemText: { fontSize: 14, color: "#334155" },
-  selectedProblemText: { color: "#FFFFFF", fontWeight: "600" },
+  selectedProblemButton: { backgroundColor: C.blue, borderColor: C.blue },
+  problemText: { fontSize: 14, color: C.muted },
+  selectedProblemText: { color: C.white, fontWeight: "600" },
   otherInput: {
     minHeight: 100,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
+    borderColor: C.faintBorder,
     borderRadius: 14,
     paddingHorizontal: 15,
     paddingVertical: 13,
     fontSize: 15,
-    color: "#1E293B",
+    color: C.white,
     marginBottom: 20,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: C.faint,
   },
   continueButton: {
     height: 52,
     borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#264296",
   },
-  continueText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
+  continueText: { color: C.white, fontSize: 16, fontWeight: "700" },
 });

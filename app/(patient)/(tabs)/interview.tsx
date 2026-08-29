@@ -82,7 +82,6 @@ export default function InterviewScreen() {
     ) {
       bodyMapSent.current = true;
       setTextInput(bodyMapAnswer);
-      // Clear the param from the route so a refresh doesn't re-populate it
       router.setParams({ bodyMapAnswer: undefined });
     }
   }, [bodyMapAnswer, sessionId, stage]);
@@ -131,8 +130,6 @@ export default function InterviewScreen() {
         return;
       }
 
-      // ── Resume the existing interview ─────────────────────────────────────
-
       await Storage.setItemAsync(SESSION_KEY, session._id);
 
       const transcript: any[] = session.transcript ?? [];
@@ -141,25 +138,6 @@ export default function InterviewScreen() {
         transcript.length > 0 ? transcript[transcript.length - 1] : null;
 
       const lastQ = lastTurn?.assistant_message ?? OPENING_QUESTION;
-
-      /*
-       * IMPORTANT:
-       *
-       * The backend stores:
-       *   question_type
-       *   question_options
-       *
-       * Previously the frontend was doing:
-       *
-       *   setQuestionType("text");
-       *   setOptions([]);
-       *
-       * which caused every resumed question to become
-       * a text question.
-       *
-       * Now we restore the actual saved question type
-       * and options.
-       */
 
       const savedQuestionType = lastTurn?.question_type;
 
@@ -183,19 +161,11 @@ export default function InterviewScreen() {
 
       setSessionId(session._id);
       setTurnCount(session.turn_count ?? 0);
-
       setIsFirstQ((session.turn_count ?? 0) === 0);
-
       setCurrentQ(lastQ);
-
-      // Restore the actual question type
       setQuestionType(resumedQuestionType);
-
-      // Restore MCQ options
       setOptions(resumedOptions);
-
       setTextInput("");
-
       setStage("question");
     } catch (error) {
       setStage("greeting");
@@ -340,9 +310,7 @@ export default function InterviewScreen() {
       } else {
         transitionToQuestion(
           data.message ?? "",
-
           (data.questionType as QuestionType) ?? "text",
-
           Array.isArray(data.options) ? data.options : [],
         );
       }
@@ -449,9 +417,7 @@ export default function InterviewScreen() {
       } else {
         transitionToQuestion(
           data.message ?? "",
-
           (data.questionType as QuestionType) ?? "text",
-
           Array.isArray(data.options) ? data.options : [],
         );
       }
@@ -468,8 +434,26 @@ export default function InterviewScreen() {
 
   if (stage === "checking") {
     return (
-      <LinearGradient colors={["#0B1437", "#0F2060"]} style={s.center}>
-        <ActivityIndicator color="#2563EB" size="large" />
+      <LinearGradient
+        colors={["#07112F", "#0B1437", "#10255F"]}
+        style={s.center}
+      >
+        <View style={s.checkingOrb}>
+          <LinearGradient
+            colors={["#2563EB", "#3B82F6"]}
+            style={s.checkingOrbInner}
+          >
+            <Ionicons name="medical" size={28} color="#fff" />
+          </LinearGradient>
+        </View>
+
+        <ActivityIndicator
+          color="#60A5FA"
+          size="small"
+          style={{ marginTop: 24 }}
+        />
+
+        <Text style={s.checkingText}>Preparing your interview...</Text>
       </LinearGradient>
     );
   }
@@ -485,16 +469,16 @@ export default function InterviewScreen() {
   }
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: "#0B1437",
-      }}
-    >
+    <View style={s.screen}>
       <StatusBar style="light" />
 
+      {/* Decorative background */}
+      <View style={s.backgroundGlowOne} />
+      <View style={s.backgroundGlowTwo} />
+
+      {/* Header */}
       <LinearGradient
-        colors={["#0B1437", "#0B1437"]}
+        colors={["#07112F", "#0B1437"]}
         style={[
           s.header,
           {
@@ -503,15 +487,19 @@ export default function InterviewScreen() {
         ]}
       >
         <View style={s.headerLeft}>
-          <LinearGradient colors={["#1D4ED8", "#2563EB"]} style={s.aiBadge}>
-            <Ionicons name="medical" size={13} color="#fff" />
+          <LinearGradient colors={["#1D4ED8", "#3B82F6"]} style={s.aiBadge}>
+            <Ionicons name="medical" size={14} color="#fff" />
           </LinearGradient>
 
-          <Text style={s.headerLabel}>CureSense AI</Text>
+          <View>
+            <Text style={s.headerBrand}>CureSense</Text>
+            <Text style={s.headerSubtitle}>AI Health Interview</Text>
+          </View>
         </View>
 
         <View style={s.qBadge}>
-          <Text style={s.qBadgeText}>Q {turnCount + 1}</Text>
+          <Text style={s.qBadgeSmall}>QUESTION</Text>
+          <Text style={s.qBadgeText}>{turnCount + 1}</Text>
         </View>
       </LinearGradient>
 
@@ -535,7 +523,16 @@ export default function InterviewScreen() {
               },
             ]}
           >
+            <View style={s.questionLabelRow}>
+              <View style={s.questionDot} />
+              <Text style={s.questionLabel}>YOUR CARE MATTERS</Text>
+            </View>
+
             <Text style={s.questionText}>{currentQ}</Text>
+
+            <Text style={s.helperText}>
+              Take your time. Answer as accurately as you can.
+            </Text>
           </Animated.View>
 
           <View
@@ -562,15 +559,35 @@ export default function InterviewScreen() {
                 onPress={() => router.push("/body-map" as any)}
                 activeOpacity={0.75}
               >
-                <Ionicons
-                  name="body-outline"
-                  size={15}
-                  color="rgba(255,255,255,0.35)"
-                />
+                <View style={s.bodyIcon}>
+                  <Ionicons name="body-outline" size={16} color="#60A5FA" />
+                </View>
 
-                <Text style={s.bodyBtnText}>Point on body</Text>
+                <View>
+                  <Text style={s.bodyBtnTitle}>Point on body</Text>
+                  <Text style={s.bodyBtnSubtitle}>
+                    Help us locate your symptom
+                  </Text>
+                </View>
+
+                <Ionicons
+                  name="chevron-forward"
+                  size={16}
+                  color="rgba(255,255,255,0.30)"
+                />
               </TouchableOpacity>
             )}
+
+            <View style={s.secureRow}>
+              <Ionicons
+                name="lock-closed-outline"
+                size={12}
+                color="rgba(255,255,255,0.25)"
+              />
+              <Text style={s.secureText}>
+                Your responses are private and secure
+              </Text>
+            </View>
           </View>
         </KeyboardAvoidingView>
       )}
@@ -610,10 +627,10 @@ function renderInput(
             value={textInput}
             onChangeText={setTextInput}
             placeholder={
-              isRecording ? "Recording… tap mic to send" : "Type your answer…"
+              isRecording ? "Recording… tap mic to send" : "Type your answer..."
             }
             placeholderTextColor={
-              isRecording ? "rgba(239,68,68,0.70)" : "rgba(255,255,255,0.28)"
+              isRecording ? "rgba(239,68,68,0.70)" : "rgba(255,255,255,0.30)"
             }
             multiline
             maxLength={600}
@@ -628,7 +645,7 @@ function renderInput(
           >
             <Ionicons
               name={isRecording ? "stop" : "mic"}
-              size={18}
+              size={19}
               color="#fff"
             />
           </TouchableOpacity>
@@ -639,7 +656,12 @@ function renderInput(
               onPress={() => onSend(textInput)}
               activeOpacity={0.8}
             >
-              <Ionicons name="send" size={18} color="#fff" />
+              <LinearGradient
+                colors={["#2563EB", "#3B82F6"]}
+                style={s.sendGradient}
+              >
+                <Ionicons name="arrow-up" size={20} color="#fff" />
+              </LinearGradient>
             </TouchableOpacity>
           )}
         </View>
@@ -650,11 +672,11 @@ function renderInput(
 // ── Cool Loader ───────────────────────────────────────────────────────────────
 
 const LOADING_MESSAGES = [
-  "Analyzing your response…",
-  "Preparing your next question…",
-  "Understanding your symptoms…",
-  "Almost there…",
-  "CureSense AI is thinking…",
+  "Analyzing your response...",
+  "Preparing your next question...",
+  "Understanding your symptoms...",
+  "Almost there...",
+  "CureSense AI is thinking...",
 ];
 
 function SonarRing({ delay, size }: { delay: number; size: number }) {
@@ -705,9 +727,7 @@ function SonarRing({ delay, size }: { delay: number; size: number }) {
 
 function CoolLoader() {
   const orbit = useRef(new Animated.Value(0)).current;
-
   const orb = useRef(new Animated.Value(1)).current;
-
   const [msgIdx, setMsgIdx] = useState(0);
 
   useEffect(() => {
@@ -755,9 +775,7 @@ function CoolLoader() {
     <View style={l.wrap}>
       <View style={l.orbWrap}>
         <SonarRing delay={0} size={90} />
-
         <SonarRing delay={1066} size={90} />
-
         <SonarRing delay={2133} size={90} />
 
         <Animated.View
@@ -773,9 +791,7 @@ function CoolLoader() {
           ]}
         >
           <View style={[l.orbitDot, l.orbitDot1]} />
-
           <View style={[l.orbitDot, l.orbitDot2]} />
-
           <View style={[l.orbitDot, l.orbitDot3]} />
         </Animated.View>
 
@@ -800,11 +816,13 @@ function CoolLoader() {
         </Animated.View>
       </View>
 
-      <Text style={l.message} key={msgIdx}>
-        {LOADING_MESSAGES[msgIdx]}
-      </Text>
+      <View style={l.messageBox}>
+        <Text style={l.message} key={msgIdx}>
+          {LOADING_MESSAGES[msgIdx]}
+        </Text>
 
-      <Text style={l.subLabel}>CureSense AI</Text>
+        <Text style={l.subLabel}>CURE SENSE AI</Text>
+      </View>
     </View>
   );
 }
@@ -842,10 +860,8 @@ function GreetingScreen({
 
   return (
     <LinearGradient
-      colors={["#0B1437", "#0F2060", "#112080"]}
-      style={{
-        flex: 1,
-      }}
+      colors={["#07112F", "#0B1437", "#10255F"]}
+      style={{ flex: 1 }}
     >
       <StatusBar style="light" />
 
@@ -853,12 +869,22 @@ function GreetingScreen({
         contentContainerStyle={[
           g.container,
           {
-            paddingTop: insets.top + 40,
-            paddingBottom: insets.bottom + 40,
+            paddingTop: insets.top + 34,
+            paddingBottom: insets.bottom + 35,
           },
         ]}
         showsVerticalScrollIndicator={false}
       >
+        {/* Top branding */}
+        <View style={g.topBrand}>
+          <View style={g.brandMark}>
+            <Ionicons name="medical" size={15} color="#fff" />
+          </View>
+
+          <Text style={g.brandName}>CureSense</Text>
+        </View>
+
+        {/* Main orb */}
         <Animated.View
           style={[
             g.orbOuter,
@@ -871,6 +897,8 @@ function GreetingScreen({
             },
           ]}
         >
+          <View style={g.orbGlow} />
+
           <LinearGradient
             colors={["#1D4ED8", "#2563EB", "#3B82F6"]}
             style={g.orbInner}
@@ -880,20 +908,20 @@ function GreetingScreen({
         </Animated.View>
 
         <View style={g.titleWrap}>
-          <Text style={g.brand}>CureSense AI</Text>
+          <Text style={g.eyebrow}>AI-ASSISTED HEALTHCARE</Text>
 
           <Text style={g.title}>Medical Interview</Text>
 
           <Text style={g.sub}>
             Answer a few questions about your symptoms so your doctor can
-            prepare before your appointment.
+            understand your concerns before your appointment.
           </Text>
         </View>
 
+        {/* Info chips */}
         <View style={g.chips}>
           <View style={g.chip}>
             <Ionicons name="time-outline" size={15} color="#60A5FA" />
-
             <Text style={g.chipText}>~5 minutes</Text>
           </View>
 
@@ -903,42 +931,54 @@ function GreetingScreen({
               size={15}
               color="#60A5FA"
             />
-
             <Text style={g.chipText}>Private & secure</Text>
           </View>
 
           <View style={g.chip}>
-            <Ionicons name="person-outline" size={15} color="#60A5FA" />
-
+            <Ionicons name="sparkles-outline" size={15} color="#60A5FA" />
             <Text style={g.chipText}>AI-assisted</Text>
           </View>
         </View>
 
-        <View style={g.steps}>
+        {/* Steps card */}
+        <View style={g.stepsCard}>
+          <Text style={g.stepsTitle}>HOW IT WORKS</Text>
+
           {[
             {
               icon: "chatbubble-ellipses-outline" as const,
-              text: "Describe your symptoms naturally",
+              title: "Describe your symptoms",
+              text: "Tell us what's bothering you",
             },
             {
               icon: "help-circle-outline" as const,
-              text: "Answer follow-up questions",
+              title: "Answer follow-up questions",
+              text: "We'll ask relevant questions",
             },
             {
               icon: "document-text-outline" as const,
-              text: "Report shared with your doctor",
+              title: "Share with your doctor",
+              text: "Your report helps with your visit",
             },
           ].map((step, i) => (
             <View key={i} style={g.step}>
-              <View style={g.stepIcon}>
-                <Ionicons name={step.icon} size={18} color="#2563EB" />
+              <View style={g.stepNumber}>
+                <Text style={g.stepNumberText}>{i + 1}</Text>
               </View>
 
-              <Text style={g.stepText}>{step.text}</Text>
+              <View style={g.stepIcon}>
+                <Ionicons name={step.icon} size={18} color="#60A5FA" />
+              </View>
+
+              <View style={g.stepContent}>
+                <Text style={g.stepTitle}>{step.title}</Text>
+                <Text style={g.stepText}>{step.text}</Text>
+              </View>
             </View>
           ))}
         </View>
 
+        {/* Start button */}
         <TouchableOpacity
           style={[
             g.startBtn,
@@ -951,7 +991,7 @@ function GreetingScreen({
           activeOpacity={0.85}
         >
           <LinearGradient
-            colors={["#1D4ED8", "#2563EB"]}
+            colors={["#1D4ED8", "#2563EB", "#3B82F6"]}
             style={g.startBtnGrad}
           >
             {starting ? (
@@ -960,21 +1000,31 @@ function GreetingScreen({
               <>
                 <Text style={g.startBtnText}>Begin Interview</Text>
 
-                <Ionicons name="arrow-forward" size={18} color="#fff" />
+                <View style={g.arrowCircle}>
+                  <Ionicons name="arrow-forward" size={17} color="#2563EB" />
+                </View>
               </>
             )}
           </LinearGradient>
         </TouchableOpacity>
 
-        <Text style={g.disclaimer}>
-          Your responses are shared only with your assigned clinician.
-        </Text>
+        <View style={g.disclaimerRow}>
+          <Ionicons
+            name="lock-closed-outline"
+            size={12}
+            color="rgba(255,255,255,0.25)"
+          />
+
+          <Text style={g.disclaimer}>
+            Your responses are shared only with your assigned clinician.
+          </Text>
+        </View>
       </ScrollView>
     </LinearGradient>
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────────
+// ── Main Screen Styles ─────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
   center: {
@@ -983,118 +1033,208 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
 
+  checkingOrb: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(37,99,235,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(96,165,250,0.25)",
+  },
+
+  checkingOrbInner: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  checkingText: {
+    color: "rgba(255,255,255,0.42)",
+    fontSize: 13,
+    marginTop: 14,
+  },
+
+  screen: {
+    flex: 1,
+    backgroundColor: "#07112F",
+    overflow: "hidden",
+  },
+
+  backgroundGlowOne: {
+    position: "absolute",
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: "rgba(37,99,235,0.07)",
+    top: -130,
+    right: -100,
+  },
+
+  backgroundGlowTwo: {
+    position: "absolute",
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: "rgba(59,130,246,0.04)",
+    bottom: 100,
+    left: -130,
+  },
+
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingBottom: 16,
+    paddingBottom: 17,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.06)",
+    borderBottomColor: "rgba(255,255,255,0.07)",
   },
 
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-  },
-
-  headerLabel: {
-    color: "#60A5FA",
-    fontSize: 13,
-    fontWeight: "700",
+    gap: 10,
   },
 
   aiBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 34,
+    height: 34,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+  },
+
+  headerBrand: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: -0.2,
+  },
+
+  headerSubtitle: {
+    color: "rgba(255,255,255,0.38)",
+    fontSize: 10,
+    marginTop: 2,
   },
 
   qBadge: {
-    backgroundColor: "rgba(37,99,235,0.25)",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    minWidth: 58,
+    backgroundColor: "rgba(37,99,235,0.13)",
+    borderRadius: 12,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(37,99,235,0.40)",
+    borderColor: "rgba(96,165,250,0.20)",
+  },
+
+  qBadgeSmall: {
+    color: "rgba(147,197,253,0.55)",
+    fontSize: 7,
+    fontWeight: "800",
+    letterSpacing: 1,
   },
 
   qBadgeText: {
-    color: "#60A5FA",
-    fontSize: 12,
-    fontWeight: "800",
+    color: "#93C5FD",
+    fontSize: 15,
+    fontWeight: "900",
+    marginTop: 1,
   },
 
   questionArea: {
     flex: 1,
     alignSelf: "stretch",
     justifyContent: "center",
-    paddingHorizontal: 28,
-    paddingVertical: 24,
+    paddingHorizontal: 26,
+    paddingVertical: 30,
+  },
+
+  questionLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 18,
+  },
+
+  questionDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#3B82F6",
+  },
+
+  questionLabel: {
+    color: "#60A5FA",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.8,
   },
 
   questionText: {
-    color: "#fff",
-    fontSize: 23,
-    fontWeight: "700",
-    lineHeight: 34,
-    letterSpacing: -0.3,
+    color: "#FFFFFF",
+    fontSize: 26,
+    fontWeight: "800",
+    lineHeight: 36,
+    letterSpacing: -0.6,
     flexShrink: 1,
   },
 
+  helperText: {
+    color: "rgba(255,255,255,0.30)",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 20,
+  },
+
   inputPanel: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: 18,
+    paddingTop: 17,
     borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.07)",
-    backgroundColor: "#0B1437",
+    borderTopColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "rgba(7,17,47,0.98)",
     gap: 12,
   },
 
   textRow: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 10,
+    gap: 8,
   },
 
   textInput: {
     flex: 1,
-    backgroundColor: "rgba(255,255,255,0.07)",
+    minHeight: 54,
+    backgroundColor: "rgba(255,255,255,0.065)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
-    borderRadius: 20,
-    paddingHorizontal: 18,
+    borderRadius: 17,
+    paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 14,
     color: "#fff",
-    fontSize: 16,
+    fontSize: 15,
+    lineHeight: 21,
     maxHeight: 130,
   },
 
-  sendBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "#2563EB",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-
-  sendBtnOff: {
-    opacity: 0.3,
-  },
-
   micBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "rgba(255,255,255,0.10)",
+    width: 50,
+    height: 50,
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.15)",
+    borderColor: "rgba(255,255,255,0.13)",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
@@ -1105,22 +1245,64 @@ const s = StyleSheet.create({
     borderColor: "#EF4444",
   },
 
+  sendBtn: {
+    width: 50,
+    height: 50,
+    borderRadius: 17,
+    overflow: "hidden",
+    flexShrink: 0,
+  },
+
+  sendGradient: {
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   bodyBtn: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
+    gap: 11,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderRadius: 15,
+    backgroundColor: "rgba(37,99,235,0.07)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.09)",
-    alignSelf: "center",
+    borderColor: "rgba(96,165,250,0.12)",
   },
 
-  bodyBtnText: {
-    color: "rgba(255,255,255,0.35)",
+  bodyIcon: {
+    width: 35,
+    height: 35,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(37,99,235,0.13)",
+  },
+
+  bodyBtnTitle: {
+    color: "rgba(255,255,255,0.72)",
     fontSize: 12,
+    fontWeight: "700",
+  },
+
+  bodyBtnSubtitle: {
+    color: "rgba(255,255,255,0.30)",
+    fontSize: 10,
+    marginTop: 2,
+  },
+
+  secureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+  },
+
+  secureText: {
+    color: "rgba(255,255,255,0.22)",
+    fontSize: 10,
   },
 });
 
@@ -1131,8 +1313,8 @@ const l = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#07112F",
     gap: 28,
-    backgroundColor: "#0B1437",
   },
 
   orbWrap: {
@@ -1180,14 +1362,14 @@ const l = StyleSheet.create({
   },
 
   orbOuter: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(37,99,235,0.15)",
+    backgroundColor: "rgba(37,99,235,0.13)",
     borderWidth: 1.5,
-    borderColor: "rgba(37,99,235,0.35)",
+    borderColor: "rgba(96,165,250,0.30)",
   },
 
   orbInner: {
@@ -1198,20 +1380,23 @@ const l = StyleSheet.create({
     justifyContent: "center",
   },
 
+  messageBox: {
+    alignItems: "center",
+    gap: 9,
+  },
+
   message: {
-    color: "rgba(255,255,255,0.75)",
-    fontSize: 16,
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 15,
     fontWeight: "600",
     textAlign: "center",
-    letterSpacing: -0.2,
   },
 
   subLabel: {
-    color: "rgba(255,255,255,0.20)",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 2,
-    textTransform: "uppercase",
+    color: "rgba(255,255,255,0.22)",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 2.5,
   },
 });
 
@@ -1220,59 +1405,92 @@ const l = StyleSheet.create({
 const g = StyleSheet.create({
   container: {
     alignItems: "center",
-    paddingHorizontal: 28,
-    gap: 32,
+    paddingHorizontal: 24,
+    gap: 25,
+  },
+
+  topBrand: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 4,
+  },
+
+  brandMark: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  brandName: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "800",
+    letterSpacing: -0.3,
   },
 
   orbOuter: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    backgroundColor: "rgba(37,99,235,0.15)",
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: "rgba(37,99,235,0.10)",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: "rgba(37,99,235,0.30)",
+    borderWidth: 1,
+    borderColor: "rgba(96,165,250,0.25)",
+  },
+
+  orbGlow: {
+    position: "absolute",
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: "rgba(37,99,235,0.10)",
   },
 
   orbInner: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 82,
+    height: 82,
+    borderRadius: 41,
     alignItems: "center",
     justifyContent: "center",
   },
 
   titleWrap: {
     alignItems: "center",
-    gap: 8,
+    gap: 9,
   },
 
-  brand: {
-    color: "rgba(255,255,255,0.45)",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 2.5,
-    textTransform: "uppercase",
+  eyebrow: {
+    color: "#60A5FA",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 2.1,
   },
 
   title: {
     color: "#fff",
-    fontSize: 30,
+    fontSize: 31,
     fontWeight: "900",
     textAlign: "center",
+    letterSpacing: -0.8,
   },
 
   sub: {
-    color: "rgba(255,255,255,0.50)",
+    color: "rgba(255,255,255,0.48)",
     fontSize: 14,
     lineHeight: 22,
     textAlign: "center",
+    maxWidth: 350,
   },
 
   chips: {
     flexDirection: "row",
-    gap: 8,
+    gap: 7,
     flexWrap: "wrap",
     justifyContent: "center",
   },
@@ -1281,72 +1499,136 @@ const g = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: "rgba(37,99,235,0.15)",
+    backgroundColor: "rgba(37,99,235,0.11)",
     borderRadius: 20,
-    paddingHorizontal: 12,
+    paddingHorizontal: 11,
     paddingVertical: 7,
     borderWidth: 1,
-    borderColor: "rgba(37,99,235,0.30)",
+    borderColor: "rgba(96,165,250,0.17)",
   },
 
   chipText: {
     color: "#93C5FD",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "600",
   },
 
-  steps: {
+  stepsCard: {
     width: "100%",
-    gap: 12,
+    backgroundColor: "rgba(255,255,255,0.045)",
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+
+  stepsTitle: {
+    color: "rgba(255,255,255,0.32)",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 1.8,
+    marginBottom: 17,
   },
 
   step: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 14,
+    minHeight: 52,
+    marginBottom: 11,
+  },
+
+  stepNumber: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(37,99,235,0.18)",
+    marginRight: 9,
+  },
+
+  stepNumberText: {
+    color: "#60A5FA",
+    fontSize: 10,
+    fontWeight: "800",
   },
 
   stepIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(37,99,235,0.15)",
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: "rgba(37,99,235,0.11)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(37,99,235,0.25)",
-    flexShrink: 0,
+    borderColor: "rgba(96,165,250,0.12)",
+    marginRight: 12,
+  },
+
+  stepContent: {
+    flex: 1,
+  },
+
+  stepTitle: {
+    color: "rgba(255,255,255,0.82)",
+    fontSize: 13,
+    fontWeight: "700",
   },
 
   stepText: {
-    color: "rgba(255,255,255,0.65)",
-    fontSize: 14,
-    flex: 1,
+    color: "rgba(255,255,255,0.33)",
+    fontSize: 11,
+    marginTop: 3,
   },
 
   startBtn: {
     width: "100%",
+    borderRadius: 17,
+    overflow: "hidden",
+    shadowOpacity: 0.25,
+    shadowRadius: 15,
+    shadowOffset: {
+      width: 0,
+      height: 7,
+    },
   },
 
   startBtnGrad: {
-    borderRadius: 16,
-    paddingVertical: 18,
+    paddingVertical: 17,
+    paddingHorizontal: 20,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
+    gap: 11,
   },
 
   startBtnText: {
     color: "#fff",
     fontWeight: "800",
-    fontSize: 17,
+    fontSize: 16,
+  },
+
+  arrowCircle: {
+    width: 27,
+    height: 27,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  disclaimerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingHorizontal: 10,
   },
 
   disclaimer: {
     color: "rgba(255,255,255,0.22)",
-    fontSize: 11,
+    fontSize: 10,
     textAlign: "center",
-    lineHeight: 17,
+    lineHeight: 16,
   },
 });

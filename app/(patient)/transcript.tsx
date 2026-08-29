@@ -16,6 +16,25 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { API_URL } from "@/constants/api";
 
+// ── Design tokens (matches landing page) ────────────────────────────────────
+const C = {
+  navy: "#070B1F",
+  navyMid: "#0B1437",
+  navyDeep: "#0F2060",
+  indigo: "#4F46E5",
+  blue: "#2563EB",
+  blueLight: "#60A5FA",
+  violet: "#8B5CF6",
+  teal: "#14B8A6",
+  amber: "#FBBF24",
+  green: "#22C55E",
+  white: "#FFFFFF",
+  faint: "rgba(255,255,255,0.06)",
+  faintBorder: "rgba(255,255,255,0.10)",
+  muted: "rgba(255,255,255,0.55)",
+  mutedMore: "rgba(255,255,255,0.35)",
+};
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Turn {
@@ -102,17 +121,19 @@ export default function TranscriptScreen() {
   if (loading) {
     return (
       <LinearGradient
-        colors={["#0B1437", "#0F2060"]}
+        colors={[C.navy, C.navyDeep, "#16247A"]}
         style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
       >
-        <ActivityIndicator color="#2563EB" size="large" />
+        <ActivityIndicator color={C.blueLight} size="large" />
       </LinearGradient>
     );
   }
 
   return (
     <LinearGradient
-      colors={["#0B1437", "#0F2060", "#0B1437"]}
+      colors={[C.navy, C.navyDeep, "#16247A"]}
+      start={{ x: 0.1, y: 0 }}
+      end={{ x: 0.9, y: 1 }}
       style={{ flex: 1 }}
     >
       <StatusBar style="light" />
@@ -124,12 +145,22 @@ export default function TranscriptScreen() {
           onPress={() => router.back()}
           activeOpacity={0.75}
         >
-          <Ionicons name="chevron-back" size={22} color="#fff" />
+          <Ionicons name="chevron-back" size={20} color={C.white} />
         </TouchableOpacity>
+
         <View style={s.headerCenter}>
-          <Text style={s.headerTitle}>Interview Transcript</Text>
+          <View style={s.headerLogoRow}>
+            <LinearGradient
+              colors={[C.blue, C.violet]}
+              style={s.headerLogoIcon}
+            >
+              <Ionicons name="pulse" size={12} color={C.white} />
+            </LinearGradient>
+            <Text style={s.headerTitle}>Interview Transcript</Text>
+          </View>
           {meta && <Text style={s.headerDate}>{meta.date}</Text>}
         </View>
+
         <View style={s.headerRight}>
           {meta && (
             <View
@@ -140,6 +171,15 @@ export default function TranscriptScreen() {
                   : s.statusPending,
               ]}
             >
+              <View
+                style={[
+                  s.statusDot,
+                  {
+                    backgroundColor:
+                      meta.status === "completed" ? C.green : C.amber,
+                  },
+                ]}
+              />
               <Text
                 style={[
                   s.statusText,
@@ -155,7 +195,7 @@ export default function TranscriptScreen() {
         </View>
       </View>
 
-      {/* Summary strip */}
+      {/* Summary strip — glass card, matches landing page stat card */}
       {meta && (
         <View style={s.summaryStrip}>
           <View style={s.summaryItem}>
@@ -166,8 +206,8 @@ export default function TranscriptScreen() {
           <View style={s.summaryItem}>
             <Ionicons
               name="checkmark-circle"
-              size={18}
-              color={meta.status === "completed" ? "#22C55E" : "#FBBF24"}
+              size={20}
+              color={meta.status === "completed" ? C.green : C.amber}
             />
             <Text style={s.summaryLabel}>
               {meta.status === "completed" ? "Report Generated" : "Incomplete"}
@@ -178,6 +218,9 @@ export default function TranscriptScreen() {
 
       {error ? (
         <View style={s.errorWrap}>
+          <View style={s.errorIconWrap}>
+            <Ionicons name="alert-circle-outline" size={28} color="#F87171" />
+          </View>
           <Text style={s.errorText}>{error}</Text>
         </View>
       ) : (
@@ -200,14 +243,14 @@ export default function TranscriptScreen() {
               <View style={s.roleRow}>
                 {entry.role === "ai" ? (
                   <LinearGradient
-                    colors={["#1D4ED8", "#2563EB"]}
+                    colors={[C.blue, C.violet]}
                     style={s.roleIcon}
                   >
-                    <Ionicons name="medical" size={11} color="#fff" />
+                    <Ionicons name="medical" size={11} color={C.white} />
                   </LinearGradient>
                 ) : (
                   <View style={s.roleIconPatient}>
-                    <Ionicons name="person" size={11} color="#fff" />
+                    <Ionicons name="person" size={11} color={C.white} />
                   </View>
                 )}
                 <Text
@@ -231,23 +274,34 @@ export default function TranscriptScreen() {
             </View>
           ))}
 
-          {/* View Report button — only for completed sessions */}
+          {/* View Report button — gradient CTA, matches landing page primary button */}
           {meta?.status === "completed" && (
             <TouchableOpacity
               style={s.viewReportBtn}
-              onPress={() => router.replace({ pathname: '/report-sheet', params: { session_id } } as any)}
+              onPress={() =>
+                router.replace({
+                  pathname: "/report-sheet",
+                  params: { session_id },
+                } as any)
+              }
               activeOpacity={0.85}
             >
               <LinearGradient
-                colors={["#1D4ED8", "#2563EB"]}
+                colors={[C.blue, C.violet]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
                 style={s.viewReportGrad}
               >
-                <Ionicons name="document-text-outline" size={18} color="#fff" />
+                <Ionicons
+                  name="document-text-outline"
+                  size={18}
+                  color={C.white}
+                />
                 <Text style={s.viewReportText}>View Full Report</Text>
                 <Ionicons
                   name="arrow-forward"
                   size={16}
-                  color="rgba(255,255,255,0.7)"
+                  color="rgba(255,255,255,0.85)"
                 />
               </LinearGradient>
             </TouchableOpacity>
@@ -265,58 +319,90 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingBottom: 14,
+    paddingBottom: 16,
     gap: 10,
   },
   backBtn: {
     width: 36,
     height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: C.faint,
+    borderWidth: 1,
+    borderColor: C.faintBorder,
+  },
+  headerCenter: { flex: 1 },
+  headerLogoRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerLogoIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 7,
     alignItems: "center",
     justifyContent: "center",
   },
-  headerCenter: { flex: 1 },
-  headerTitle: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  headerDate: { color: "rgba(255,255,255,0.40)", fontSize: 11, marginTop: 2 },
-  headerRight: { minWidth: 80, alignItems: "flex-end" },
+  headerTitle: {
+    color: C.white,
+    fontSize: 15.5,
+    fontWeight: "800",
+    letterSpacing: -0.2,
+  },
+  headerDate: {
+    color: C.mutedMore,
+    fontSize: 11,
+    marginTop: 3,
+    marginLeft: 30,
+  },
+  headerRight: { minWidth: 90, alignItems: "flex-end" },
 
   statusBadge: {
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderWidth: 1,
   },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
   statusComplete: {
-    backgroundColor: "rgba(34,197,94,0.12)",
-    borderColor: "rgba(34,197,94,0.35)",
+    backgroundColor: "rgba(34,197,94,0.10)",
+    borderColor: "rgba(34,197,94,0.30)",
   },
   statusPending: {
-    backgroundColor: "rgba(251,191,36,0.12)",
-    borderColor: "rgba(251,191,36,0.35)",
+    backgroundColor: "rgba(251,191,36,0.10)",
+    borderColor: "rgba(251,191,36,0.30)",
   },
   statusText: { fontSize: 11, fontWeight: "700" },
-  statusTextComplete: { color: "#22C55E" },
-  statusTextPending: { color: "#FBBF24" },
+  statusTextComplete: { color: C.green },
+  statusTextPending: { color: C.amber },
 
   summaryStrip: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.04)",
-    marginHorizontal: 20,
-    borderRadius: 12,
-    paddingVertical: 12,
-    marginBottom: 8,
+    justifyContent: "space-between",
+    backgroundColor: C.faint,
+    marginHorizontal: 16,
+    borderRadius: 18,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.07)",
-    gap: 24,
+    borderColor: C.faintBorder,
   },
-  summaryItem: { alignItems: "center", gap: 4, flexDirection: "row" },
-  summaryValue: { color: "#fff", fontSize: 15, fontWeight: "800" },
-  summaryLabel: { color: "rgba(255,255,255,0.45)", fontSize: 12 },
+  summaryItem: {
+    alignItems: "center",
+    gap: 5,
+    flexDirection: "row",
+    flex: 1,
+    justifyContent: "center",
+  },
+  summaryValue: { color: C.white, fontSize: 17, fontWeight: "800" },
+  summaryLabel: { color: C.muted, fontSize: 12, fontWeight: "600" },
   summaryDivider: {
     width: 1,
-    height: 20,
-    backgroundColor: "rgba(255,255,255,0.10)",
+    height: 26,
+    backgroundColor: C.faintBorder,
   },
 
   errorWrap: {
@@ -324,55 +410,75 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 32,
+    gap: 14,
+  },
+  errorIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(248,113,113,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(248,113,113,0.25)",
   },
   errorText: { color: "#F87171", fontSize: 14, textAlign: "center" },
 
-  list: { paddingHorizontal: 16, paddingTop: 8, gap: 4 },
+  list: { paddingHorizontal: 16, paddingTop: 4, gap: 10 },
 
-  entry: { borderRadius: 14, padding: 16, gap: 8 },
+  entry: { borderRadius: 16, padding: 16, gap: 10 },
   entryAI: {
-    backgroundColor: "rgba(255,255,255,0.05)",
+    backgroundColor: C.faint,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    marginRight: 32,
+    borderColor: C.faintBorder,
+    marginRight: 28,
   },
   entryPatient: {
     backgroundColor: "rgba(37,99,235,0.12)",
     borderWidth: 1,
-    borderColor: "rgba(37,99,235,0.25)",
-    marginLeft: 32,
+    borderColor: "rgba(37,99,235,0.28)",
+    marginLeft: 28,
   },
 
-  roleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  roleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
   roleIcon: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 21,
+    height: 21,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
   },
   roleIconPatient: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 21,
+    height: 21,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#2563EB",
+    backgroundColor: C.blue,
   },
-  roleLabel: { fontSize: 11, fontWeight: "700" },
-  roleLabelAI: { color: "#60A5FA" },
+  roleLabel: { fontSize: 11.5, fontWeight: "800", letterSpacing: 0.2 },
+  roleLabelAI: { color: C.blueLight },
   roleLabelPatient: { color: "#93C5FD" },
 
-  entryText: { color: "rgba(255,255,255,0.75)", fontSize: 14, lineHeight: 22 },
-  entryTextPatient: { color: "#fff" },
+  entryText: {
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 14.5,
+    lineHeight: 22,
+  },
+  entryTextPatient: { color: C.white },
 
-  viewReportBtn: { marginTop: 8, borderRadius: 16, overflow: "hidden" },
+  viewReportBtn: { marginTop: 12, borderRadius: 16, overflow: "hidden" },
   viewReportGrad: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 17,
+    paddingHorizontal: 22,
   },
-  viewReportText: { color: "#fff", fontWeight: "800", fontSize: 16, flex: 1 },
+  viewReportText: {
+    color: C.white,
+    fontWeight: "800",
+    fontSize: 15.5,
+    flex: 1,
+  },
 });
