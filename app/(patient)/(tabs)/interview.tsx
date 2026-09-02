@@ -334,7 +334,7 @@ export default function InterviewScreen() {
   async function toggleRecording() {
     if (isRecording) {
       await audioRecorder.stop();
-      await setAudioModeAsync({ allowsRecordingIOS: false });
+      await setAudioModeAsync({ allowsRecording: false });
       setIsRecording(false);
 
       const uri = audioRecorder.uri;
@@ -386,7 +386,7 @@ export default function InterviewScreen() {
         return;
       }
 
-      await setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
       setIsRecording(true);
