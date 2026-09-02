@@ -44,9 +44,9 @@ def generate_patient_summary(
 
     fallback = {
         "patientComplaintSummary": "We received your description of your symptoms.",
-        "referralSpecialty"      : "General Medicine",
+        "ragSummary"             : "No reference material was retrieved.",
+        "medicationFlags"        : [],
         "appointmentGuidance"    : [],
-        "medicationNotes"        : [],
     }
 
     try:

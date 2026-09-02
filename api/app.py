@@ -33,7 +33,7 @@ from glinker.interview.session         import run_interview_turn
 from glinker.interview.prompts         import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT
 from glinker.diagnosis.finalize        import run_gliner, finalize_report
 from glinker.rag.retrieval             import retrieve_context, get_medication_info
-from glinker.disease.ranker            import rank_diseases
+from glinker.disease.disease_retrieval import retrieve_diseases
 from glinker.diagnosis.combined_report import generate_combined_report
 from glinker.images.pdf_analysis       import analyze_pdf
 
@@ -81,6 +81,21 @@ def _build_full_history(live_history: list[dict]) -> list[dict]:
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.route("/audio/transcribe", methods=["POST"])
+def audio_transcribe():
+    """Transcribe a Cloudinary audio URL with Whisper — no interview logic."""
+    data = request.get_json(force=True)
+    audio_url = data.get("audio_url", "").strip()
+    if not audio_url:
+        return jsonify({"error": "audio_url is required"}), 400
+    try:
+        transcribed = _transcribe_audio(audio_url)
+        return jsonify({"transcribed_text": transcribed})
+    except Exception as e:
+        print(f"[audio_transcribe] ERROR: {e}")
+        return jsonify({"error": f"Transcription failed: {e}"}), 502
+
 
 @app.route("/interview/turn", methods=["POST"])
 def interview_turn():
@@ -156,13 +171,13 @@ def pipeline_finalize():
 
     retrieval_status = _retrieval_status(retrieved_chunks)
 
-    # ── 4. Disease ranking — uses verified entities + LLM-crafted diagnosticQuery
+    # ── 4. Disease retrieval — semantic search against HPO + ICD-10 + MedlinePlus index
     ranked_diseases = []
     try:
-        ranked_diseases = rank_diseases(report["entities"], diagnostic_query)
-        print(f"[Ranker] {len(ranked_diseases)} candidate(s) returned.")
+        ranked_diseases = retrieve_diseases(report["entities"], diagnostic_query)
+        print(f"[DiseaseRAG] {len(ranked_diseases)} candidate(s) returned.")
     except Exception as e:
-        print(f"[Ranker] rank_diseases failed: {e} — continuing without ranking.")
+        print(f"[DiseaseRAG] retrieve_diseases failed: {e} — continuing without disease candidates.")
 
     # ── 5. openFDA — live lookup per medication (non-critical) ────────────────
     med_names = [
@@ -186,37 +201,9 @@ def pipeline_finalize():
     patient_summary       = combined.get("patientSummary", {})
     interpreted_diagnoses = combined.get("interpretedDiagnoses", [])
 
-    doctor_report["retrievalStatus"] = retrieval_status
-
-    # ── 7. Generate a short memorable session name ────────────────────────────
-    session_name = ""
-    try:
-        name_resp = config.openai_client.chat.completions.create(
-            model=config.LLM_CONFIG["model"],
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a medical assistant. Given a short excerpt of a patient's "
-                        "symptom description, generate a concise 2-5 word memorable clinical "
-                        "name for this medical interview session. The name must capture the "
-                        "main complaint clearly. Examples: 'Recurring Migraine with Nausea', "
-                        "'Acute Fever and Body Aches', 'Chest Tightness on Exertion', "
-                        "'Lower Back Pain with Stiffness'. Return ONLY the name — no quotes, "
-                        "no punctuation at the end, no explanation."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"Patient transcript excerpt: {transcript_text[:600]}",
-                },
-            ],
-            max_completion_tokens=20,
-        )
-        session_name = name_resp.choices[0].message.content.strip().strip('"\'').strip(".")
-        print(f"[Session Name] {session_name!r}")
-    except Exception as e:
-        print(f"[Session Name] generation failed: {e} — using empty string.")
+    # ── 7. Session name — produced by finalize_report() in step 2 ────────────
+    session_name = report.get("sessionName", "")
+    print(f"[Session Name] {session_name!r}")
 
     return jsonify({
         "verifiedEntities"    : report["entities"],

@@ -58,5 +58,6 @@ def finalize_report(transcript_text: str, gliner_entities: list[dict]) -> dict:
         "entities"       : [{"category": e["category"], "keyword": e["text"], "relates_to": ""} for e in gliner_entities],
         "ragQuery"       : "",
         "diagnosticQuery": "",
+        "sessionName"    : "",
     }
     return call_llm(messages, FINALIZE_SCHEMA, "finalize_max_tokens", fallback, "finalize_report")

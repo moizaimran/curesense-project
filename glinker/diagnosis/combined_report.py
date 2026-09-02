@@ -41,11 +41,32 @@ def _fmt_medications(medication_info: dict) -> str:
 
 def _fmt_ranked_diseases(ranked_diseases: list[dict]) -> str:
     if not ranked_diseases:
-        return "No disease candidates available from the diagnostic module."
-    lines = []
+        return (
+            "No disease candidates retrieved from the knowledge base. "
+            "Use your clinical knowledge to identify likely/possible conditions "
+            "from the verified entities — see STEP 2 instructions."
+        )
+    parts = []
     for i, d in enumerate(ranked_diseases[:10], 1):
-        lines.append(f"  {i}. {d.get('disease', 'Unknown')} — confidence {d.get('confidence', 0):.1f}/100")
-    return "TF-IDF symptom-pattern candidates (normalized to 100):\n" + "\n".join(lines)
+        # Use the full rich paragraph if available (new disease_retrieval format)
+        # Fall back to bare name + confidence (old TF-IDF format)
+        if d.get("paragraph"):
+            icd = f" [{d['icd_code']}]" if d.get("icd_code") else ""
+            parts.append(
+                f"Candidate {i}{icd} (similarity {d.get('confidence', 0):.1f}%):\n"
+                f"{d['paragraph']}"
+            )
+        else:
+            parts.append(
+                f"Candidate {i}: {d.get('disease', 'Unknown')} "
+                f"— similarity {d.get('confidence', 0):.1f}%"
+            )
+    return (
+        "Semantic search retrieved the following disease candidates from the "
+        "HPO + ICD-10 + MedlinePlus knowledge base. Each includes symptom "
+        "frequency data — use this to evaluate clinical plausibility:\n\n"
+        + "\n\n".join(parts)
+    )
 
 
 def generate_combined_report(
@@ -76,19 +97,14 @@ def generate_combined_report(
 
     fallback = {
         "doctorReport": {
-            "interviewClinicalSummary"     : "Report generation failed.",
-            "retrievalAndMedicationSummary": "",
-            "recommendedSpecialty"         : "General Medicine",
-            "specialtyReasoning"           : "Defaulted due to generation failure.",
-            "guidelineConsiderations"      : [],
-            "medicationFlags"              : [],
-            "confidenceNote"               : "generate_combined_report call failed.",
+            "patientComplaintSummary": "We received your description of your symptoms.",
+            "ragSummary"             : "No reference material was retrieved.",
         },
         "patientSummary": {
             "patientComplaintSummary": "We received your description of your symptoms.",
-            "referralSpecialty"      : "General Medicine",
+            "ragSummary"             : "No reference material was retrieved.",
+            "medicationFlags"        : [],
             "appointmentGuidance"    : [],
-            "medicationNotes"        : [],
         },
         "interpretedDiagnoses": [],
     }

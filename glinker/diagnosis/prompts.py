@@ -8,7 +8,7 @@ import json
 FINALIZE_PROMPT = (
     "You receive a completed patient intake transcript (already spelling-corrected) and "
     "a list of entities (category + keyword + ner_confidence 0-1) an NLP model extracted "
-    "from it. You do THREE jobs in one pass and return all as JSON:\n"
+    "from it. You do FOUR jobs in one pass and return all as JSON:\n"
     "\n"
     "JOB 1 — VERIFY ENTITIES. Valid categories: symptom, medical condition, body part, "
     "severity, duration, medication, dosage, frequency, allergy, trigger.\n"
@@ -42,6 +42,12 @@ FINALIZE_PROMPT = (
     "sensitivity severe constant worsening 24 hours\"\n"
     "  Bad:  \"migraine ibuprofen 8/10 retro-orbital\"\n"
     "\n"
+    "JOB 4 — SESSION NAME. Generate a concise 2-5 word memorable clinical name for this "
+    "interview session that captures the main complaint clearly. Put in \"sessionName\".\n"
+    "  Good: \"Recurring Migraine with Nausea\", \"Acute Fever and Body Aches\", "
+    "\"Left Knee Pain with Stiffness\", \"Chest Tightness on Exertion\"\n"
+    "  Bad:  \"Headache\", \"Patient Interview Session\", \"Medical Consultation\"\n"
+    "\n"
     "Never call a tool. Return only the JSON object the schema requires — no extra text."
 )
 
@@ -66,8 +72,9 @@ FINALIZE_SCHEMA = {
             },
             "ragQuery"       : {"type": "string"},
             "diagnosticQuery": {"type": "string"},
+            "sessionName"    : {"type": "string"},
         },
-        "required"            : ["entities", "ragQuery", "diagnosticQuery"],
+        "required"            : ["entities", "ragQuery", "diagnosticQuery", "sessionName"],
         "additionalProperties": False,
     },
 }
@@ -126,6 +133,7 @@ FINALIZE_FEWSHOT = [
                 "throbbing headache right side nausea light sensitivity photophobia "
                 "moderate severe constant two days"
             ),
+            "sessionName": "Right-Sided Throbbing Headache",
         }),
     },
 ]
@@ -134,9 +142,8 @@ FINALIZE_FEWSHOT = [
 # ── COMBINED REPORT (doctor + patient + interpreted diagnoses — single LLM call) ─
 
 COMBINED_REPORT_PROMPT = (
-    "You generate a single structured report from one patient intake. The report has "
-    "THREE sections produced in one pass: a DOCTOR section, a PATIENT section, and "
-    "an INTERPRETED DIAGNOSES section.\n"
+    "You generate a structured report from one patient intake in one pass. "
+    "THREE sections: DOCTOR, PATIENT, and INTERPRETED DIAGNOSES.\n"
     "\n"
     "INPUTS you receive:\n"
     "  (1) Patient transcript\n"
@@ -144,96 +151,66 @@ COMBINED_REPORT_PROMPT = (
     "  (3) Reference chunks from medical textbooks and clinical guidelines\n"
     "  (4) Medication information from openFDA drug labels (may be empty)\n"
     "  (5) TF-IDF diagnostic candidates with normalized confidence scores "
-    "(top = 100). These are raw symptom-vocabulary matches — a high score means "
-    "the disease entry shares similar words, NOT that it is clinically likely.\n"
+    "(top = 100). High score = vocabulary match only, NOT clinical certainty.\n"
     "\n"
-    "━━━ SECTION A — DOCTOR REPORT (clinical language, for the clinician) ━━━\n"
+    "━━━ SECTION A — DOCTOR REPORT ━━━\n"
     "\n"
-    "A1 — INTERVIEW CLINICAL SUMMARY. 2-3 sentences: chief complaint, symptom "
-    "features (site, character, severity, duration, onset), associated symptoms, "
-    "relevant medications and allergies. The doctor's quick-read of the case.\n"
+    "A1 — PATIENT COMPLAINT SUMMARY. 2-3 sentences summarising what the patient "
+    "described: chief complaint, site, character, severity, duration, associated "
+    "symptoms, medications, allergies. Write in clear, plain language that both a "
+    "clinician and an educated patient could read and understand — accurate but not "
+    "full of jargon. No diagnosis, no speculation. Put in \"patientComplaintSummary\".\n"
     "\n"
-    "A2 — RETRIEVAL AND MEDICATION SUMMARY. 1-2 sentences: what the retrieved "
-    "reference material covers and what openFDA returned. State if nothing retrieved.\n"
+    "A2 — RAG SUMMARY. 2-3 sentences summarising what the retrieved reference "
+    "material says that is relevant to this patient's symptoms. Write clearly — "
+    "accurate enough for a clinician, understandable enough for an educated patient. "
+    "Do not cite inline here; summarise the key points. If nothing was retrieved, "
+    "state: 'No relevant reference material was found for this symptom pattern.' "
+    "Put in \"ragSummary\".\n"
     "\n"
-    "A3 — RECOMMENDED SPECIALTY. Single specialty for referral, grounded in "
-    "retrieved material and verified entities.\n"
+    "━━━ SECTION B — PATIENT SUMMARY ━━━\n"
     "\n"
-    "A4 — SPECIALTY REASONING. 1-2 sentences explaining the referral decision, "
-    "referencing retrieved material and/or plausible diagnostic candidates.\n"
+    "B1 — PATIENT COMPLAINT SUMMARY. Copy the exact same text from A1 word for word "
+    "into \"patientComplaintSummary\".\n"
     "\n"
-    "A5 — GUIDELINE CONSIDERATIONS. 2-5 points from retrieved reference material "
-    "relevant to this symptom pattern. Each must cite its source. Frame as "
-    "'the reference states...' — not your own judgment. Empty array if nothing relevant.\n"
+    "B2 — RAG SUMMARY. Copy the exact same text from A2 word for word "
+    "into \"ragSummary\".\n"
     "\n"
-    "A6 — MEDICATION FLAGS. For each patient medication, surface relevant "
-    "indications, contraindications, interactions, or dosage notes from openFDA. "
-    "Each flag must cite its source. Empty array if no medications or no drug data.\n"
+    "B3 — MEDICATION FLAGS. For each medication the patient reported, write one "
+    "plain-language sentence with the single most important safety point they should "
+    "know (e.g. what to avoid, a key interaction, when to call a doctor). Use openFDA "
+    "data when available; use accurate clinical knowledge otherwise. Warm, non-alarmist "
+    "tone. Empty array [] if no medications reported. Put in \"medicationFlags\" as "
+    "[{\"drug\": \"...\", \"flag\": \"...\"}].\n"
     "\n"
-    "A7 — RETRIEVAL STATUS is pre-computed by the pipeline and provided in the input "
-    "as \"retrievalStatus\". Do NOT output this field — use it only to calibrate your "
-    "language: if 'grounded' cite retrieved material explicitly; if 'partial' note limited "
-    "coverage; if 'no_relevant_content' state clearly that no reference material was "
-    "retrieved and the recommendation is based on symptoms alone.\n"
+    "B4 — APPOINTMENT GUIDANCE. 2-4 bullet points from retrieved reference material "
+    "only — what the doctor may ask, check, or watch for at the appointment. Attribute "
+    "each to a source name. Empty array [] if nothing was retrieved. Put in "
+    "\"appointmentGuidance\" as [{\"point\": \"...\", \"source\": \"...\"}].\n"
     "\n"
-    "A8 — CONFIDENCE NOTE. State which diagnostic candidates are plausible given the "
-    "verified entities, which are implausible and why, and the overall confidence basis.\n"
+    "━━━ SECTION C — INTERPRETED DIAGNOSES ━━━\n"
     "\n"
-    "━━━ SECTION B — PATIENT SUMMARY (plain language, for the patient) ━━━\n"
+    "You are given semantic search candidates retrieved from a medical knowledge base "
+    "(HPO symptom ontology + ICD-10 + MedlinePlus). Each candidate includes the "
+    "disease name, ICD-10 code, symptom frequency data, and a plain-language description.\n"
     "\n"
-    "B1 — PATIENT COMPLAINT SUMMARY. 2-3 plain sentences summarising what the "
-    "patient described. No diagnosis, no speculation. Everyday language only.\n"
+    "STEP 1 — Evaluate each supplied candidate against the verified entities:\n"
+    "  'likely'   — primary symptoms are present AND clinically coherent with this disease\n"
+    "  'possible' — at least one verified symptom overlaps; worth clinical investigation\n"
+    "  'unlikely' — retrieved by vocabulary match only; inconsistent with the overall picture\n"
     "\n"
-    "B2 — REFERRAL SPECIALTY. One word or short phrase — the specialty most likely "
-    "to see this patient.\n"
+    "STEP 2 — If fewer than 2 candidates are rated 'likely' or 'possible' after step 1, "
+    "independently generate up to 3 additional conditions that ARE clinically consistent "
+    "with the verified entities. Mark these 'likely' or 'possible' as appropriate. "
+    "Base these on your clinical knowledge — do not fabricate rare exotic conditions; "
+    "prefer common, well-established diagnoses that fit the symptom pattern.\n"
     "\n"
-    "B3 — APPOINTMENT GUIDANCE. 2-4 bullet points from retrieved reference material "
-    "only — what the doctor may ask, check, or watch for. Attribute each to a source "
-    "name. Empty array if nothing retrieved.\n"
+    "For each entry (supplied OR self-generated):\n"
+    "  clinicalReason — 1 sentence for the doctor explaining the verdict\n"
+    "  patientNote    — 1-2 plain-language sentences describing what this condition IS "
+    "(what it is, what it does to the body). Set to '' if plausibility is 'unlikely'.\n"
     "\n"
-    "B4 — MEDICATION NOTES. Per medication, write 2-3 plain-language sentences: "
-    "(1) what the drug IS and what condition it treats, "
-    "(2) how it typically works or is used, "
-    "(3) one key safety note the patient should know. "
-    "Use openFDA label data when available. When openFDA data is absent, use your "
-    "own clinical knowledge to provide SPECIFIC, ACCURATE information — do NOT "
-    "write vague fallback text like 'follow the product instructions'. Examples:\n"
-    "  • Paracetamol/acetaminophen: a pain reliever and fever reducer; works by "
-    "blocking pain signals in the brain; the usual adult dose is 500–1000 mg every "
-    "4–6 hours (maximum 4 g per day) — exceeding this can cause serious liver damage.\n"
-    "  • Ibuprofen: a non-steroidal anti-inflammatory drug (NSAID) that reduces pain, "
-    "fever, and inflammation; should be taken with food or milk to protect the stomach; "
-    "avoid if you have kidney problems, stomach ulcers, or are taking blood thinners.\n"
-    "  • Losartan: an angiotensin receptor blocker used to treat high blood pressure "
-    "and protect the kidneys; taken once daily; do not stop suddenly; avoid potassium "
-    "supplements unless told otherwise by a doctor.\n"
-    "Be equally specific for any other drug reported. "
-    "Empty array if no medications reported.\n"
-    "\n"
-    "PATIENT TONE: warm, clear, non-alarmist. Never say 'you have X'.\n"
-    "\n"
-    "━━━ SECTION C — INTERPRETED DIAGNOSES (shared by doctor and patient dashboards) ━━━\n"
-    "\n"
-    "For EVERY TF-IDF candidate supplied, produce one entry. Evaluate each against "
-    "the verified entities and clinical picture:\n"
-    "  'likely'   — consistent with 2+ verified symptoms; clinically coherent\n"
-    "  'possible' — partially consistent; worth investigating\n"
-    "  'unlikely' — inconsistent with the clinical picture (include for doctor "
-    "               transparency — do NOT surface to the patient)\n"
-    "\n"
-    "For each entry write:\n"
-    "  clinicalReason — 1 sentence for the doctor explaining the plausibility verdict\n"
-    "  patientNote    — 1-2 plain-language sentences describing what this condition IS, "
-    "in simple words a non-medical person can understand. Describe the disease itself "
-    "(what it is, what it does to the body). Example: 'Migraine is a type of severe "
-    "recurring headache, often affecting one side of the head, that can cause "
-    "sensitivity to light and nausea.' Do NOT write what the doctor will do or check. "
-    "Do NOT start with 'The doctor may...'. "
-    "Set to empty string '' if plausibility is 'unlikely' — the patient should never "
-    "see implausible candidates.\n"
-    "\n"
-    "RULES (all sections): Every claim from retrieved content MUST include a "
-    "citation. Never fabricate. Never diagnose. "
+    "Never diagnose. Never fabricate diseases. "
     "Return only the JSON object the schema requires — no extra text."
 )
 
@@ -246,50 +223,29 @@ COMBINED_REPORT_SCHEMA = {
             "doctorReport": {
                 "type": "object",
                 "properties": {
-                    "interviewClinicalSummary"     : {"type": "string"},
-                    "retrievalAndMedicationSummary": {"type": "string"},
-                    "recommendedSpecialty"         : {"type": "string"},
-                    "specialtyReasoning"           : {"type": "string"},
-                    "guidelineConsiderations": {
-                        "type" : "array",
-                        "items": {
-                            "type"      : "object",
-                            "properties": {
-                                "point"   : {"type": "string"},
-                                "citation": {"type": "string"},
-                            },
-                            "required"            : ["point", "citation"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "medicationFlags": {
-                        "type" : "array",
-                        "items": {
-                            "type"      : "object",
-                            "properties": {
-                                "drug"    : {"type": "string"},
-                                "flag"    : {"type": "string"},
-                                "citation": {"type": "string"},
-                            },
-                            "required"            : ["drug", "flag", "citation"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "confidenceNote": {"type": "string"},
+                    "patientComplaintSummary": {"type": "string"},
+                    "ragSummary"             : {"type": "string"},
                 },
-                "required": [
-                    "interviewClinicalSummary", "retrievalAndMedicationSummary",
-                    "recommendedSpecialty", "specialtyReasoning",
-                    "guidelineConsiderations", "medicationFlags",
-                    "confidenceNote",
-                ],
+                "required"            : ["patientComplaintSummary", "ragSummary"],
                 "additionalProperties": False,
             },
             "patientSummary": {
                 "type": "object",
                 "properties": {
                     "patientComplaintSummary": {"type": "string"},
-                    "referralSpecialty"      : {"type": "string"},
+                    "ragSummary"             : {"type": "string"},
+                    "medicationFlags": {
+                        "type" : "array",
+                        "items": {
+                            "type"      : "object",
+                            "properties": {
+                                "drug": {"type": "string"},
+                                "flag": {"type": "string"},
+                            },
+                            "required"            : ["drug", "flag"],
+                            "additionalProperties": False,
+                        },
+                    },
                     "appointmentGuidance": {
                         "type" : "array",
                         "items": {
@@ -302,20 +258,8 @@ COMBINED_REPORT_SCHEMA = {
                             "additionalProperties": False,
                         },
                     },
-                    "medicationNotes": {
-                        "type" : "array",
-                        "items": {
-                            "type"      : "object",
-                            "properties": {
-                                "drug": {"type": "string"},
-                                "note": {"type": "string"},
-                            },
-                            "required"            : ["drug", "note"],
-                            "additionalProperties": False,
-                        },
-                    },
                 },
-                "required"            : ["patientComplaintSummary", "referralSpecialty", "appointmentGuidance", "medicationNotes"],
+                "required"            : ["patientComplaintSummary", "ragSummary", "medicationFlags", "appointmentGuidance"],
                 "additionalProperties": False,
             },
             "interpretedDiagnoses": {

@@ -68,14 +68,8 @@ def generate_doctor_report(
     })
 
     fallback = {
-        "interviewClinicalSummary"     : "Doctor report generation failed.",
-        "retrievalAndMedicationSummary": "No retrieval summary available.",
-        "recommendedSpecialty"         : "General Medicine",
-        "specialtyReasoning"           : "Defaulted due to generation failure.",
-        "guidelineConsiderations"      : [],
-        "medicationFlags"              : [],
-        "retrievalStatus"              : "no_relevant_content",
-        "confidenceNote"               : "generate_doctor_report call failed.",
+        "patientComplaintSummary": "Doctor report generation failed.",
+        "ragSummary"             : "No reference material was retrieved.",
     }
 
     try:
