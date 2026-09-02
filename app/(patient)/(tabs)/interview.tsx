@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
+  setAudioModeAsync,
   useAudioRecorder,
 } from "expo-audio";
 import * as FileSystem from "expo-file-system";
@@ -333,6 +334,7 @@ export default function InterviewScreen() {
   async function toggleRecording() {
     if (isRecording) {
       await audioRecorder.stop();
+      await setAudioModeAsync({ allowsRecordingIOS: false });
       setIsRecording(false);
 
       const uri = audioRecorder.uri;
@@ -384,6 +386,7 @@ export default function InterviewScreen() {
         return;
       }
 
+      await setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
       setIsRecording(true);
