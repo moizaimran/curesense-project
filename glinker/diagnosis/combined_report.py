@@ -99,11 +99,12 @@ def generate_combined_report(
         "doctorReport": {
             "patientComplaintSummary": "We received your description of your symptoms.",
             "ragSummary"             : "No reference material was retrieved.",
+            "medicationFlags"        : [],
         },
         "patientSummary": {
             "patientComplaintSummary": "We received your description of your symptoms.",
-            "ragSummary"             : "No reference material was retrieved.",
-            "medicationFlags"        : [],
+            "referralSpecialty"      : "General Practitioner",
+            "medicationNotes"        : [],
             "appointmentGuidance"    : [],
         },
         "interpretedDiagnoses": [],

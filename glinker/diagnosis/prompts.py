@@ -150,38 +150,42 @@ COMBINED_REPORT_PROMPT = (
     "  (2) Verified clinical entities (GLiNER + LLM verified — trust these)\n"
     "  (3) Reference chunks from medical textbooks and clinical guidelines\n"
     "  (4) Medication information from openFDA drug labels (may be empty)\n"
-    "  (5) TF-IDF diagnostic candidates with normalized confidence scores "
-    "(top = 100). High score = vocabulary match only, NOT clinical certainty.\n"
+    "  (5) Semantic search candidates from HPO + ICD-10 knowledge base. "
+    "High similarity = vocabulary match; evaluate clinical plausibility independently.\n"
     "\n"
     "━━━ SECTION A — DOCTOR REPORT ━━━\n"
     "\n"
     "A1 — PATIENT COMPLAINT SUMMARY. 2-3 sentences summarising what the patient "
     "described: chief complaint, site, character, severity, duration, associated "
-    "symptoms, medications, allergies. Write in clear, plain language that both a "
-    "clinician and an educated patient could read and understand — accurate but not "
-    "full of jargon. No diagnosis, no speculation. Put in \"patientComplaintSummary\".\n"
+    "symptoms, medications, allergies. Clear, plain language — no diagnosis, no "
+    "speculation. Put in \"patientComplaintSummary\".\n"
     "\n"
     "A2 — RAG SUMMARY. 2-3 sentences summarising what the retrieved reference "
-    "material says that is relevant to this patient's symptoms. Write clearly — "
-    "accurate enough for a clinician, understandable enough for an educated patient. "
-    "Do not cite inline here; summarise the key points. If nothing was retrieved, "
-    "state: 'No relevant reference material was found for this symptom pattern.' "
-    "Put in \"ragSummary\".\n"
+    "material says that is relevant to this patient's symptoms. If nothing was "
+    "retrieved, state: 'No relevant reference material was found for this symptom "
+    "pattern.' Put in \"ragSummary\".\n"
+    "\n"
+    "A3 — MEDICATION FLAGS (doctor-facing). For each medication the patient reported, "
+    "one clinical sentence covering the key safety point, interaction, or monitoring "
+    "requirement relevant to THIS patient's presentation. Use openFDA data when "
+    "available. Empty array [] if no medications reported. Put in \"medicationFlags\" "
+    "as [{\"drug\": \"...\", \"flag\": \"...\"}].\n"
     "\n"
     "━━━ SECTION B — PATIENT SUMMARY ━━━\n"
     "\n"
     "B1 — PATIENT COMPLAINT SUMMARY. Copy the exact same text from A1 word for word "
     "into \"patientComplaintSummary\".\n"
     "\n"
-    "B2 — RAG SUMMARY. Copy the exact same text from A2 word for word "
-    "into \"ragSummary\".\n"
+    "B2 — REFERRAL SPECIALTY. Name the single medical specialty the patient should "
+    "see based on their chief complaint (e.g. 'Gastroenterologist', 'Neurologist', "
+    "'General Practitioner'). One specialty name only, no explanation. "
+    "Put in \"referralSpecialty\".\n"
     "\n"
-    "B3 — MEDICATION FLAGS. For each medication the patient reported, write one "
-    "plain-language sentence with the single most important safety point they should "
-    "know (e.g. what to avoid, a key interaction, when to call a doctor). Use openFDA "
-    "data when available; use accurate clinical knowledge otherwise. Warm, non-alarmist "
-    "tone. Empty array [] if no medications reported. Put in \"medicationFlags\" as "
-    "[{\"drug\": \"...\", \"flag\": \"...\"}].\n"
+    "B3 — MEDICATION NOTES (patient-facing). For each medication the patient reported, "
+    "one warm, non-alarmist plain-language sentence with the single most important "
+    "thing they should know (e.g. what to avoid, when to call a doctor). Use openFDA "
+    "data when available. Empty array [] if no medications reported. Put in "
+    "\"medicationNotes\" as [{\"drug\": \"...\", \"note\": \"...\"}].\n"
     "\n"
     "B4 — APPOINTMENT GUIDANCE. 2-4 bullet points from retrieved reference material "
     "only — what the doctor may ask, check, or watch for at the appointment. Attribute "
@@ -191,8 +195,8 @@ COMBINED_REPORT_PROMPT = (
     "━━━ SECTION C — INTERPRETED DIAGNOSES ━━━\n"
     "\n"
     "You are given semantic search candidates retrieved from a medical knowledge base "
-    "(HPO symptom ontology + ICD-10 + MedlinePlus). Each candidate includes the "
-    "disease name, ICD-10 code, symptom frequency data, and a plain-language description.\n"
+    "(HPO symptom ontology + ICD-10). Each candidate includes the disease name, "
+    "ICD-10 code, symptom frequency data, and description.\n"
     "\n"
     "STEP 1 — Evaluate each supplied candidate against the verified entities:\n"
     "  'likely'   — primary symptoms are present AND clinically coherent with this disease\n"
@@ -202,8 +206,7 @@ COMBINED_REPORT_PROMPT = (
     "STEP 2 — If fewer than 2 candidates are rated 'likely' or 'possible' after step 1, "
     "independently generate up to 3 additional conditions that ARE clinically consistent "
     "with the verified entities. Mark these 'likely' or 'possible' as appropriate. "
-    "Base these on your clinical knowledge — do not fabricate rare exotic conditions; "
-    "prefer common, well-established diagnoses that fit the symptom pattern.\n"
+    "Prefer common, well-established diagnoses — never fabricate rare exotic conditions.\n"
     "\n"
     "For each entry (supplied OR self-generated):\n"
     "  clinicalReason — 1 sentence for the doctor explaining the verdict\n"
@@ -225,15 +228,6 @@ COMBINED_REPORT_SCHEMA = {
                 "properties": {
                     "patientComplaintSummary": {"type": "string"},
                     "ragSummary"             : {"type": "string"},
-                },
-                "required"            : ["patientComplaintSummary", "ragSummary"],
-                "additionalProperties": False,
-            },
-            "patientSummary": {
-                "type": "object",
-                "properties": {
-                    "patientComplaintSummary": {"type": "string"},
-                    "ragSummary"             : {"type": "string"},
                     "medicationFlags": {
                         "type" : "array",
                         "items": {
@@ -243,6 +237,27 @@ COMBINED_REPORT_SCHEMA = {
                                 "flag": {"type": "string"},
                             },
                             "required"            : ["drug", "flag"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required"            : ["patientComplaintSummary", "ragSummary", "medicationFlags"],
+                "additionalProperties": False,
+            },
+            "patientSummary": {
+                "type": "object",
+                "properties": {
+                    "patientComplaintSummary": {"type": "string"},
+                    "referralSpecialty"      : {"type": "string"},
+                    "medicationNotes": {
+                        "type" : "array",
+                        "items": {
+                            "type"      : "object",
+                            "properties": {
+                                "drug": {"type": "string"},
+                                "note": {"type": "string"},
+                            },
+                            "required"            : ["drug", "note"],
                             "additionalProperties": False,
                         },
                     },
@@ -259,7 +274,7 @@ COMBINED_REPORT_SCHEMA = {
                         },
                     },
                 },
-                "required"            : ["patientComplaintSummary", "ragSummary", "medicationFlags", "appointmentGuidance"],
+                "required"            : ["patientComplaintSummary", "referralSpecialty", "medicationNotes", "appointmentGuidance"],
                 "additionalProperties": False,
             },
             "interpretedDiagnoses": {
