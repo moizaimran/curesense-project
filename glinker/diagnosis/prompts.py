@@ -34,7 +34,7 @@ FINALIZE_PROMPT = (
     "  Bad:  \"Patient has had a headache on the right side since yesterday.\"\n"
     "\n"
     "JOB 3 — DIAGNOSTIC QUERY. Write a symptom-focused keyword string specifically "
-    "designed for a TF-IDF disease ranking model. Include ONLY presenting symptoms, signs, "
+    "designed for semantic disease retrieval. Include ONLY presenting symptoms, signs, "
     "body parts, severity descriptors, and duration — NO medications, NO clinical "
     "abbreviations, NO lab values, NO condition names. Use plain descriptive terms that "
     "match how symptoms are listed in symptom-disease datasets. Put in \"diagnosticQuery\".\n"

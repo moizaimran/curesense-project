@@ -63,7 +63,7 @@ def _fmt_ranked_diseases(ranked_diseases: list[dict]) -> str:
             )
     return (
         "Semantic search retrieved the following disease candidates from the "
-        "HPO + ICD-10 + MedlinePlus knowledge base. Each includes symptom "
+        "HPO + ICD-10 knowledge base. Each includes symptom "
         "frequency data — use this to evaluate clinical plausibility:\n\n"
         + "\n\n".join(parts)
     )
