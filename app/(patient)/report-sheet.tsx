@@ -42,6 +42,7 @@ interface MedNote {
 
 interface Diagnosis {
   disease: string;
+  icdCode?: string;
   plausibility: "likely" | "possible" | "unlikely";
   clinicalReason: string;
   patientNote: string;
@@ -512,7 +513,6 @@ export default function ReportSheetScreen() {
                   <View style={s.rankBadge}>
                     <Text style={s.rankText}>{i + 1}</Text>
                   </View>
-                  {/* disease name stretches, badge is fixed */}
                   <Text style={s.diagName} numberOfLines={3}>
                     {d.disease}
                   </Text>
@@ -533,6 +533,12 @@ export default function ReportSheetScreen() {
                     </Text>
                   </View>
                 </View>
+                {!!d.icdCode?.trim() && (
+                  <View style={s.icdRow}>
+                    <Text style={s.icdLabel}>ICD-10</Text>
+                    <Text style={s.icdCode}>{d.icdCode.trim()}</Text>
+                  </View>
+                )}
                 {!!d.patientNote?.trim() && (
                   <Text style={s.diagNote}>{d.patientNote.trim()}</Text>
                 )}
@@ -783,6 +789,30 @@ const s = StyleSheet.create({
     alignSelf: "flex-start",
   },
   plausText: { fontSize: 11, fontWeight: "700" },
+  icdRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  icdLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.38)",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  icdCode: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "rgba(148,163,184,0.85)",
+    backgroundColor: "rgba(148,163,184,0.10)",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+    overflow: "hidden",
+  },
   diagNote: {
     color: "rgba(255,255,255,0.62)",
     fontSize: 13,

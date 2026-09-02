@@ -63,6 +63,8 @@ export default function InterviewScreen() {
   const { bodyMapAnswer } = useLocalSearchParams<{ bodyMapAnswer?: string }>();
 
   const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [pendingAudioUrl, setPendingAudioUrl] = useState<string | null>(null);
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
@@ -283,6 +285,7 @@ export default function InterviewScreen() {
 
         body: JSON.stringify({
           patient_text: patientText,
+          ...(pendingAudioUrl ? { voice_message_url: pendingAudioUrl } : {}),
         }),
       });
 
@@ -297,6 +300,8 @@ export default function InterviewScreen() {
       }
 
       setTurnCount((t) => t + 1);
+
+      setPendingAudioUrl(null);
 
       if (data.status === "complete") {
         await Storage.deleteItemAsync(SESSION_KEY);
@@ -323,110 +328,65 @@ export default function InterviewScreen() {
     }
   }
 
-  // ── Voice recording ──────────────────────────────────────────────────────────
+  // ── Voice recording → transcribe → fill input ────────────────────────────────
 
   async function toggleRecording() {
     if (isRecording) {
-      const uri = audioRecorder.uri;
-
       await audioRecorder.stop();
-
       setIsRecording(false);
 
+      const uri = audioRecorder.uri;
       if (!uri) {
+        Alert.alert("Recording Error", "No audio was captured. Please try again.");
         return;
       }
+
+      if (!sessionId) return;
+
+      setIsTranscribing(true);
 
       try {
         const base64 = await FileSystem.readAsStringAsync(uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
 
-        await sendAudioTurn(base64, "audio/m4a");
+        const token = await Storage.getItemAsync("token");
+
+        const res = await fetch(`${API_URL}/api/sessions/${sessionId}/transcribe`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ patient_audio_base64: base64, mime_type: "audio/m4a" }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          Alert.alert("Transcription Error", data.error ?? "Could not transcribe audio.");
+          return;
+        }
+
+        // Fill input so user can read, edit, then press send
+        setTextInput(data.transcribedText ?? "");
+        setPendingAudioUrl(data.audioUrl ?? null);
       } catch {
-        Alert.alert("Error", "Could not read recording.");
+        Alert.alert("Connection Error", "Could not reach the server.");
+      } finally {
+        setIsTranscribing(false);
       }
     } else {
       const status = await requestRecordingPermissionsAsync();
 
       if (!status.granted) {
-        Alert.alert(
-          "Permission required",
-          "Microphone access is needed to record.",
-        );
-
+        Alert.alert("Permission required", "Microphone access is needed to record.");
         return;
       }
 
       await audioRecorder.prepareToRecordAsync();
-
       audioRecorder.record();
-
       setIsRecording(true);
-    }
-  }
-
-  // ── Send audio turn ──────────────────────────────────────────────────────────
-
-  async function sendAudioTurn(base64: string, mimeType: string) {
-    if (sending || !sessionId) {
-      return;
-    }
-
-    setSending(true);
-    setIsFirstQ(false);
-
-    try {
-      const token = await Storage.getItemAsync("token");
-
-      const res = await fetch(`${API_URL}/api/sessions/${sessionId}/turn`, {
-        method: "POST",
-
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          patient_audio_base64: base64,
-          mime_type: mimeType,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        opacity.setValue(1);
-
-        Alert.alert("Error", data.error ?? "Something went wrong.");
-
-        return;
-      }
-
-      setTurnCount((t) => t + 1);
-
-      if (data.status === "complete") {
-        await Storage.deleteItemAsync(SESSION_KEY);
-
-        router.push({
-          pathname: "/transcript",
-          params: {
-            session_id: sessionId,
-          },
-        } as any);
-      } else {
-        transitionToQuestion(
-          data.message ?? "",
-          (data.questionType as QuestionType) ?? "text",
-          Array.isArray(data.options) ? data.options : [],
-        );
-      }
-    } catch {
-      opacity.setValue(1);
-
-      Alert.alert("Connection Error", "Could not reach the server.");
-    } finally {
-      setSending(false);
     }
   }
 
@@ -510,85 +470,93 @@ export default function InterviewScreen() {
           style={{ flex: 1 }}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
         >
-          <Animated.View
-            style={[
-              s.questionArea,
-              {
-                opacity,
-                transform: [
-                  {
-                    translateY,
-                  },
-                ],
-              },
-            ]}
+          <ScrollView
+            style={{ flex: 1 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ flexGrow: 1, justifyContent: "space-between" }}
           >
-            <View style={s.questionLabelRow}>
-              <View style={s.questionDot} />
-              <Text style={s.questionLabel}>YOUR CARE MATTERS</Text>
-            </View>
+            <Animated.View
+              style={[
+                s.questionArea,
+                {
+                  opacity,
+                  transform: [
+                    {
+                      translateY,
+                    },
+                  ],
+                },
+              ]}
+            >
+              <View style={s.questionLabelRow}>
+                <View style={s.questionDot} />
+                <Text style={s.questionLabel}>YOUR CARE MATTERS</Text>
+              </View>
 
-            <Text style={s.questionText}>{currentQ}</Text>
+              <Text style={s.questionText}>{currentQ}</Text>
 
-            <Text style={s.helperText}>
-              Take your time. Answer as accurately as you can.
-            </Text>
-          </Animated.View>
-
-          <View
-            style={[
-              s.inputPanel,
-              {
-                paddingBottom: insets.bottom + 16,
-              },
-            ]}
-          >
-            {renderInput(
-              questionType,
-              options,
-              sendTurn,
-              textInput,
-              setTextInput,
-              toggleRecording,
-              isRecording,
-            )}
-
-            {isFirstQ && (
-              <TouchableOpacity
-                style={s.bodyBtn}
-                onPress={() => router.push("/body-map" as any)}
-                activeOpacity={0.75}
-              >
-                <View style={s.bodyIcon}>
-                  <Ionicons name="body-outline" size={16} color="#60A5FA" />
-                </View>
-
-                <View>
-                  <Text style={s.bodyBtnTitle}>Point on body</Text>
-                  <Text style={s.bodyBtnSubtitle}>
-                    Help us locate your symptom
-                  </Text>
-                </View>
-
-                <Ionicons
-                  name="chevron-forward"
-                  size={16}
-                  color="rgba(255,255,255,0.30)"
-                />
-              </TouchableOpacity>
-            )}
-
-            <View style={s.secureRow}>
-              <Ionicons
-                name="lock-closed-outline"
-                size={12}
-                color="rgba(255,255,255,0.25)"
-              />
-              <Text style={s.secureText}>
-                Your responses are private and secure
+              <Text style={s.helperText}>
+                Take your time. Answer as accurately as you can.
               </Text>
+            </Animated.View>
+
+            <View
+              style={[
+                s.inputPanel,
+                {
+                  paddingBottom: insets.bottom + 16,
+                },
+              ]}
+            >
+              {renderInput(
+                questionType,
+                options,
+                sendTurn,
+                textInput,
+                setTextInput,
+                toggleRecording,
+                isRecording,
+                isTranscribing,
+              )}
+
+              {isFirstQ && (
+                <TouchableOpacity
+                  style={s.bodyBtn}
+                  onPress={() => router.push("/body-map" as any)}
+                  activeOpacity={0.75}
+                >
+                  <View style={s.bodyIcon}>
+                    <Ionicons name="body-outline" size={16} color="#60A5FA" />
+                  </View>
+
+                  <View>
+                    <Text style={s.bodyBtnTitle}>Point on body</Text>
+                    <Text style={s.bodyBtnSubtitle}>
+                      Help us locate your symptom
+                    </Text>
+                  </View>
+
+                  <Ionicons
+                    name="chevron-forward"
+                    size={16}
+                    color="rgba(255,255,255,0.30)"
+                  />
+                </TouchableOpacity>
+              )}
+
+              <View style={s.secureRow}>
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={12}
+                  color="rgba(255,255,255,0.25)"
+                />
+                <Text style={s.secureText}>
+                  Your responses are private and secure
+                </Text>
+              </View>
             </View>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       )}
     </View>
@@ -605,6 +573,7 @@ function renderInput(
   setTextInput: (v: string) => void,
   onMic: () => void,
   isRecording: boolean,
+  isTranscribing: boolean,
 ) {
   switch (type) {
     case "yes_no":
@@ -619,38 +588,56 @@ function renderInput(
     case "number":
       return <NumberInput onSubmit={onSend} />;
 
-    default:
+    default: {
+      const micDisabled = isTranscribing;
+      const inputDisabled = isRecording || isTranscribing;
+
+      let placeholder = "Type your answer...";
+      let placeholderColor = "rgba(255,255,255,0.30)";
+      if (isRecording) {
+        placeholder = "Recording… tap mic to stop";
+        placeholderColor = "rgba(239,68,68,0.70)";
+      } else if (isTranscribing) {
+        placeholder = "Transcribing your voice…";
+        placeholderColor = "rgba(96,165,250,0.70)";
+      }
+
       return (
         <View style={s.textRow}>
           <TextInput
             style={s.textInput}
             value={textInput}
             onChangeText={setTextInput}
-            placeholder={
-              isRecording ? "Recording… tap mic to send" : "Type your answer..."
-            }
-            placeholderTextColor={
-              isRecording ? "rgba(239,68,68,0.70)" : "rgba(255,255,255,0.30)"
-            }
+            placeholder={placeholder}
+            placeholderTextColor={placeholderColor}
             multiline
             maxLength={600}
-            autoFocus={!isRecording}
-            editable={!isRecording}
+            autoFocus={false}
+            editable={!inputDisabled}
           />
 
           <TouchableOpacity
-            style={[s.micBtn, isRecording && s.micBtnActive]}
+            style={[
+              s.micBtn,
+              isRecording && s.micBtnActive,
+              isTranscribing && s.micBtnTranscribing,
+            ]}
             onPress={onMic}
+            disabled={micDisabled}
             activeOpacity={0.8}
           >
-            <Ionicons
-              name={isRecording ? "stop" : "mic"}
-              size={19}
-              color="#fff"
-            />
+            {isTranscribing ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons
+                name={isRecording ? "stop" : "mic"}
+                size={19}
+                color="#fff"
+              />
+            )}
           </TouchableOpacity>
 
-          {!isRecording && textInput.trim().length > 0 && (
+          {!isRecording && !isTranscribing && textInput.trim().length > 0 && (
             <TouchableOpacity
               style={s.sendBtn}
               onPress={() => onSend(textInput)}
@@ -666,6 +653,7 @@ function renderInput(
           )}
         </View>
       );
+    }
   }
 }
 
@@ -1243,6 +1231,11 @@ const s = StyleSheet.create({
   micBtnActive: {
     backgroundColor: "rgba(239,68,68,0.85)",
     borderColor: "#EF4444",
+  },
+
+  micBtnTranscribing: {
+    backgroundColor: "rgba(37,99,235,0.45)",
+    borderColor: "rgba(96,165,250,0.50)",
   },
 
   sendBtn: {
