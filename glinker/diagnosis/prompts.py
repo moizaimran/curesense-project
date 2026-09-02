@@ -209,6 +209,9 @@ COMBINED_REPORT_PROMPT = (
     "Prefer common, well-established diagnoses — never fabricate rare exotic conditions.\n"
     "\n"
     "For each entry (supplied OR self-generated):\n"
+    "  icdCode        — the ICD-10 code from the candidate data (e.g. 'K85.9'). "
+    "Use the code shown in brackets after 'Candidate N'. Set to '' if none provided "
+    "or if self-generated and you are not certain of the exact code.\n"
     "  clinicalReason — 1 sentence for the doctor explaining the verdict\n"
     "  patientNote    — 1-2 plain-language sentences describing what this condition IS "
     "(what it is, what it does to the body). Set to '' if plausibility is 'unlikely'.\n"
@@ -283,6 +286,7 @@ COMBINED_REPORT_SCHEMA = {
                     "type"      : "object",
                     "properties": {
                         "disease"       : {"type": "string"},
+                        "icdCode"       : {"type": "string"},
                         "plausibility"  : {
                             "type": "string",
                             "enum": ["likely", "possible", "unlikely"],
@@ -290,7 +294,7 @@ COMBINED_REPORT_SCHEMA = {
                         "clinicalReason": {"type": "string"},
                         "patientNote"   : {"type": "string"},
                     },
-                    "required"            : ["disease", "plausibility", "clinicalReason", "patientNote"],
+                    "required"            : ["disease", "icdCode", "plausibility", "clinicalReason", "patientNote"],
                     "additionalProperties": False,
                 },
             },
