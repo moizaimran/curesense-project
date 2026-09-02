@@ -346,6 +346,14 @@ export default function CaseDiagnosis() {
                         <p className="text-sm text-slate-700 leading-relaxed bg-slate-50 rounded-xl p-4">
                             {report.patient_summary.patientComplaintSummary}
                         </p>
+                        {report.patient_summary.referralSpecialty && (
+                            <div className="flex items-center gap-3">
+                                <p className="text-xs text-gray-500 uppercase tracking-wider">Referred To</p>
+                                <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
+                                    {report.patient_summary.referralSpecialty}
+                                </span>
+                            </div>
+                        )}
                         {report.patient_summary.appointmentGuidance?.length > 0 && (
                             <div>
                                 <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Appointment Guidance</p>
@@ -385,6 +393,14 @@ export default function CaseDiagnosis() {
                                     <h3 className="font-bold text-slate-800">{d.disease}</h3>
                                     <PlausibilityBadge value={d.plausibility} />
                                 </div>
+                                {d.icdCode && (
+                                    <span className="inline-flex items-center gap-1.5 mb-2">
+                                        <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold">ICD-10</span>
+                                        <span className="bg-slate-200 text-slate-600 text-xs font-bold px-2 py-0.5 rounded">
+                                            {d.icdCode}
+                                        </span>
+                                    </span>
+                                )}
                                 {d.clinicalReason && (
                                     <p className="text-sm text-slate-600 leading-relaxed">{d.clinicalReason}</p>
                                 )}
