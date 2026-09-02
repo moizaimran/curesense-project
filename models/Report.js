@@ -30,15 +30,6 @@ const RetrievedChunkSchema = new mongoose.Schema(
   { _id: false }
 );
 
-// Doctor report sub-schemas
-const GuidelineConsiderationSchema = new mongoose.Schema(
-  {
-    point:    { type: String, default: "" },
-    citation: { type: String, default: "" },
-  },
-  { _id: false }
-);
-
 const MedicationFlagSchema = new mongoose.Schema(
   {
     drug:     { type: String, default: "" },
@@ -98,14 +89,9 @@ const ReportSchema = new mongoose.Schema(
     openfda_results:  { type: mongoose.Schema.Types.Mixed, default: {} },
 
     doctor_report: {
-      interviewClinicalSummary:      { type: String,                         default: "" },
-      retrievalAndMedicationSummary: { type: String,                         default: "" },
-      recommendedSpecialty:          { type: String,                         default: "" },
-      specialtyReasoning:            { type: String,                         default: "" },
-      guidelineConsiderations:       { type: [GuidelineConsiderationSchema], default: [] },
-      medicationFlags:               { type: [MedicationFlagSchema],         default: [] },
-      retrievalStatus:               { type: String,                         default: "" },
-      confidenceNote:                { type: String,                         default: "" },
+      patientComplaintSummary: { type: String,                 default: "" },
+      ragSummary:              { type: String,                 default: "" },
+      medicationFlags:         { type: [MedicationFlagSchema], default: [] },
     },
 
     patient_summary: {
