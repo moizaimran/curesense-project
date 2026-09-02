@@ -304,43 +304,20 @@ export default function CaseDiagnosis() {
             {/* ── Clinical Summary ──────────────────────────────────────────── */}
             {report && (
                 <Section icon={<Brain size={24} />} title="Clinical Summary">
-                    {report.doctor_report?.interviewClinicalSummary ? (
+                    {report.doctor_report?.patientComplaintSummary ? (
                         <div className="space-y-5">
                             <div>
-                                <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Interview Summary</p>
+                                <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Patient Complaint</p>
                                 <p className="text-sm text-slate-700 leading-relaxed bg-blue-50 rounded-xl p-4">
-                                    {report.doctor_report.interviewClinicalSummary}
+                                    {report.doctor_report.patientComplaintSummary}
                                 </p>
                             </div>
-                            {report.doctor_report.retrievalAndMedicationSummary && (
+                            {report.doctor_report.ragSummary && (
                                 <div>
-                                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Retrieval & Medication Summary</p>
+                                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Reference Material Summary</p>
                                     <p className="text-sm text-slate-700 leading-relaxed bg-slate-50 rounded-xl p-4">
-                                        {report.doctor_report.retrievalAndMedicationSummary}
+                                        {report.doctor_report.ragSummary}
                                     </p>
-                                </div>
-                            )}
-                            {report.doctor_report.recommendedSpecialty && (
-                                <div className="flex items-center gap-3">
-                                    <p className="text-sm font-semibold text-slate-700">Recommended Specialty:</p>
-                                    <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
-                                        {report.doctor_report.recommendedSpecialty}
-                                    </span>
-                                </div>
-                            )}
-                            {report.doctor_report.guidelineConsiderations?.length > 0 && (
-                                <div>
-                                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">Guideline Considerations</p>
-                                    <ul className="space-y-2">
-                                        {report.doctor_report.guidelineConsiderations.map((g, i) => (
-                                            <li key={i} className="flex items-start gap-2 text-sm">
-                                                <ChevronRight size={14} className="text-blue-500 mt-0.5 shrink-0" />
-                                                <span className="text-slate-700">{g.point}
-                                                    {g.citation && <span className="text-gray-400 ml-1">({g.citation})</span>}
-                                                </span>
-                                            </li>
-                                        ))}
-                                    </ul>
                                 </div>
                             )}
                             {report.doctor_report.medicationFlags?.length > 0 && (
