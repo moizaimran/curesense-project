@@ -52,6 +52,7 @@ const MedicationFlagSchema = new mongoose.Schema(
 const InterpretedDiagnosisSchema = new mongoose.Schema(
   {
     disease:        { type: String, default: "" },
+    icdCode:        { type: String, default: "" },
     plausibility:   { type: String, enum: ["likely", "possible", "unlikely"], default: "possible" },
     clinicalReason: { type: String, default: "" },
     patientNote:    { type: String, default: "" },

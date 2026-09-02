@@ -9,6 +9,7 @@ const { validateObjectId }   = require("../middleware/validate");
 const {
   createSession,
   processTurn,
+  transcribeAudio,
   getSession,
   getSessionsForPatient,
   getLatestSession,
@@ -16,8 +17,9 @@ const {
 } = require("../controllers/sessionController");
 
 // Creating sessions and processing turns are write-heavy AI calls — rate limited
-router.post("/",         protect, authorize("patient"),                    writeLimiter, createSession);
-router.post("/:id/turn", protect, authorize("patient"),                    writeLimiter, validateObjectId("id"), processTurn);
+router.post("/",                 protect, authorize("patient"), writeLimiter, createSession);
+router.post("/:id/turn",        protect, authorize("patient"), writeLimiter, validateObjectId("id"), processTurn);
+router.post("/:id/transcribe",  protect, authorize("patient"), writeLimiter, validateObjectId("id"), transcribeAudio);
 
 // Read endpoints — no rate limit
 router.get("/patient/:patientId/latest", protect, authorize("patient", "doctor", "admin"), validateObjectId("patientId"), getLatestSession);
