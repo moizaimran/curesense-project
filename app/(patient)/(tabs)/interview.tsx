@@ -370,11 +370,11 @@ export default function InterviewScreen() {
           return;
         }
 
-        // Fill input so user can read, edit, then press send
         setTextInput(data.transcribedText ?? "");
         setPendingAudioUrl(data.audioUrl ?? null);
-      } catch {
-        Alert.alert("Connection Error", "Could not reach the server.");
+      } catch (err) {
+        console.error("[transcribe] fetch error:", err);
+        Alert.alert("Error", String(err));
       } finally {
         setIsTranscribing(false);
       }
