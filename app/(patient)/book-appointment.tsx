@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -24,84 +24,96 @@ interface TimeSlot {
   end_time: string;
 }
 
-// ── Constants ──────────────────────────────────────────────────────────────────
-
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
+interface AvailableDate {
+  date: string; // "YYYY-MM-DD"
+  capacity_mode: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  max_patients?: number;
+  spots_left?: number;
+  full: boolean;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function toIsoDate(date: Date) {
-  // Build the date string from LOCAL components — never use toISOString()
-  // here, since that converts to UTC first and can shift the date back
-  // a day for timezones ahead of UTC (e.g. PKT, UTC+5).
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-function calendarDays(year: number, month: number): (Date | null)[] {
-  const firstDay = new Date(year, month, 1).getDay();
-  const lastDate = new Date(year, month + 1, 0).getDate();
-  return [
-    ...Array(firstDay).fill(null),
-    ...Array.from({ length: lastDate }, (_, i) => new Date(year, month, i + 1)),
-  ];
+// Format "YYYY-MM-DD" into a friendly "Sat, 20 Sep" label without any Date()
+// timezone conversion — parse the string parts directly.
+function formatDateLabel(iso: string) {
+  const [year, month, day] = iso.split("-").map(Number);
+  const d = new Date(year, month - 1, day); // local, no UTC shift
+  const weekday = d.toLocaleDateString("en-GB", { weekday: "short" });
+  const monthName = d.toLocaleDateString("en-GB", { month: "short" });
+  return { weekday, day, monthName };
 }
 
-// ── Calendar day cell ──────────────────────────────────────────────────────────
+function formatFullDate(iso: string) {
+  const [year, month, day] = iso.split("-").map(Number);
+  const d = new Date(year, month - 1, day);
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
 
-function DayCell({
-  date,
+// ── Date button ────────────────────────────────────────────────────────────────
+
+function DateButton({
+  item,
   selected,
-  isToday,
-  isPast,
   onPress,
 }: {
-  date: Date | null;
-  selected: string | null;
-  isToday: boolean;
-  isPast: boolean;
-  onPress: (d: Date) => void;
+  item: AvailableDate;
+  selected: boolean;
+  onPress: () => void;
 }) {
-  if (!date) return <View style={cal.cellBlank} />;
-
-  const isSelected = selected === toIsoDate(date);
+  const { weekday, day, monthName } = formatDateLabel(item.date);
+  const disabled = item.full;
 
   return (
     <TouchableOpacity
       style={[
-        cal.cell,
-        isSelected && cal.cellSelected,
-        isToday && !isSelected && cal.cellToday,
-        isPast && !isSelected && cal.cellPast,
+        dateBtn.card,
+        selected && dateBtn.cardSelected,
+        disabled && dateBtn.cardDisabled,
       ]}
-      onPress={() => !isPast && onPress(date)}
-      disabled={isPast}
-      activeOpacity={0.75}
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.78}
     >
       <Text
         style={[
-          cal.cellText,
-          isSelected && cal.cellTextSelected,
-          isPast && cal.cellTextPast,
+          dateBtn.weekday,
+          selected && dateBtn.textSelected,
+          disabled && dateBtn.textDisabled,
         ]}
       >
-        {date.getDate()}
+        {weekday}
       </Text>
+      <Text
+        style={[
+          dateBtn.day,
+          selected && dateBtn.textSelected,
+          disabled && dateBtn.textDisabled,
+        ]}
+      >
+        {day}
+      </Text>
+      <Text
+        style={[
+          dateBtn.month,
+          selected && dateBtn.textSelected,
+          disabled && dateBtn.textDisabled,
+        ]}
+      >
+        {monthName}
+      </Text>
+      {item.capacity_mode && !disabled && (
+        <Text style={[dateBtn.badge, selected && dateBtn.badgeSelected]}>
+          {item.spots_left} left
+        </Text>
+      )}
+      {disabled && <Text style={dateBtn.fullBadge}>Full</Text>}
     </TouchableOpacity>
   );
 }
@@ -111,10 +123,14 @@ function DayCell({
 function SlotPill({
   slot,
   selected,
+  capacityMode,
+  spotsLeft,
   onPress,
 }: {
   slot: TimeSlot;
   selected: boolean;
+  capacityMode?: boolean;
+  spotsLeft?: number;
   onPress: () => void;
 }) {
   return (
@@ -124,8 +140,15 @@ function SlotPill({
       activeOpacity={0.75}
     >
       <Text style={[slotS.pillText, selected && slotS.pillTextSelected]}>
-        {slot.start_time}
+        {capacityMode
+          ? `${slot.start_time} – ${slot.end_time}`
+          : slot.start_time}
       </Text>
+      {capacityMode && typeof spotsLeft === "number" && (
+        <Text style={[slotS.pillSub, selected && slotS.pillTextSelected]}>
+          {spotsLeft} spots left
+        </Text>
+      )}
     </TouchableOpacity>
   );
 }
@@ -144,25 +167,57 @@ export default function BookAppointmentScreen() {
       session_id: string;
     }>();
 
-  const today = useRef(new Date()).current;
-  const [viewYear, setViewYear] = useState(today.getFullYear());
-  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [availableDates, setAvailableDates] = useState<AvailableDate[]>([]);
+  const [datesLoading, setDatesLoading] = useState(true);
+  const [datesError, setDatesError] = useState("");
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [slotsError, setSlotsError] = useState("");
+  const [slotsCapacityMode, setSlotsCapacityMode] = useState(false);
+  const [slotsSpotsLeft, setSlotsSpotsLeft] = useState<number | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
 
   const [booking, setBooking] = useState(false);
 
-  // ── Load slots when date selected ────────────────────────────────────────────
+  // ── Load the doctor's available dates (buttons) ──────────────────────────────
+  useEffect(() => {
+    if (!doctor_profile_id) return;
+    loadAvailableDates();
+  }, [doctor_profile_id]);
+
+  async function loadAvailableDates() {
+    setDatesLoading(true);
+    setDatesError("");
+    try {
+      const token = await Storage.getItemAsync("token");
+      const res = await fetch(
+        `${API_URL}/api/doctors/${doctor_profile_id}/availability/dates`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const data = await res.json();
+      const dates: AvailableDate[] = data.dates ?? [];
+      setAvailableDates(dates);
+      if (dates.length === 0) {
+        setDatesError("This doctor has no available dates right now.");
+      }
+    } catch {
+      setDatesError("Could not load available dates.");
+    } finally {
+      setDatesLoading(false);
+    }
+  }
+
+  // ── Load slots when a date button is tapped ──────────────────────────────────
   useEffect(() => {
     if (!selectedDate || !doctor_profile_id) return;
     setSlotsLoading(true);
     setSlotsError("");
     setSelectedSlot(null);
     setSlots([]);
+    setSlotsCapacityMode(false);
+    setSlotsSpotsLeft(null);
 
     Storage.getItemAsync("token").then((token) => {
       fetch(
@@ -172,28 +227,29 @@ export default function BookAppointmentScreen() {
         .then((r) => r.json())
         .then((data) => {
           setSlots(data.slots ?? []);
-          if ((data.slots ?? []).length === 0 && !data.reason) {
-            setSlotsError("No available slots for this day.");
+          setSlotsCapacityMode(Boolean(data.capacity_mode));
+          setSlotsSpotsLeft(
+            typeof data.spots_left === "number" ? data.spots_left : null,
+          );
+
+          if ((data.slots ?? []).length === 0) {
+            setSlotsError(
+              data.full
+                ? "This day just filled up — please pick another date."
+                : data.reason || "No available slots for this day.",
+            );
+
+            // If it just became full, refresh the date list so this
+            // button shows as "Full" and the patient can pick elsewhere.
+            if (data.full) {
+              loadAvailableDates();
+            }
           }
         })
         .catch(() => setSlotsError("Could not load available slots."))
         .finally(() => setSlotsLoading(false));
     });
   }, [selectedDate, doctor_profile_id]);
-
-  // ── Month navigation ──────────────────────────────────────────────────────────
-  function prevMonth() {
-    if (viewMonth === 0) {
-      setViewYear((y) => y - 1);
-      setViewMonth(11);
-    } else setViewMonth((m) => m - 1);
-  }
-  function nextMonth() {
-    if (viewMonth === 11) {
-      setViewYear((y) => y + 1);
-      setViewMonth(0);
-    } else setViewMonth((m) => m + 1);
-  }
 
   // ── Confirm booking ───────────────────────────────────────────────────────────
   async function confirmBooking() {
@@ -241,14 +297,17 @@ export default function BookAppointmentScreen() {
         ],
       );
     } catch (e: any) {
+      // If the day filled up right as we tried to book, refresh both the
+      // date list and the slots for this date so the patient sees it.
+      if (e.message?.toLowerCase().includes("fully booked")) {
+        loadAvailableDates();
+        setSelectedDate(null);
+      }
       Alert.alert("Booking Failed", e.message ?? "Please try again.");
     } finally {
       setBooking(false);
     }
   }
-
-  const cells = calendarDays(viewYear, viewMonth);
-  const todayStr = toIsoDate(today);
 
   return (
     <LinearGradient
@@ -283,62 +342,35 @@ export default function BookAppointmentScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Calendar ───────────────────────────────────────────────────────── */}
+        {/* ── Available dates (buttons, not a free calendar) ───────────────────── */}
         <View style={s.section}>
-          {/* Month nav */}
-          <View style={cal.nav}>
-            <TouchableOpacity
-              onPress={prevMonth}
-              style={cal.navBtn}
-              disabled={
-                viewYear === today.getFullYear() &&
-                viewMonth === today.getMonth()
-              }
-            >
-              <Ionicons
-                name="chevron-back"
-                size={18}
-                color="rgba(255,255,255,0.60)"
-              />
-            </TouchableOpacity>
-            <Text style={cal.navTitle}>
-              {MONTH_NAMES[viewMonth]} {viewYear}
-            </Text>
-            <TouchableOpacity onPress={nextMonth} style={cal.navBtn}>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color="rgba(255,255,255,0.60)"
-              />
-            </TouchableOpacity>
+          <View style={s.sectionHeader}>
+            <Ionicons
+              name="calendar-outline"
+              size={15}
+              color="rgba(255,255,255,0.40)"
+            />
+            <Text style={s.sectionLabel}>Available Dates</Text>
           </View>
 
-          {/* Day headers */}
-          <View style={cal.dayHeaders}>
-            {DAY_NAMES.map((d) => (
-              <Text key={d} style={cal.dayHeader}>
-                {d}
-              </Text>
-            ))}
-          </View>
-
-          {/* Day grid */}
-          <View style={cal.grid}>
-            {cells.map((date, i) => {
-              const isPast = date !== null && toIsoDate(date) < todayStr;
-              const isToday = date !== null && toIsoDate(date) === todayStr;
-              return (
-                <DayCell
-                  key={i}
-                  date={date}
-                  selected={selectedDate}
-                  isToday={isToday}
-                  isPast={isPast}
-                  onPress={(d) => setSelectedDate(toIsoDate(d))}
-                />
-              );
-            })}
-          </View>
+          {datesLoading ? (
+            <ActivityIndicator color="#2563EB" style={{ marginVertical: 20 }} />
+          ) : datesError && availableDates.length === 0 ? (
+            <Text style={s.slotsEmpty}>{datesError}</Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                {availableDates.map((item) => (
+                  <DateButton
+                    key={item.date}
+                    item={item}
+                    selected={selectedDate === item.date}
+                    onPress={() => setSelectedDate(item.date)}
+                  />
+                ))}
+              </View>
+            </ScrollView>
+          )}
         </View>
 
         {/* ── Time Slots ─────────────────────────────────────────────────────── */}
@@ -350,9 +382,7 @@ export default function BookAppointmentScreen() {
                 size={15}
                 color="rgba(255,255,255,0.40)"
               />
-              <Text style={s.sectionLabel}>
-                Available slots · {selectedDate}
-              </Text>
+              <Text style={s.sectionLabel}>{formatFullDate(selectedDate)}</Text>
             </View>
 
             {slotsLoading ? (
@@ -371,6 +401,8 @@ export default function BookAppointmentScreen() {
                     key={i}
                     slot={slot}
                     selected={selectedSlot?.start_time === slot.start_time}
+                    capacityMode={slotsCapacityMode}
+                    spotsLeft={slotsSpotsLeft ?? undefined}
                     onPress={() => setSelectedSlot(slot)}
                   />
                 ))}
@@ -385,7 +417,7 @@ export default function BookAppointmentScreen() {
             <Text style={s.summaryTitle}>Appointment Summary</Text>
             <SummaryRow label="Doctor" value={`Dr. ${doctor_name}`} />
             <SummaryRow label="Specialty" value={specialty ?? "—"} />
-            <SummaryRow label="Date" value={selectedDate} />
+            <SummaryRow label="Date" value={formatFullDate(selectedDate)} />
             <SummaryRow
               label="Time"
               value={`${selectedSlot.start_time} – ${selectedSlot.end_time}`}
@@ -548,50 +580,57 @@ const s = StyleSheet.create({
   },
 });
 
-const cal = StyleSheet.create({
-  nav: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  navBtn: {
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  navTitle: { color: "#fff", fontSize: 15, fontWeight: "700" },
-
-  dayHeaders: { flexDirection: "row", marginBottom: 4 },
-  dayHeader: {
-    flex: 1,
-    textAlign: "center",
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 11,
-    fontWeight: "700",
-    paddingVertical: 4,
-  },
-
-  grid: { flexDirection: "row", flexWrap: "wrap" },
-  cellBlank: { width: `${100 / 7}%`, aspectRatio: 1 },
-  cell: {
-    width: `${100 / 7}%`,
-    aspectRatio: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-  },
-  cellSelected: { backgroundColor: "#2563EB" },
-  cellToday: {
-    backgroundColor: "rgba(37,99,235,0.18)",
+const dateBtn = StyleSheet.create({
+  card: {
+    width: 68,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(37,99,235,0.50)",
+    borderColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    gap: 2,
   },
-  cellPast: { opacity: 0.25 },
-  cellText: { color: "#fff", fontSize: 13, fontWeight: "600" },
-  cellTextSelected: { color: "#fff", fontWeight: "800" },
-  cellTextPast: { color: "rgba(255,255,255,0.40)" },
+  cardSelected: {
+    backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
+  },
+  cardDisabled: {
+    opacity: 0.35,
+  },
+  weekday: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: 11,
+    fontWeight: "600",
+    textTransform: "uppercase",
+  },
+  day: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  month: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  textSelected: { color: "#fff" },
+  textDisabled: { color: "rgba(255,255,255,0.35)" },
+  badge: {
+    marginTop: 4,
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#C4B5FD",
+  },
+  badgeSelected: { color: "#DBEAFE" },
+  fullBadge: {
+    marginTop: 4,
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#F87171",
+    textTransform: "uppercase",
+  },
 });
 
 const slotS = StyleSheet.create({
@@ -612,6 +651,11 @@ const slotS = StyleSheet.create({
     color: "rgba(255,255,255,0.70)",
     fontSize: 13,
     fontWeight: "600",
+  },
+  pillSub: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: 10,
+    marginTop: 2,
   },
   pillTextSelected: { color: "#93C5FD", fontWeight: "700" },
 });
