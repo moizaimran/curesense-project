@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+// import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
 import { Users, Brain, TriangleAlert, FileCheck, UserRound, ChevronRight } from "lucide-react";
@@ -6,7 +6,7 @@ import WelcomeSection from "../components/Dashboard/WelcomeSection";
 import SummaryCard from "../components/Dashboard/SummaryCard";
 import { selectToken, selectUser } from "../features/auth/authSlice";
 import { api } from "../utils/api";
-
+import React, { useEffect, useState, useRef } from "react";
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function calcAge(dob) {
@@ -29,8 +29,22 @@ const STATUS_META = {
     no_show:              { label: "No Show",   cls: "bg-gray-100 text-gray-700"   },
 };
 
-function StatusBadge({ status }) {
-    const meta = STATUS_META[status] || { label: status, cls: "bg-gray-100 text-gray-700" };
+function getDisplayStatus(appt) {
+    if (appt?.status === "completed") return "completed";
+    if (appt?.status === "confirmed") {
+        const hasDoctorQuery = Array.isArray(appt?.queries) && appt.queries.some(q => q?.sender === "doctor");
+        return hasDoctorQuery ? "ongoing" : "new";
+    }
+    return appt?.status;
+}
+
+function StatusBadge({ appt }) {
+    const displayStatus = getDisplayStatus(appt);
+    const meta = displayStatus === "new"
+        ? { label: "Pending / New", cls: "bg-yellow-100 text-yellow-700" }
+        : displayStatus === "ongoing"
+        ? { label: "Ongoing", cls: "bg-blue-100 text-blue-700" }
+        : STATUS_META[displayStatus] || { label: displayStatus, cls: "bg-gray-100 text-gray-700" };
     return (
         <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${meta.cls}`}>
             <span className="w-1.5 h-1.5 rounded-full bg-current" />
@@ -64,7 +78,7 @@ function ApptRow({ appt, navigate }) {
                 </div>
             </td>
             <td className="px-5 py-4 text-sm text-slate-600">{fmtSlot(appt.requested_slot)}</td>
-            <td className="px-5 py-4"><StatusBadge status={appt.status} /></td>
+            <td className="px-5 py-4"><StatusBadge appt={appt} /></td>
             <td className="px-5 py-4 text-right">
                 <button
                     type="button"
@@ -175,11 +189,28 @@ export default function Dashboard() {
     const [tabError,   setTabError]   = useState(null);
 
     // ── Fetch summary counts ──────────────────────────────────────────────────
+    // The backend still stores active appointments as "confirmed". For the
+    // dashboard we split those cases by whether the doctor has sent a query.
     useEffect(() => {
         if (!profileId || !token) return;
         setSummaryLoading(true);
-        api.get(`/api/doctors/${profileId}/dashboard-summary`, token)
-            .then(d => setSummary(d))
+
+        Promise.all([
+            api.get(`/api/doctors/${profileId}/dashboard-summary`, token).catch(() => null),
+            api.get("/api/appointments/doctor?status=confirmed", token),
+        ])
+            .then(([dashboardSummary, confirmed]) => {
+                const active = Array.isArray(confirmed) ? confirmed : [];
+                const pendingNew = active.filter(a => !Array.isArray(a.queries) || !a.queries.some(q => q?.sender === "doctor")).length;
+                const ongoing = active.filter(a => Array.isArray(a.queries) && a.queries.some(q => q?.sender === "doctor")).length;
+
+                setSummary(prev => ({
+                    ...prev,
+                    ...(dashboardSummary || {}),
+                    pending_new: pendingNew,
+                    ongoing,
+                }));
+            })
             .catch(() => {})
             .finally(() => setSummaryLoading(false));
     }, [profileId, token]);
@@ -192,11 +223,14 @@ export default function Dashboard() {
             api.get("/api/appointments/doctor?status=confirmed", token),
             api.get("/api/appointments/doctor?status=completed", token),
         ])
-            .then(([ongoing, completed]) => {
+            .then(([confirmed, completed]) => {
                 const sortUnread = arr =>
                     [...arr].sort((a, b) => (b.has_unread_patient_query ? 1 : 0) - (a.has_unread_patient_query ? 1 : 0));
+                const ongoing = (Array.isArray(confirmed) ? confirmed : []).filter(
+                    a => Array.isArray(a.queries) && a.queries.some(q => q?.sender === "doctor")
+                );
                 setPreviewOngoing(sortUnread(ongoing).slice(0, 5));
-                setPreviewCompleted(completed.slice(0, 5));
+                setPreviewCompleted(Array.isArray(completed) ? completed.slice(0, 5) : []);
             })
             .catch(() => {})
             .finally(() => setPreviewLoading(false));
@@ -213,10 +247,12 @@ export default function Dashboard() {
 
         api.get(url, token)
             .then(data => {
+                const appointments = Array.isArray(data) ? data : [];
+
                 if (activeTab === "all") {
                     // Deduplicate by patient — show each patient once (latest appointment)
                     const seen = new Set();
-                    const unique = data.filter(a => {
+                    const unique = appointments.filter(a => {
                         const pid = a.patient_id?._id;
                         if (!pid || seen.has(pid)) return false;
                         seen.add(pid);
@@ -224,11 +260,19 @@ export default function Dashboard() {
                     });
                     setTabData(unique);
                 } else if (activeTab === "new") {
-                    // Cases the doctor hasn't opened yet (freshly approved or new)
-                    setTabData(data.filter(a => !a.doctor_viewed));
-                } else {
-                    // Sort unread messages to the top, then by date
-                    const sorted = [...data].sort(
+                    // Confirmed cases with no doctor query yet are Pending / New.
+                    setTabData(appointments.filter(
+                        a => a.status === "confirmed" &&
+                            (!Array.isArray(a.queries) || !a.queries.some(q => q?.sender === "doctor"))
+                    ));
+                } else if (activeTab === "ongoing") {
+                    // A confirmed case becomes Ongoing only after the doctor sends a query.
+                    const ongoing = appointments.filter(
+                        a => a.status === "confirmed" &&
+                            Array.isArray(a.queries) &&
+                            a.queries.some(q => q?.sender === "doctor")
+                    );
+                    const sorted = [...ongoing].sort(
                         (a, b) => (b.has_unread_patient_query ? 1 : 0) - (a.has_unread_patient_query ? 1 : 0)
                     );
                     setTabData(sorted);

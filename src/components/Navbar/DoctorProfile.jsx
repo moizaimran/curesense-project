@@ -2,12 +2,25 @@ import { useSelector } from "react-redux";
 import { useState, useRef, useEffect } from "react";
 import { User, LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { selectUser } from "../../features/auth/authSlice";
 
 export default function DoctorProfile() {
 
-    const doctor = useSelector(
-        (state) => state.doctor.profile
-    );
+    // FIX: previously this read from `state.doctor.profile`, a Redux slice
+    // that is never populated anywhere — DoctorLogin.jsx only dispatches
+    // to authSlice (loginSuccess({ token, user })). That left this
+    // component always showing whatever placeholder/default values that
+    // unused slice started with ("Dr. Ahmed Khan" / "Pulmonologist").
+    // authSlice's `user` IS populated on login and already contains the
+    // real doctor's name and specialty (see doctorController.js's login
+    // response: { name, doctor_profile: { specialty, ... } }).
+    const user = useSelector(selectUser);
+
+    const doctorName = user?.name || "Doctor";
+    const specialty  = user?.doctor_profile?.specialty || "";
+    // The login response has no profile photo field — fall back to an
+    // initials avatar instead of an <img> pointing at nothing.
+    const initial = doctorName.charAt(0).toUpperCase();
 
     const [showMenu, setShowMenu] = useState(false);
 
@@ -50,20 +63,18 @@ export default function DoctorProfile() {
                 className="flex items-center gap-3 cursor-pointer"
             >
 
-                <img
-                    src={doctor.profileImage}
-                    alt={doctor.name}
-                    className="w-12 h-12 rounded-full object-cover border-2 border-blue-100"
-                />
+                <div className="w-12 h-12 rounded-full bg-blue-600 border-2 border-blue-100 flex items-center justify-center text-white font-bold text-lg">
+                    {initial}
+                </div>
 
                 <div>
 
                     <h3 className="font-semibold text-slate-800">
-                        {doctor.name}
+                        {doctorName}
                     </h3>
 
                     <p className="text-sm text-gray-500">
-                        {doctor.specialization}
+                        {specialty}
                     </p>
 
                 </div>
@@ -81,11 +92,11 @@ export default function DoctorProfile() {
         <div className="px-5 py-4 border-b border-gray-100 bg-slate-50">
 
             <p className="font-semibold text-slate-800">
-                {doctor.name}
+                {doctorName}
             </p>
 
             <p className="text-sm text-gray-500">
-                {doctor.specialization}
+                {specialty}
             </p>
 
         </div>

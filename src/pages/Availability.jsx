@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
-import { ChevronLeft, ChevronRight, X, Clock, CalendarDays, Save, Trash2, CheckSquare, Square } from "lucide-react";
+import { ChevronLeft, ChevronRight, X, Clock, CalendarDays, Save, Trash2, CheckSquare, Square, Users } from "lucide-react";
 import toast from "react-hot-toast";
 import { selectToken, selectUser } from "../features/auth/authSlice";
 import { api } from "../utils/api";
@@ -11,21 +11,27 @@ const MONTH_NAMES = [
     "July","August","September","October","November","December",
 ];
 
-function toIsoDate(date) { return date.toISOString().split("T")[0]; }
+function toIsoDate(date) {
+    const year  = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day   = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
 
 function getDayInfo(date, avail) {
-    if (!avail) return { available: false, start_time: "09:00", end_time: "17:00", source: "none" };
-    const isoDate   = toIsoDate(date);
-    const exception = avail.exceptions?.find(ex => toIsoDate(new Date(ex.date)) === isoDate);
+    if (!avail) return { available: false, start_time: "09:00", end_time: "17:00", source: "none", max_patients: null };
+    const isoDate = toIsoDate(date);
+    const exception = avail.exceptions?.find(ex => ex.date === isoDate);
     if (exception) {
         return {
             available:  exception.available,
             start_time: exception.custom_hours?.start_time || "09:00",
             end_time:   exception.custom_hours?.end_time   || "17:00",
+            max_patients: exception.max_patients || null,
             source: "exception",
         };
     }
-    return { available: false, start_time: "09:00", end_time: "17:00", source: "none" };
+    return { available: false, start_time: "09:00", end_time: "17:00", source: "none", max_patients: null };
 }
 
 function calendarDays(year, month) {
@@ -56,9 +62,14 @@ function DayCell({ date, avail, selectedSet, today, onClick }) {
         <button type="button" onClick={() => onClick(date)}
             className={`rounded-xl p-2 flex flex-col items-center min-h-[58px] transition border border-transparent hover:opacity-90 ${bg}`}>
             <span className={`text-sm font-bold ${isSelected ? "text-white" : ""}`}>{date.getDate()}</span>
-            {info.available && (
+            {info.available && !info.max_patients && (
                 <span className={`text-[10px] mt-0.5 font-medium leading-tight ${isSelected ? "text-blue-100" : ""}`}>
                     {info.start_time}–{info.end_time}
+                </span>
+            )}
+            {info.available && info.max_patients && (
+                <span className={`text-[10px] mt-0.5 font-medium leading-tight ${isSelected ? "text-blue-100" : "text-purple-600"}`}>
+                    👥 up to {info.max_patients}
                 </span>
             )}
             {!info.available && info.source === "exception" && (
@@ -98,6 +109,10 @@ export default function Availability() {
     const [panelEnd,       setPanelEnd]       = useState("17:00");
     const [slotDuration,   setSlotDuration]   = useState(30);
 
+    // NEW: capacity ("walk-in") mode state for the currently selected day(s)
+    const [capacityMode, setCapacityMode] = useState(false);
+    const [maxPatients,  setMaxPatients]  = useState(50);
+
     // ── Fetch ─────────────────────────────────────────────────────────────────
     useEffect(() => {
         if (!token)     { setLoading(false); return; }
@@ -116,6 +131,8 @@ export default function Availability() {
         const info = getDayInfo(new Date(firstIso + "T12:00:00"), avail);
         setPanelStart(info.start_time || "09:00");
         setPanelEnd(info.end_time     || "17:00");
+        setCapacityMode(Boolean(info.max_patients));
+        setMaxPatients(info.max_patients || 50);
     }, [firstIso, avail]);
 
     function prevMonth() {
@@ -158,13 +175,23 @@ export default function Availability() {
     // ── Save working hours for selected day(s) ────────────────────────────────
     async function saveForDays() {
         if (!selectedDates.size) return;
+
+        if (capacityMode) {
+            const n = Number.parseInt(maxPatients, 10);
+            if (!n || n < 1) {
+                toast.error("Enter a valid number of patients");
+                return;
+            }
+        }
+
         const isoDates   = [...selectedDates];
         const isoSet     = new Set(isoDates);
-        const existing   = (avail?.exceptions || []).filter(ex => !isoSet.has(toIsoDate(new Date(ex.date))));
+        const existing   = (avail?.exceptions || []).filter(ex => !isoSet.has(ex.date));
         const newEntries = isoDates.map(date => ({
             date,
             available:    true,
             custom_hours: { start_time: panelStart, end_time: panelEnd },
+            max_patients: capacityMode ? Number.parseInt(maxPatients, 10) : null,
         }));
         await patchAvailability({ exceptions: [...existing, ...newEntries] });
     }
@@ -174,8 +201,8 @@ export default function Availability() {
         if (!selectedDates.size) return;
         const isoDates  = [...selectedDates];
         const isoSet    = new Set(isoDates);
-        const existing  = (avail?.exceptions || []).filter(ex => !isoSet.has(toIsoDate(new Date(ex.date))));
-        const offEntries = isoDates.map(date => ({ date, available: false, custom_hours: null }));
+        const existing  = (avail?.exceptions || []).filter(ex => !isoSet.has(ex.date));
+        const offEntries = isoDates.map(date => ({ date, available: false, custom_hours: null, max_patients: null }));
         await patchAvailability({ exceptions: [...existing, ...offEntries] });
     }
 
@@ -184,7 +211,7 @@ export default function Availability() {
         if (!selectedDates.size) return;
         const isoSet = new Set([...selectedDates]);
         const filtered = (avail?.exceptions || []).filter(
-            ex => !isoSet.has(toIsoDate(new Date(ex.date)))
+            ex => !isoSet.has(ex.date)
         );
         await patchAvailability({ exceptions: filtered });
     }
@@ -200,10 +227,10 @@ export default function Availability() {
     const selCount     = selectedDates.size;
     const firstDate    = firstIso ? new Date(firstIso + "T12:00:00") : null;
     const firstHasException = firstIso && avail?.exceptions?.some(
-        ex => toIsoDate(new Date(ex.date)) === firstIso
+        ex => ex.date === firstIso
     );
     const anySelectedHasException = avail?.exceptions?.some(
-        ex => selectedDates.has(toIsoDate(new Date(ex.date)))
+        ex => selectedDates.has(ex.date)
     ) ?? false;
 
     return (
@@ -222,7 +249,7 @@ export default function Availability() {
                         <Clock size={18} className="text-blue-500 shrink-0" />
                         <div>
                             <p className="text-sm font-medium text-slate-700 whitespace-nowrap">Appointment length (min)</p>
-                            <p className="text-[11px] text-gray-400">Each booking slot is this long</p>
+                            <p className="text-[11px] text-gray-400">Used for normal (non walk-in) days</p>
                         </div>
                         <input type="number" min={5} step={5} value={slotDuration}
                             onChange={e => setSlotDuration(e.target.value)}
@@ -295,7 +322,8 @@ export default function Availability() {
                         </div>
 
                         <div className="flex flex-wrap gap-5 mt-6 pt-4 border-t border-slate-100">
-                            <LegendItem color="bg-emerald-100" label="Available" />
+                            <LegendItem color="bg-emerald-100" label="Available (fixed slots)" />
+                            <LegendItem color="bg-purple-100"  label="Available (walk-in / capacity)" />
                             <LegendItem color="bg-red-100"    label="Day off" />
                             <LegendItem color="bg-blue-600"   label="Selected" />
                         </div>
@@ -350,6 +378,40 @@ export default function Availability() {
                             </div>
                         </div>
 
+                        {/* NEW: Capacity / walk-in mode toggle */}
+                        <div className="rounded-xl border border-purple-200 bg-purple-50/50 p-3.5 space-y-2.5">
+                            <label className="flex items-start gap-2.5 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={capacityMode}
+                                    onChange={e => setCapacityMode(e.target.checked)}
+                                    className="mt-0.5 w-4 h-4 accent-purple-600"
+                                />
+                                <span className="text-sm text-slate-700 leading-snug">
+                                    <span className="font-semibold flex items-center gap-1.5">
+                                        <Users size={14} className="text-purple-600" />
+                                        Limit by number of patients instead
+                                    </span>
+                                    <span className="text-xs text-gray-500 block mt-0.5">
+                                        Whole window above becomes one open slot for up to N patients (walk-in style), instead of fixed time slots.
+                                    </span>
+                                </span>
+                            </label>
+
+                            {capacityMode && (
+                                <div>
+                                    <label className="block text-xs text-gray-500 mb-1 font-medium">Max patients</label>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        value={maxPatients}
+                                        onChange={e => setMaxPatients(e.target.value)}
+                                        className="w-full border border-purple-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-500"
+                                    />
+                                </div>
+                            )}
+                        </div>
+
                         {/* Actions */}
                         <div className="space-y-2.5">
                             <button type="button" onClick={saveForDays} disabled={saving}
@@ -380,6 +442,8 @@ export default function Availability() {
                                     const info = getDayInfo(firstDate, avail);
                                     if (!info.available && info.source === "exception")
                                         return <p className="text-sm text-red-500 font-medium">Marked as Off</p>;
+                                    if (info.available && info.max_patients)
+                                        return <p className="text-sm text-purple-700 font-medium">{info.start_time} – {info.end_time} · up to {info.max_patients} patients</p>;
                                     if (info.available)
                                         return <p className="text-sm text-emerald-700 font-medium">{info.start_time} – {info.end_time}</p>;
                                     return <p className="text-sm text-gray-400">No hours set</p>;
