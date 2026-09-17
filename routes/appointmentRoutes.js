@@ -13,6 +13,8 @@ const {
   addQuery,
   markQueriesRead,
   submitFeedback,
+  uploadTestResult,
+  markTestUploadsRead,
   completeAppointment,
   cancelAppointment,
 } = require("../controllers/appointmentController");
@@ -44,6 +46,11 @@ router.get("/:id", protect, authorize("patient", "doctor", "admin"), validateObj
 router.post("/:id/queries",       protect, authorize("patient", "doctor"), writeLimiter, validateObjectId("id"), addQuery);
 router.patch("/:id/queries/read", protect, authorize("doctor"),                          validateObjectId("id"), markQueriesRead);
 router.post("/:id/feedback",      protect, authorize("doctor"),                          validateObjectId("id"), submitFeedback);
+
+// Test result uploads (patient → doctor) — rate-limited, it's a Cloudinary upload
+router.post("/:id/test-uploads",       protect, authorize("patient"), writeLimiter, validateObjectId("id"), uploadTestResult);
+router.patch("/:id/test-uploads/read", protect, authorize("doctor"),                validateObjectId("id"), markTestUploadsRead);
+
 router.post("/:id/complete",      protect, authorize("doctor"),                          validateObjectId("id"), completeAppointment);
 router.post("/:id/cancel",        protect, authorize("patient"),                         validateObjectId("id"), cancelAppointment);
 

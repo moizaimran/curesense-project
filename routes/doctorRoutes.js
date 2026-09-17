@@ -13,6 +13,7 @@ const {
   getMyProfile,
   updateMyProfile,
   getDoctorById,
+  getDoctorAvailableDates,
   getDoctorAvailability,
   updateMyAvailability,
   adminListDoctors,
@@ -38,6 +39,10 @@ router.get("/admin/all",          protect, authorize("admin"), adminListDoctors)
 router.patch("/admin/:id/verify", protect, authorize("admin"), validateObjectId("id"), adminVerifyDoctor);
 
 // ── Parameterised — must come last ────────────────────────────────────────────
+// NEW: list of dates the doctor has made available (for the patient-side
+// "pick a date" buttons). Must come before /:id/availability since it's
+// a more specific path.
+router.get("/:id/availability/dates", protect,                              validateObjectId("id"), getDoctorAvailableDates);
 router.get("/:id/availability",       protect,                              validateObjectId("id"), validateDateQuery("date"), getDoctorAvailability);
 router.get("/:id/dashboard-summary",  protect, authorize("doctor", "admin"), validateObjectId("id"), getDashboardSummary);
 router.get("/:id",                    protect,                              validateObjectId("id"), getDoctorById);
