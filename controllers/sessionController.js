@@ -69,17 +69,21 @@ const processTurn = async (req, res) => {
       });
     }
 
-    // ── Voice: upload to Cloudinary, get back a URL ──────────────────────────
-    let voice_message_url = null;
-    let patient_audio_url = null;
-    const { patient_text, patient_audio_base64, mime_type } = req.body;
+    // ── Resolve input: text (+ optional pre-uploaded voice URL) or raw audio ──
+    // Primary path: patient_text + optional voice_message_url (set by /transcribe)
+    // Legacy  path: patient_audio_base64 (upload + transcribe happens inside Flask)
+    const { patient_text, patient_audio_base64, mime_type, voice_message_url: clientVoiceUrl } = req.body;
 
     const TEXT_MAX_CHARS = 2000;
 
+    let voice_message_url = clientVoiceUrl || null;
+    let patient_audio_url = null;
+
     if (patient_audio_base64) {
+      // Legacy: audio bytes sent directly — upload here then Flask transcribes
       const uploadResult = await cloudinary.uploader.upload(
-        `data:${mime_type || "audio/webm"};base64,${patient_audio_base64}`,
-        { resource_type: "auto" }
+        `data:${mime_type || "audio/m4a"};base64,${patient_audio_base64}`,
+        { resource_type: "video" }
       );
       voice_message_url = uploadResult.secure_url;
       patient_audio_url = voice_message_url;
@@ -223,4 +227,41 @@ const softDeleteSession = asyncHandler(async (req, res) => {
   res.json({ message: "Session removed successfully" });
 });
 
-module.exports = { createSession, processTurn, getSession, getSessionsForPatient, getLatestSession, softDeleteSession };
+// ── POST /api/sessions/:id/transcribe ────────────────────────────────────────
+// Upload audio to Cloudinary, run Whisper, return transcribed text + audio URL.
+// Does NOT advance the session turn — user reviews the text and sends it manually.
+const transcribeAudio = asyncHandler(async (req, res) => {
+  const session = await Session.findById(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  if (session.patient_id.toString() !== req.user.patient_id?.toString()) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  if (["completed", "failed", "abandoned"].includes(session.status)) {
+    return res.status(409).json({ error: "Session has already ended." });
+  }
+
+  const { patient_audio_base64, mime_type } = req.body;
+  if (!patient_audio_base64) {
+    return res.status(400).json({ error: "patient_audio_base64 is required" });
+  }
+
+  const uploadResult = await cloudinary.uploader.upload(
+    `data:${mime_type || "audio/m4a"};base64,${patient_audio_base64}`,
+    { resource_type: "video" }
+  );
+  const audioUrl = uploadResult.secure_url;
+
+  const aiResp = await callAI(
+    `${process.env.AI_SERVICE_URL}/audio/transcribe`,
+    { audio_url: audioUrl },
+    60_000
+  );
+
+  return res.json({
+    transcribedText: aiResp.data.transcribed_text,
+    audioUrl,
+  });
+});
+
+module.exports = { createSession, processTurn, transcribeAudio, getSession, getSessionsForPatient, getLatestSession, softDeleteSession };
