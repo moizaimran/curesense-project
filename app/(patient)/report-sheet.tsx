@@ -601,20 +601,41 @@ export default function ReportSheetScreen() {
           </View>
         )}
 
-        {/* Medication notes */}
-        {ps.medicationNotes && ps.medicationNotes.length > 0 && (
-          <View style={s.section}>
-            <Text style={s.sectionLabel}>Medication Notes</Text>
-            {ps.medicationNotes.map((med, i) => (
+        {/* Medication notes — always visible */}
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>Medication Notes</Text>
+          {ps.medicationNotes && ps.medicationNotes.length > 0 ? (
+            ps.medicationNotes.map((med, i) => (
               <View key={i} style={s.medNoteCard}>
                 <Text style={s.medNoteDrug} numberOfLines={2}>
                   {med.drug}
                 </Text>
                 <Text style={s.medNoteText}>{med.note?.trim()}</Text>
               </View>
-            ))}
-          </View>
-        )}
+            ))
+          ) : (
+            <View style={s.emptyCard}>
+              <Text style={s.emptyCardText}>No medications were mentioned during this session.</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Medication flags — always visible */}
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>Medical Flags</Text>
+          {flagItems.length > 0 ? (
+            flagItems.map((item, i) => (
+              <View key={i} style={s.flagCard}>
+                <Ionicons name="warning-outline" size={15} color="#F87171" style={{ flexShrink: 0, marginTop: 1 }} />
+                <Text style={s.flagText}>{item}</Text>
+              </View>
+            ))
+          ) : (
+            <View style={s.emptyCard}>
+              <Text style={s.emptyCardText}>No medication flags raised for this session.</Text>
+            </View>
+          )}
+        </View>
 
         {/* View Transcript */}
         <TouchableOpacity
@@ -982,6 +1003,35 @@ const s = StyleSheet.create({
     color: "rgba(255,255,255,0.55)",
     fontSize: 13,
     lineHeight: 20,
+  },
+  emptyCard: {
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.07)",
+  },
+  emptyCardText: {
+    color: "rgba(255,255,255,0.35)",
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  flagCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    backgroundColor: "rgba(239,68,68,0.08)",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.22)",
+  },
+  flagText: {
+    color: "rgba(255,255,255,0.80)",
+    fontSize: 13,
+    lineHeight: 20,
+    flex: 1,
+    flexShrink: 1,
   },
 });
 
