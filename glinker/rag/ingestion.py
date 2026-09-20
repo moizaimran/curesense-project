@@ -161,6 +161,45 @@ def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
     return all_chunks
 
 
+def _chunks_from_wikidoc(max_entries: int | None = None) -> list[dict]:
+    """
+    Load MedRAG/wikidoc as the dedicated patient corpus.
+    Wikidoc articles are patient-friendly explanations of medical conditions —
+    the right grounding for Patient Summary (Call 3).
+    """
+    from datasets import load_dataset
+    print("Loading MedRAG/wikidoc …")
+    ds = load_dataset("MedRAG/wikidoc", split="train")
+    print(f"  {len(ds):,} entries found")
+
+    sample = ds[0]
+    text_field = next(
+        (f for f in ["content", "text", "passage", "body"] if f in sample),
+        None,
+    )
+    if text_field is None:
+        raise ValueError(f"Cannot find text field in MedRAG/wikidoc. Keys: {list(sample.keys())}")
+
+    all_chunks = []
+    entries = ds if max_entries is None else ds.select(range(min(max_entries, len(ds))))
+    for i, entry in enumerate(entries):
+        text = entry.get(text_field, "").strip()
+        if not text or len(text) < 50:
+            continue
+        meta = {
+            "source"  : entry.get("id", f"wikidoc_{i}"),
+            "doc_type": "wikidoc",
+            "title"   : entry.get("title", ""),
+            "audience": "patient",
+        }
+        all_chunks.extend(chunk_text(text, meta))
+        if (i + 1) % 5000 == 0:
+            print(f"  Processed {i+1:,} wikidoc entries ({len(all_chunks):,} chunks so far)")
+
+    print(f"  → {len(all_chunks):,} chunks from wikidoc")
+    return all_chunks
+
+
 # ── Embedding ─────────────────────────────────────────────────────────────────
 
 def _embed_chunks(chunks: list[dict], batch_size: int = 512) -> np.ndarray:
@@ -205,22 +244,24 @@ def _save_index(chunks: list[dict], index_dir: str, name: str) -> int:
 
 
 def build_index(
-    textbooks_limit: int | None = None,
+    textbooks_limit : int | None = None,
     guidelines_limit: int | None = None,
+    wikidoc_limit   : int | None = None,
 ) -> bool:
     """
     Build two audience-split FAISS indexes and save to config.RAG_INDEX_DIR:
-      clinician_index — MedRAG/textbooks + clinician guidelines + mixed (WHO) guidelines
-      patient_index   — patient (wikidoc) guidelines + mixed (WHO) guidelines
+      clinician_index — MedRAG/textbooks + clinician/mixed guidelines
+      patient_index   — MedRAG/wikidoc (dedicated) + patient/mixed guidelines
 
-    textbooks_limit / guidelines_limit: cap entries for quick testing.
-    Leave both as None for the full corpus.
+    *_limit params cap entries for quick testing; leave as None for full corpus.
+    wikidoc is the primary patient source — it is loaded regardless of whether
+    epfl-llm/guidelines contains wikidoc entries (ordering-independent).
     """
     index_dir = config.RAG_INDEX_DIR
     os.makedirs(index_dir, exist_ok=True)
 
     # ── Load datasets ────────────────────────────────────────────────────────
-    textbook_chunks, guideline_chunks = [], []
+    textbook_chunks, guideline_chunks, wikidoc_chunks = [], [], []
     try:
         textbook_chunks = _chunks_from_textbooks(max_entries=textbooks_limit)
     except Exception as e:
@@ -231,16 +272,22 @@ def build_index(
     except Exception as e:
         print(f"[ingestion] guidelines failed: {e}")
 
-    if not textbook_chunks and not guideline_chunks:
+    try:
+        wikidoc_chunks = _chunks_from_wikidoc(max_entries=wikidoc_limit)
+    except Exception as e:
+        print(f"[ingestion] wikidoc failed: {e}")
+
+    if not textbook_chunks and not guideline_chunks and not wikidoc_chunks:
         print("[ingestion] No chunks produced — check dataset access.")
         return False
 
     # ── Split by audience tag (mixed goes into both) ─────────────────────────
+    # wikidoc_chunks are always patient — added directly, no tag check needed
     clinician_chunks = textbook_chunks + [
         c for c in guideline_chunks
         if c["metadata"].get("audience") in ("clinician", "mixed")
     ]
-    patient_chunks = [
+    patient_chunks = wikidoc_chunks + [
         c for c in guideline_chunks
         if c["metadata"].get("audience") in ("patient", "mixed")
     ]
