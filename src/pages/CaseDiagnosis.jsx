@@ -528,6 +528,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useSelector } from "react-redux";
 
 import {
+    AlertTriangle,
     ArrowLeft,
     Brain,
     FileText,
@@ -537,6 +538,7 @@ import {
     CheckCircle2,
     History,
     ChevronRight,
+    Activity,
 } from "lucide-react";
 
 import toast from "react-hot-toast";
@@ -1141,7 +1143,6 @@ export default function CaseDiagnosis() {
     // ─────────────────────────────────────────────────────────────────────────
 
     const clinicalSummary =
-        report?.doctor_report?.interviewClinicalSummary ||
         report?.doctor_report?.ragSummary ||
         "No clinical summary available yet.";
 
@@ -1164,6 +1165,33 @@ export default function CaseDiagnosis() {
                 <ArrowLeft size={16} />
                 Back
             </button>
+
+
+            {/* Emergency warning banner — only when triggered */}
+
+            {!!report?.emergency_warning?.triggered && (
+
+                <div className="flex items-start gap-4 bg-red-600 border border-red-500 rounded-2xl p-5 shadow-lg">
+
+                    <div className="shrink-0 mt-0.5">
+                        <AlertTriangle size={22} className="text-white" />
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+
+                        <p className="text-white font-bold text-sm uppercase tracking-wider mb-1">
+                            Emergency Alert
+                        </p>
+
+                        <p className="text-red-100 text-sm leading-relaxed font-medium">
+                            {report.emergency_warning.message}
+                        </p>
+
+                    </div>
+
+                </div>
+
+            )}
 
 
             {/* Patient Header */}
@@ -1505,17 +1533,17 @@ export default function CaseDiagnosis() {
                     )}
 
 
-                    {ps?.appointmentGuidance?.length > 0 && (
+                    {ps?.selfCareGuidance?.length > 0 && (
 
                         <div>
 
                             <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">
-                                Appointment Guidance
+                                Self-Care Guidance
                             </p>
 
                             <ul className="space-y-1.5">
 
-                                {ps.appointmentGuidance.map(
+                                {ps.selfCareGuidance.map(
                                     (guidance, index) => (
 
                                         <li
