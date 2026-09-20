@@ -1061,72 +1061,63 @@ export default function CaseDiagnosis() {
         report?.interpreted_diagnoses ||
         [];
 
-    const flags =
-        report?.flags ||
-        [];
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Entities from GLiNER extraction
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const entities = report?.entities || [];
+
+    const symptoms = entities
+        .filter((e) => e.category === "symptom")
+        .map((e) => e.keyword)
+        .filter(Boolean);
+
+    const bodyParts = entities
+        .filter((e) => e.category === "body part")
+        .map((e) => ({ bodyPart: e.keyword, symptom: "" }))
+        .filter((e) => e.bodyPart);
+
+    // Allergies: chat-extracted (GLiNER) + patient profile
+    const entityAllergies = entities
+        .filter((e) => e.category === "allergy")
+        .map((e) => e.keyword)
+        .filter(Boolean);
+
+    const profileAllergies = Array.isArray(patient?.allergies)
+        ? patient.allergies.filter(Boolean)
+        : [];
+
+    const allergies = [...new Set([...entityAllergies, ...profileAllergies])];
 
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Dummy report data
+    // Medications — patient_summary notes + entity-extracted drug names
     // ─────────────────────────────────────────────────────────────────────────
 
-    const symptoms = [
-        "Right knee swelling",
-        "Chest pressure",
-        "Left arm tightness",
-        "Shortness of breath",
+    const medications = report?.patient_summary?.medicationNotes?.length > 0
+        ? report.patient_summary.medicationNotes
+        : entities
+              .filter((e) => e.category === "medication")
+              .map((e) => ({ drug: e.keyword, note: "" }));
+
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Flags — emergency warning + medication flags from doctor report
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const emergencyFlag = report?.emergency_warning?.triggered
+        ? report.emergency_warning.reason || report.emergency_warning.message
+        : null;
+
+    const medicationFlags = (report?.doctor_report?.medicationFlags || [])
+        .map((f) => `${f.drug}: ${f.flag}`)
+        .filter(Boolean);
+
+    const allFlags = [
+        ...(emergencyFlag ? [emergencyFlag] : []),
+        ...medicationFlags,
     ];
-
-
-    const bodyParts = [
-        {
-            bodyPart: "Right knee",
-            symptom: "Swelling",
-        },
-        {
-            bodyPart: "Chest / Heart area",
-            symptom: "Pressure",
-        },
-        {
-            bodyPart: "Left biceps",
-            symptom: "Tightness",
-        },
-        {
-            bodyPart: "Chest",
-            symptom: "Shortness of breath",
-        },
-    ];
-
-
-    const allergies = [
-        "No known allergies",
-    ];
-
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Medications
-    // ─────────────────────────────────────────────────────────────────────────
-
-    const backendMedications =
-        ps?.medicationNotes ||
-        report?.medicationInfo ||
-        [];
-
-    const medications =
-        backendMedications.length > 0
-            ? backendMedications
-            : [
-                {
-                    drug: "Ibuprofen",
-                    note:
-                        "Used by the patient for pain. Clinician review is recommended.",
-                },
-                {
-                    drug: "Paracetamol",
-                    note:
-                        "Used by the patient for pain.",
-                },
-            ];
 
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1376,20 +1367,24 @@ export default function CaseDiagnosis() {
                 title="Symptoms"
             >
 
-                <div className="flex flex-wrap gap-2">
+                {symptoms.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
 
-                    {symptoms.map((symptom, index) => (
+                        {symptoms.map((symptom, index) => (
 
-                        <span
-                            key={index}
-                            className="bg-blue-50 text-blue-700 border border-blue-100 px-3 py-1.5 rounded-lg text-sm font-medium"
-                        >
-                            {symptom}
-                        </span>
+                            <span
+                                key={index}
+                                className="bg-blue-50 text-blue-700 border border-blue-100 px-3 py-1.5 rounded-lg text-sm font-medium"
+                            >
+                                {symptom}
+                            </span>
 
-                    ))}
+                        ))}
 
-                </div>
+                    </div>
+                ) : (
+                    <p className="text-gray-400 text-sm">No symptoms extracted from this session yet.</p>
+                )}
 
             </Section>
 
@@ -1398,6 +1393,7 @@ export default function CaseDiagnosis() {
                 Body Parts
             ──────────────────────────────────────────────────────────────── */}
 
+            {bodyParts.length > 0 && (
             <Section
                 icon={<Activity size={24} />}
                 title="Body Parts"
@@ -1420,12 +1416,12 @@ export default function CaseDiagnosis() {
                                 {item.bodyPart}
                             </p>
 
-                            <p className="text-sm text-gray-600 mt-2">
-                                <span className="font-medium">
-                                    Symptom:
-                                </span>{" "}
-                                {item.symptom}
-                            </p>
+                            {item.symptom && (
+                                <p className="text-sm text-gray-600 mt-2">
+                                    <span className="font-medium">Symptom:</span>{" "}
+                                    {item.symptom}
+                                </p>
+                            )}
 
                         </div>
 
@@ -1434,6 +1430,7 @@ export default function CaseDiagnosis() {
                 </div>
 
             </Section>
+            )}
 
 
             {/* ────────────────────────────────────────────────────────────────
@@ -1445,30 +1442,34 @@ export default function CaseDiagnosis() {
                 title="Medications"
             >
 
-                <div className="space-y-3">
+                {medications.length > 0 ? (
+                    <div className="space-y-3">
 
-                    {medications.map((medication, index) => (
+                        {medications.map((medication, index) => (
 
-                        <div
-                            key={index}
-                            className="bg-slate-50 rounded-xl p-4 border border-slate-100"
-                        >
+                            <div
+                                key={index}
+                                className="bg-slate-50 rounded-xl p-4 border border-slate-100"
+                            >
 
-                            <p className="font-semibold text-slate-800">
-                                {medication.drug || medication.name || "Medication"}
-                            </p>
-
-                            {medication.note && (
-                                <p className="text-sm text-slate-600 mt-1 leading-relaxed">
-                                    {medication.note}
+                                <p className="font-semibold text-slate-800">
+                                    {medication.drug || medication.name || "Medication"}
                                 </p>
-                            )}
 
-                        </div>
+                                {medication.note && (
+                                    <p className="text-sm text-slate-600 mt-1 leading-relaxed">
+                                        {medication.note}
+                                    </p>
+                                )}
 
-                    ))}
+                            </div>
 
-                </div>
+                        ))}
+
+                    </div>
+                ) : (
+                    <p className="text-gray-400 text-sm">No medications mentioned in this session.</p>
+                )}
 
             </Section>
 
@@ -1481,21 +1482,26 @@ export default function CaseDiagnosis() {
                 icon={<Flag size={24} />}
                 title="Allergies"
             >
+                {allergies.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
 
-                <div className="flex flex-wrap gap-2">
+                        {allergies.map((allergy, index) => (
 
-                    {allergies.map((allergy, index) => (
+                            <span
+                                key={index}
+                                className="bg-orange-50 text-orange-700 border border-orange-200 px-3 py-1.5 rounded-lg text-sm"
+                            >
+                                {allergy}
+                            </span>
 
-                        <span
-                            key={index}
-                            className="bg-orange-50 text-orange-700 border border-orange-200 px-3 py-1.5 rounded-lg text-sm"
-                        >
-                            {allergy}
-                        </span>
+                        ))}
 
-                    ))}
-
-                </div>
+                    </div>
+                ) : (
+                    <div className="bg-green-50 border border-green-100 rounded-xl p-4">
+                        <p className="text-sm text-green-700 font-medium">No known allergies on record.</p>
+                    </div>
+                )}
 
             </Section>
 
@@ -1759,11 +1765,11 @@ export default function CaseDiagnosis() {
                 title="Flags"
             >
 
-                {flags.length > 0 ? (
+                {allFlags.length > 0 ? (
 
                     <div className="flex flex-wrap gap-2">
 
-                        {flags.map((flag, index) => (
+                        {allFlags.map((flag, index) => (
 
                             <span
                                 key={index}
@@ -1771,12 +1777,7 @@ export default function CaseDiagnosis() {
                             >
 
                                 <Flag size={13} />
-
-                                {typeof flag === "string"
-                                    ? flag
-                                    : flag?.message ||
-                                      flag?.flag ||
-                                      JSON.stringify(flag)}
+                                {flag}
 
                             </span>
 
