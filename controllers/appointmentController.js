@@ -556,7 +556,7 @@ const getAppointmentById =
       )
         .populate(
           "patient_id",
-          "name dob gender contact"
+          "name dob gender contact allergies current_medications"
         )
         .populate(
           "doctor_id",
@@ -1210,13 +1210,17 @@ const completeAppointment =
       });
     }
 
-    appointment.status =
-      "completed";
-
-    await appointment.save();
+    // Use findByIdAndUpdate to avoid full-document validation on legacy
+    // appointments whose requested_slot.date was stored in a non-YYYY-MM-DD
+    // format before normalizeCalendarDate was enforced on all writes.
+    const updated = await Appointment.findByIdAndUpdate(
+      appointment._id,
+      { $set: { status: "completed" } },
+      { new: true }
+    );
 
     res.json({
-      appointment,
+      appointment: updated,
     });
   });
 

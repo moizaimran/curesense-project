@@ -18,7 +18,13 @@ const ADMIN = {
 
   const existing = await User.findOne({ email: ADMIN.email });
   if (existing) {
-    console.log(`[Skip] ${ADMIN.email} already exists (role: ${existing.role})`);
+    if (existing.role === "admin") {
+      console.log(`[Skip] ${ADMIN.email} already exists with role: admin`);
+    } else {
+      existing.role = "admin";
+      await existing.save();
+      console.log(`[Fixed] ${ADMIN.email} role updated: ${existing.role} → admin`);
+    }
     process.exit(0);
   }
 
