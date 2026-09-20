@@ -26,10 +26,6 @@ const DOT_CLAMP_BOTTOM = 130;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface AppointmentItem {
-  point: string;
-  source?: string;
-}
 interface MedFlag {
   drug: string;
   flag: string;
@@ -38,6 +34,15 @@ interface MedFlag {
 interface MedNote {
   drug: string;
   note: string;
+}
+interface DiagnosisNote {
+  disease: string;
+  note: string;
+}
+interface EmergencyWarning {
+  triggered: boolean;
+  reason: string;
+  message: string;
 }
 
 interface Diagnosis {
@@ -50,10 +55,13 @@ interface Diagnosis {
 
 interface ReportData {
   _id: string;
+  emergency_warning?: EmergencyWarning;
   patient_summary: {
     patientComplaintSummary: string;
     referralSpecialty: string;
-    appointmentGuidance: AppointmentItem[];
+    selfCareGuidance?: { point: string }[];
+    researchSummary?: string;
+    diagnosisNotes?: DiagnosisNote[];
     medicationNotes: MedNote[];
   };
   interpreted_diagnoses: Diagnosis[];
@@ -421,7 +429,7 @@ export default function ReportSheetScreen() {
     .slice(0, 3);
   const flags = report.doctor_report?.medicationFlags ?? [];
   const apptItems =
-    ps.appointmentGuidance?.map((g) => g.point).filter(Boolean) ?? [];
+    ps.selfCareGuidance?.map((g) => g.point).filter(Boolean) ?? [];
   const flagItems = flags.map((f) => `${f.drug}: ${f.flag}`).filter(Boolean);
   const sessionName = session.session_name || "Medical Interview";
 
@@ -466,6 +474,21 @@ export default function ReportSheetScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        {/* Emergency warning banner — only when triggered */}
+        {!!report.emergency_warning?.triggered && (
+          <View style={s.emergencyBanner}>
+            <Ionicons
+              name="warning"
+              size={20}
+              color="#fff"
+              style={{ flexShrink: 0 }}
+            />
+            <Text style={s.emergencyText}>
+              {report.emergency_warning.message}
+            </Text>
+          </View>
+        )}
+
         {/* Specialty banner */}
         {!!ps.referralSpecialty && (
           <LinearGradient
@@ -502,6 +525,24 @@ export default function ReportSheetScreen() {
             {ps.patientComplaintSummary?.trim() || "No summary available."}
           </Text>
         </View>
+
+        {/* Research summary */}
+        {!!ps.researchSummary?.trim() && (
+          <View style={s.card}>
+            <View style={s.cardHeader}>
+              <Ionicons
+                name="book-outline"
+                size={16}
+                color="#34D399"
+                style={{ flexShrink: 0 }}
+              />
+              <Text style={[s.cardTitle, { color: "#34D399" }]}>
+                What We Found
+              </Text>
+            </View>
+            <Text style={s.summaryText}>{ps.researchSummary.trim()}</Text>
+          </View>
+        )}
 
         {/* Diagnosis list — top 3, unlikely filtered */}
         {diagnoses.length > 0 && (
@@ -542,6 +583,19 @@ export default function ReportSheetScreen() {
                 {!!d.patientNote?.trim() && (
                   <Text style={s.diagNote}>{d.patientNote.trim()}</Text>
                 )}
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Diagnosis notes — plain-language per-condition explanations */}
+        {ps.diagnosisNotes && ps.diagnosisNotes.length > 0 && (
+          <View style={s.section}>
+            <Text style={s.sectionLabel}>What These Conditions Mean</Text>
+            {ps.diagnosisNotes.map((dn, i) => (
+              <View key={i} style={s.diagNoteCard}>
+                <Text style={s.diagNoteDisease}>{dn.disease}</Text>
+                <Text style={s.diagNoteText}>{dn.note?.trim()}</Text>
               </View>
             ))}
           </View>
@@ -892,6 +946,42 @@ const s = StyleSheet.create({
     lineHeight: 17,
     textAlign: "center",
     paddingHorizontal: 8,
+  },
+
+  emergencyBanner: {
+    backgroundColor: "#DC2626",
+    borderRadius: 14,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.60)",
+  },
+  emergencyText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 21,
+    flex: 1,
+  },
+  diagNoteCard: {
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.07)",
+    gap: 4,
+  },
+  diagNoteDisease: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  diagNoteText: {
+    color: "rgba(255,255,255,0.55)",
+    fontSize: 13,
+    lineHeight: 20,
   },
 });
 
