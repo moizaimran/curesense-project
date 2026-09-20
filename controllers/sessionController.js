@@ -12,6 +12,7 @@ const axios              = require("axios");
 const cloudinary         = require("../config/cloudinary");
 const Session            = require("../models/Session");
 const Report             = require("../models/Report");
+const Patient            = require("../models/Patient");
 
 const asyncHandler       = require("../utils/asyncHandler");
 const { canAccessPatient } = require("../middleware/auth");
@@ -112,7 +113,7 @@ const processTurn = async (req, res) => {
       turnPayload,
       60_000
     );
-    const { status, message, correctedPatientText, rawPatientText, questionType, options, sessionName } = aiResp.data;
+    const { status, message, correctedPatientText, rawPatientText, questionType, options } = aiResp.data;
 
     // ── Save turn (pair) to session ───────────────────────────────────────────
     session.transcript.push({
@@ -133,9 +134,20 @@ const processTurn = async (req, res) => {
         .map((t) => t.patient_corrected)
         .join(" ");
 
+      // Fetch profile medications — non-critical, fall back to [] on any error.
+      let profileMedications = [];
+      try {
+        const patient = await Patient.findById(session.patient_id)
+          .select("current_medications")
+          .lean();
+        if (patient) profileMedications = patient.current_medications || [];
+      } catch (e) {
+        // continue without profile medications
+      }
+
       const finalizeResp = await callAI(
         `${process.env.AI_SERVICE_URL}/pipeline/finalize`,
-        { full_transcript_text: fullTranscript },
+        { full_transcript_text: fullTranscript, profile_medications: profileMedications },
         120_000
       );
       const result = finalizeResp.data;
@@ -158,6 +170,7 @@ const processTurn = async (req, res) => {
         doctor_report:         result.doctorReport         || {},
         patient_summary:       result.patientSummary       || {},
         interpreted_diagnoses: result.interpretedDiagnoses || [],
+        emergency_warning:     result.emergencyWarning      || {},
       });
 
       return res.json({ status: "complete", message, correctedPatientText, questionType: questionType ?? "text", options: options ?? [], report_id: report._id });

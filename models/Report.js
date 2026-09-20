@@ -51,10 +51,17 @@ const InterpretedDiagnosisSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const AppointmentGuidanceItemSchema = new mongoose.Schema(
+const SelfCareGuidanceItemSchema = new mongoose.Schema(
   {
-    point:  { type: String, default: "" },
-    source: { type: String, default: "" },
+    point: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
+const DiagnosisNoteSchema = new mongoose.Schema(
+  {
+    disease: { type: String, default: "" },
+    note:    { type: String, default: "" },
   },
   { _id: false }
 );
@@ -95,17 +102,28 @@ const ReportSchema = new mongoose.Schema(
     },
 
     patient_summary: {
-      patientComplaintSummary: { type: String,                          default: "" },
-      referralSpecialty:       { type: String,                          default: "" },
-      appointmentGuidance:     { type: [AppointmentGuidanceItemSchema], default: [] },
-      medicationNotes:         { type: [MedicationNoteSchema],          default: [] },
+      patientComplaintSummary: { type: String,                        default: "" },
+      referralSpecialty:       { type: String,                        default: "" },
+      selfCareGuidance:        { type: [SelfCareGuidanceItemSchema],  default: [] },
+      researchSummary:         { type: String,                        default: "" },
+      diagnosisNotes:          { type: [DiagnosisNoteSchema],         default: [] },
+      medicationNotes:         { type: [MedicationNoteSchema],        default: [] },
     },
 
     // LLM-evaluated disease candidates — single source for both dashboards.
     // Doctor sees all entries (including unlikely). Patient sees only
     // likely/possible entries via patientNote (patientNote is "" for unlikely).
     interpreted_diagnoses: { type: [InterpretedDiagnosisSchema], default: [] },
-    is_deleted:            { type: Boolean, default: false },
+
+    // Emergency flag — merged output of LLM assessment and code-based red-flag
+    // lookup in the Flask pipeline. triggered:false on all pre-existing reports.
+    emergency_warning: {
+      triggered: { type: Boolean, default: false },
+      reason:    { type: String,  default: "" },
+      message:   { type: String,  default: "" },
+    },
+
+    is_deleted: { type: Boolean, default: false },
 
     // Set when the patient books an appointment for this report.
     // null = self-only report (patient ran the interview but hasn't shared it with a doctor yet).
