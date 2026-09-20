@@ -163,33 +163,30 @@ def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
 
 def _chunks_from_wikidoc(max_entries: int | None = None) -> list[dict]:
     """
-    Load MedRAG/wikidoc as the dedicated patient corpus.
-    Wikidoc articles are patient-friendly explanations of medical conditions —
-    the right grounding for Patient Summary (Call 3).
+    Load patient-friendly medical content as the patient corpus.
+    Tries medalpaca/medical_meadow_wikidoc (wikidoc patient information pages).
+    Each entry has 'instruction' (question) + 'output' (plain-language answer).
     """
     from datasets import load_dataset
-    print("Loading MedRAG/wikidoc …")
-    ds = load_dataset("MedRAG/wikidoc", split="train")
-    print(f"  {len(ds):,} entries found")
 
-    sample = ds[0]
-    text_field = next(
-        (f for f in ["content", "text", "passage", "body"] if f in sample),
-        None,
-    )
-    if text_field is None:
-        raise ValueError(f"Cannot find text field in MedRAG/wikidoc. Keys: {list(sample.keys())}")
+    DATASET = "medalpaca/medical_meadow_wikidoc"
+    print(f"Loading {DATASET} …")
+    ds = load_dataset(DATASET, split="train")
+    print(f"  {len(ds):,} entries found")
 
     all_chunks = []
     entries = ds if max_entries is None else ds.select(range(min(max_entries, len(ds))))
     for i, entry in enumerate(entries):
-        text = entry.get(text_field, "").strip()
-        if not text or len(text) < 50:
+        # Combine question + answer into a single readable passage
+        question = entry.get("instruction", "").strip()
+        answer   = entry.get("output", "").strip()
+        if not answer or len(answer) < 50:
             continue
+        text = f"{question}\n\n{answer}" if question else answer
         meta = {
-            "source"  : entry.get("id", f"wikidoc_{i}"),
+            "source"  : f"wikidoc_{i}",
             "doc_type": "wikidoc",
-            "title"   : entry.get("title", ""),
+            "title"   : question[:120] if question else "",
             "audience": "patient",
         }
         all_chunks.extend(chunk_text(text, meta))
