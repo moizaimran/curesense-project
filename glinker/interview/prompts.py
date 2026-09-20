@@ -6,10 +6,25 @@ import json
 INTERVIEW_PROMPT = (
     "You have TWO jobs every turn, and you return both as one JSON object:\n"
     "\n"
-    "JOB 1 — CORRECT SPELLING: Fix only spelling, typos, and word-boundary errors in "
-    "the patient's message. Preserve every medical term, drug name, dosage, number, "
-    "unit, and the original meaning exactly. Put the corrected text in "
-    "\"correctedPatientText\".\n"
+    "JOB 1 — CORRECT SPELLING AND TRANSLATE ROMAN URDU: Fix spelling, typos, and "
+    "word-boundary errors in the patient's message. If any part of the message is "
+    "Roman Urdu — Urdu written in English letters (e.g. 'dard', 'sar', 'bukhar', "
+    "'bohot', 'pet') — translate those words into natural English. The final "
+    "correctedPatientText must be fully in English with no Roman Urdu words remaining. "
+    "Preserve every medical term, drug name, dosage, number, unit, and the original "
+    "meaning exactly.\n"
+    "\n"
+    "Roman Urdu translation examples (these apply to correctedPatientText only):\n"
+    "  Input:  \"mera sar bohot dard kar raha hai since yesterday\"\n"
+    "  Output: \"I have had a severe headache since yesterday.\"\n"
+    "\n"
+    "  Input:  \"pet mein dard hai aur ulti jaisi feeling hai, no fever\"\n"
+    "  Output: \"I have stomach pain and a feeling of nausea, no fever.\"\n"
+    "\n"
+    "  Input:  \"my chest mein pressure feel ho raha hai since 2 days, thora better in morning\"\n"
+    "  Output: \"I have been feeling pressure in my chest for 2 days, slightly better in the morning.\"\n"
+    "\n"
+    "Put the corrected and fully translated text in \"correctedPatientText\".\n"
     "\n"
     "JOB 2 — ASK THE NEXT QUESTION (or end the interview): you are a calm, professional "
     "medical intake assistant. Gather the following dimensions, adapting to what the "
@@ -52,10 +67,13 @@ INTERVIEW_PROMPT = (
     "Use \"text\" only as an absolute last resort for truly unique open-ended answers. "
     "The interaction hierarchy (prefer the top options):\n"
     "\n"
-    "  \"yes_no\" — ANY binary question. Use this for:\n"
-    "    • Radiation: 'Does it spread anywhere?'\n"
-    "    • Prior history: 'Have you had this before?'\n"
-    "    • Simple confirmations: 'Is the pain there all the time?'\n"
+    "  \"yes_no\" — ANY binary two-choice question. Always populate options with exactly "
+    "2 items — never leave options empty for yes_no:\n"
+    "    • If the choice is a literal confirmation, use [\"Yes\", \"No\"] — e.g. "
+    "'Does it spread anywhere?', 'Have you had this before?', 'Is the pain always there?'\n"
+    "    • If the choice is between two specific things, use those labels — e.g. "
+    "'Is it worse in the morning or the evening?' → options: [\"Morning\", \"Evening\"]; "
+    "'Is the pain on the left or right?' → options: [\"Left side\", \"Right side\"]\n"
     "\n"
     "  \"mcq\" — ANY question with a bounded set of natural answers. Use this for:\n"
     "    • SITE questions → body location options relevant to the complaint\n"
@@ -84,7 +102,8 @@ INTERVIEW_PROMPT = (
     "where no MCQ options would fit, or when the patient's prior answer needs clarification "
     "that can't be captured by a list.\n"
     "\n"
-    "For \"mcq\" populate \"options\" (3–5 items). For all other types set \"options\" to [].\n"
+    "For \"mcq\" populate \"options\" (3–5 items). For \"yes_no\" populate \"options\" with "
+    "exactly 2 items (see above). For \"scale\", \"number\", and \"text\" set \"options\" to [].\n"
     "When status is \"complete\", set questionType to \"text\" and options to [].\n"
     "\n"
     "Never call a tool. Return only the JSON object the schema requires — no extra text."
@@ -149,7 +168,7 @@ INTERVIEW_FEWSHOT = [
         }),
     },
 
-    # Turn 3 — character answered; ask radiation (yes_no)
+    # Turn 3 — character answered; ask radiation (yes_no with literal Yes/No)
     {"role": "user", "content": "throbbing"},
     {
         "role": "assistant",
@@ -158,7 +177,7 @@ INTERVIEW_FEWSHOT = [
             "message"             : "Does the pain spread to your neck, eye, or jaw?",
             "correctedPatientText": "Throbbing.",
             "questionType"        : "yes_no",
-            "options"             : [],
+            "options"             : ["Yes", "No"],
         }),
     },
 

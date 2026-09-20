@@ -28,6 +28,27 @@ OVERLAP_TOKENS = 100
 
 _enc = tiktoken.get_encoding("cl100k_base")
 
+# ── Audience mapping for guidelines (matched as substring of source field) ────
+_GUIDELINE_AUDIENCE: dict[str, str] = {
+    "nice"   : "clinician",
+    "cdc"    : "clinician",
+    "cma"    : "clinician",
+    "icrc"   : "clinician",
+    "cco"    : "clinician",
+    "spor"   : "clinician",
+    "pubmed" : "clinician",
+    "wikidoc": "patient",
+    "who"    : "mixed",
+}
+
+def _guideline_audience(source: str) -> str:
+    """Return audience tag for a guideline by substring-matching its source field."""
+    src = source.lower()
+    for key, tag in _GUIDELINE_AUDIENCE.items():
+        if key in src:
+            return tag
+    return "clinician"   # unknown sources default to clinician
+
 
 # ── Text chunking ─────────────────────────────────────────────────────────────
 
@@ -91,6 +112,7 @@ def _chunks_from_textbooks(max_entries: int | None = None) -> list[dict]:
             "source"  : entry.get("id", f"textbook_{i}"),
             "doc_type": "textbook",
             "title"   : entry.get("title", ""),
+            "audience": "clinician",
         }
         all_chunks.extend(chunk_text(text, meta))
         if (i + 1) % 5000 == 0:
@@ -124,10 +146,12 @@ def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
         text = entry.get(text_field, "").strip()
         if not text or len(text) < 50:
             continue
+        source = entry.get("id", entry.get("url", f"guideline_{i}"))
         meta = {
-            "source"  : entry.get("id", entry.get("url", f"guideline_{i}")),
+            "source"  : source,
             "doc_type": "guideline",
             "title"   : entry.get("title", entry.get("name", "")),
+            "audience": _guideline_audience(source),
         }
         all_chunks.extend(chunk_text(text, meta))
         if (i + 1) % 2000 == 0:
@@ -157,13 +181,37 @@ def _embed_chunks(chunks: list[dict], batch_size: int = 512) -> np.ndarray:
 
 # ── Main build function ───────────────────────────────────────────────────────
 
+def _save_index(chunks: list[dict], index_dir: str, name: str) -> int:
+    """Embed chunks, build FAISS IndexFlatIP, save .faiss + _meta.json. Returns vector count."""
+    if not chunks:
+        print(f"[ingestion] No chunks for {name} — skipping.")
+        return 0
+    print(f"\n[{name}] Embedding {len(chunks):,} chunks …")
+    matrix = _embed_chunks(chunks)
+    faiss.normalize_L2(matrix)
+    index = faiss.IndexFlatIP(matrix.shape[1])
+    index.add(matrix)
+    faiss.write_index(index, f"{index_dir}/{name}_index.faiss")
+    with open(f"{index_dir}/{name}_meta.json", "w") as f:
+        json.dump(
+            {
+                "chunks"  : [c["text"]     for c in chunks],
+                "metadata": [c["metadata"] for c in chunks],
+            },
+            f,
+        )
+    print(f"✅ {name} index saved — {index.ntotal:,} vectors | {index_dir}/{name}_index.faiss")
+    return index.ntotal
+
+
 def build_index(
     textbooks_limit: int | None = None,
     guidelines_limit: int | None = None,
 ) -> bool:
     """
-    Load both datasets, embed, build FAISS IndexFlatIP, and save to
-    config.RAG_INDEX_DIR. Returns True on success.
+    Build two audience-split FAISS indexes and save to config.RAG_INDEX_DIR:
+      clinician_index — MedRAG/textbooks + clinician guidelines + mixed (WHO) guidelines
+      patient_index   — patient (wikidoc) guidelines + mixed (WHO) guidelines
 
     textbooks_limit / guidelines_limit: cap entries for quick testing.
     Leave both as None for the full corpus.
@@ -172,46 +220,36 @@ def build_index(
     os.makedirs(index_dir, exist_ok=True)
 
     # ── Load datasets ────────────────────────────────────────────────────────
-    all_chunks = []
+    textbook_chunks, guideline_chunks = [], []
     try:
-        all_chunks.extend(_chunks_from_textbooks(max_entries=textbooks_limit))
+        textbook_chunks = _chunks_from_textbooks(max_entries=textbooks_limit)
     except Exception as e:
         print(f"[ingestion] textbooks failed: {e}")
 
     try:
-        all_chunks.extend(_chunks_from_guidelines(max_entries=guidelines_limit))
+        guideline_chunks = _chunks_from_guidelines(max_entries=guidelines_limit)
     except Exception as e:
         print(f"[ingestion] guidelines failed: {e}")
 
-    if not all_chunks:
+    if not textbook_chunks and not guideline_chunks:
         print("[ingestion] No chunks produced — check dataset access.")
         return False
 
-    print(f"\nTotal chunks: {len(all_chunks):,}")
+    # ── Split by audience tag (mixed goes into both) ─────────────────────────
+    clinician_chunks = textbook_chunks + [
+        c for c in guideline_chunks
+        if c["metadata"].get("audience") in ("clinician", "mixed")
+    ]
+    patient_chunks = [
+        c for c in guideline_chunks
+        if c["metadata"].get("audience") in ("patient", "mixed")
+    ]
 
-    # ── Embed ────────────────────────────────────────────────────────────────
-    print("\nEmbedding …")
-    matrix = _embed_chunks(all_chunks)
+    print(f"\nSplit: {len(clinician_chunks):,} clinician chunks | {len(patient_chunks):,} patient chunks")
 
-    # ── Build FAISS index ────────────────────────────────────────────────────
-    print("\nBuilding FAISS IndexFlatIP …")
-    faiss.normalize_L2(matrix)
-    index = faiss.IndexFlatIP(matrix.shape[1])
-    index.add(matrix)
+    # ── Build and save each index ────────────────────────────────────────────
+    n_clinician = _save_index(clinician_chunks, index_dir, "clinician")
+    n_patient   = _save_index(patient_chunks,   index_dir, "patient")
 
-    # ── Save ─────────────────────────────────────────────────────────────────
-    faiss.write_index(index, f"{index_dir}/index.faiss")
-    with open(f"{index_dir}/chunks.json", "w") as f:
-        json.dump(
-            {
-                "chunks"  : [c["text"]     for c in all_chunks],
-                "metadata": [c["metadata"] for c in all_chunks],
-            },
-            f,
-        )
-
-    print(
-        f"\n✅ Index saved — {index.ntotal:,} vectors, dim={matrix.shape[1]}\n"
-        f"   Location: {index_dir}/"
-    )
-    return True
+    print(f"\n✅ Done — clinician: {n_clinician:,} vectors | patient: {n_patient:,} vectors")
+    return n_clinician > 0

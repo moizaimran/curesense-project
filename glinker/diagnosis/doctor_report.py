@@ -1,92 +1,84 @@
 # ==============================================================================
-# glinker/diagnosis/doctor_report.py — doctor-facing grounded report
+# glinker/diagnosis/doctor_report.py
+#
+# Call 2 of 3 in the refactored pipeline.
+#
+# generate_doctor_report() assembles the clinician-facing report:
+#   - LLM writes patientComplaintSummary and ragSummary (genuinely new writing)
+#   - medicationFlags  — copied from assessment, no re-generation
+#   - topDiagnoses     — first 5 of assessment["interpretedDiagnoses"], no re-ranking
+#
+# _fmt_chunks is imported from assessment.py rather than duplicated.
+# When all three calls exist, move shared formatters to glinker/diagnosis/_helpers.py.
 # ==============================================================================
 import json
-from glinker import config
-from glinker.utils import parse_json_response
-from glinker.diagnosis.prompts import DOCTOR_REPORT_PROMPT, DOCTOR_REPORT_SCHEMA
 
+from glinker.utils import call_llm
+from glinker.diagnosis.assessment import _fmt_chunks
+from glinker.diagnosis.doctor_report_prompts import (
+    DOCTOR_REPORT_PROMPT,
+    DOCTOR_REPORT_SCHEMA,
+    DOCTOR_REPORT_FEWSHOT,
+)
 
-def _format_retrieved_chunks(retrieved_chunks: list[dict]) -> str:
-    if not retrieved_chunks:
-        return (
-            "No relevant reference material was retrieved above the similarity threshold. "
-            "Route from stated symptoms and entities alone."
-        )
-    parts = []
-    for c in retrieved_chunks:
-        label = f"Source: {c['source']}"
-        if c.get("title"):
-            label += f" | {c['title']}"
-        label += f" | Score: {c['score']}"
-        parts.append(f"[{label}]\n{c['text']}")
-    return "\n\n".join(parts)
-
-
-def _format_medication_info(medication_info: dict[str, dict]) -> str:
-    if not medication_info:
-        return "No medication label data provided."
-    parts = []
-    for drug, info in medication_info.items():
-        sections_text = "\n".join(
-            f"  [{sec.replace('_', ' ').title()}]: {text[:400]}"
-            for sec, text in info.get("sections", {}).items()
-        )
-        parts.append(f"Drug: {drug} (Source: {info.get('source', 'openFDA')})\n{sections_text}")
-    return "\n\n".join(parts)
-
-
-def _format_ranked_diseases(ranked_diseases: list[dict]) -> str:
-    if not ranked_diseases:
-        return "No disease candidates available from the diagnostic module."
-    lines = []
-    for i, d in enumerate(ranked_diseases[:10], 1):
-        lines.append(f"  {i}. {d.get('disease', 'Unknown')} — confidence {d.get('confidence', 0):.1f}/100")
-    return "Top symptom-pattern candidates (TF-IDF, normalized to 100):\n" + "\n".join(lines)
+_DOCTOR_REPORT_FALLBACK = {
+    "patientComplaintSummary": "We received your description of your symptoms.",
+    "ragSummary"             : "No relevant reference material was found for this symptom pattern.",
+}
 
 
 def generate_doctor_report(
-    transcript_text: str,
+    assessment       : dict,
     verified_entities: list[dict],
-    retrieved_chunks: list[dict],
-    medication_info: dict[str, dict],
-    ranked_diseases: list[dict],
+    retrieved_chunks : list[dict],
+    transcript_text  : str = "",
 ) -> dict:
     """
-    Doctor-facing report grounded in retrieved textbook/guideline chunks,
-    openFDA medication data, and TF-IDF disease ranking candidates.
-    Degrades gracefully when any input is empty.
+    Call 2 of 3 in the refactored pipeline.
 
-    Returns a dict with keys matching DOCTOR_REPORT_SCHEMA.
+    Returns:
+      {
+        "patientComplaintSummary": str,
+        "ragSummary"             : str,
+        "medicationFlags"        : [...],   # from assessment — not re-generated
+        "topDiagnoses"           : [...],   # first 5 from assessment — not re-ranked
+      }
     """
     payload = json.dumps({
-        "transcript"       : transcript_text,
-        "verifiedEntities" : verified_entities,
-        "retrievedChunks"  : _format_retrieved_chunks(retrieved_chunks),
-        "medicationInfo"   : _format_medication_info(medication_info),
-        "diagnosticCandidates": _format_ranked_diseases(ranked_diseases),
+        "transcript"      : transcript_text,
+        "verifiedEntities": verified_entities,
+        "retrievedChunks" : _fmt_chunks(retrieved_chunks),
     })
 
-    fallback = {
-        "patientComplaintSummary": "Doctor report generation failed.",
-        "ragSummary"             : "No reference material was retrieved.",
-    }
+    messages = [
+        {"role": "system", "content": DOCTOR_REPORT_PROMPT},
+        *DOCTOR_REPORT_FEWSHOT,
+        {"role": "user", "content": payload},
+    ]
 
     try:
-        response = config.openai_client.chat.completions.create(
-            model=config.LLM_CONFIG["model"],
-            max_completion_tokens=config.LLM_CONFIG["diagnose_max_tokens"],
-            reasoning_effort=config.LLM_CONFIG["reasoning_effort"],
-            messages=[
-                {"role": "system", "content": DOCTOR_REPORT_PROMPT},
-                {"role": "user",   "content": payload},
-            ],
-            response_format={"type": "json_schema", "json_schema": DOCTOR_REPORT_SCHEMA},
+        llm_result = call_llm(
+            messages,
+            DOCTOR_REPORT_SCHEMA,
+            "diagnose_max_tokens",
+            _DOCTOR_REPORT_FALLBACK,
+            "generate_doctor_report",
         )
-        raw           = response.choices[0].message.content
-        finish_reason = response.choices[0].finish_reason
-        return parse_json_response(raw, finish_reason, fallback, "generate_doctor_report")
     except Exception as e:
-        print(f"[generate_doctor_report] ERROR: {e}")
-        fallback["confidenceNote"] = f"Error: {e}"
-        return fallback
+        print(f"[generate_doctor_report] LLM call failed: {e} — using fallback")
+        llm_result = _DOCTOR_REPORT_FALLBACK
+
+    # No shallow copy needed here — we only read from llm_result to build a new
+    # dict, never mutate it in place, so _DOCTOR_REPORT_FALLBACK stays clean.
+    return {
+        "patientComplaintSummary": llm_result.get(
+            "patientComplaintSummary",
+            _DOCTOR_REPORT_FALLBACK["patientComplaintSummary"],
+        ),
+        "ragSummary"     : llm_result.get(
+            "ragSummary",
+            _DOCTOR_REPORT_FALLBACK["ragSummary"],
+        ),
+        "medicationFlags": assessment.get("medicationFlags", []),
+        "topDiagnoses"   : assessment.get("interpretedDiagnoses", [])[:5],
+    }

@@ -12,9 +12,11 @@
 #   Returns: { status, message, correctedPatientText }
 #
 # POST /pipeline/finalize
-#   Body:  { full_transcript_text }
+#   Body:  { full_transcript_text, profile_medications? }
 #   Returns: { verifiedEntities, rankedDiseases, ragQuery, diagnosticQuery,
-#              retrievedSources, medicationInfo, doctorReport, patientSummary }
+#              retrievedSources, medicationInfo, sessionName,
+#              emergencyWarning, interpretedDiagnoses,
+#              doctorReport, patientSummary }
 #
 # Launch
 # ──────
@@ -24,18 +26,21 @@
 import os
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests as http
 from flask import Flask, request, jsonify
 
 from glinker import config
-from glinker.interview.session         import run_interview_turn
-from glinker.interview.prompts         import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT
-from glinker.diagnosis.finalize        import run_gliner, finalize_report
-from glinker.rag.retrieval             import retrieve_context, get_medication_info
-from glinker.disease.disease_retrieval import retrieve_diseases
-from glinker.diagnosis.combined_report import generate_combined_report
-from glinker.images.pdf_analysis       import analyze_pdf
+from glinker.interview.session              import run_interview_turn
+from glinker.interview.prompts              import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT
+from glinker.diagnosis.finalize             import run_gliner, finalize_report
+from glinker.rag.retrieval                  import retrieve_context, retrieve_patient_context, get_medication_info
+from glinker.disease.disease_retrieval      import retrieve_diseases
+from glinker.diagnosis.assessment           import generate_diagnosis_assessment
+from glinker.diagnosis.doctor_report        import generate_doctor_report
+from glinker.diagnosis.patient_summary      import generate_patient_summary
+from glinker.images.pdf_analysis            import analyze_pdf
 
 app = Flask(__name__)
 
@@ -146,7 +151,8 @@ def interview_turn():
 @app.route("/pipeline/finalize", methods=["POST"])
 def pipeline_finalize():
     data = request.get_json(force=True)
-    transcript_text = data.get("full_transcript_text", "").strip()
+    transcript_text    = data.get("full_transcript_text", "").strip()
+    profile_medications = data.get("profile_medications", [])   # [] until Express sends it
 
     if not transcript_text:
         return jsonify({"error": "full_transcript_text is required"}), 400
@@ -158,20 +164,36 @@ def pipeline_finalize():
     report           = finalize_report(transcript_text, gliner_entities)
     rag_query        = report.get("ragQuery", "")
     diagnostic_query = report.get("diagnosticQuery", "")
+    session_name     = report.get("sessionName", "")
+    print(f"[Session Name] {session_name!r}")
 
-    # ── 3. RAG retrieval (non-critical — degrades gracefully if index missing) ─
-    retrieved_chunks = []
-    if rag_query:
-        try:
-            retrieved_chunks = retrieve_context(rag_query)
-            n = len(retrieved_chunks)
-            print(f"[RAG] {n} chunk(s) retrieved." if n else "[RAG] No chunks above threshold.")
-        except Exception as e:
-            print(f"[RAG] retrieve_context failed: {e} — continuing without retrieval.")
+    # ── 3. RAG retrieval — clinician + patient corpus run concurrently ─────────
+    # Both are in-process FAISS searches on separate index objects — no shared
+    # state, so running them in parallel is safe and cuts wall-clock time.
+    retrieved_chunks         = []
+    retrieved_patient_chunks = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {}
+        if rag_query:
+            futures["clinician"] = pool.submit(retrieve_context, rag_query)
+        if diagnostic_query:
+            futures["patient"]   = pool.submit(retrieve_patient_context, diagnostic_query)
 
-    retrieval_status = _retrieval_status(retrieved_chunks)
+        for key, fut in futures.items():
+            try:
+                chunks = fut.result()
+                if key == "clinician":
+                    retrieved_chunks = chunks
+                    n = len(chunks)
+                    print(f"[RAG-clinician] {n} chunk(s)." if n else "[RAG-clinician] No chunks above threshold.")
+                else:
+                    retrieved_patient_chunks = chunks
+                    n = len(chunks)
+                    print(f"[RAG-patient] {n} chunk(s)." if n else "[RAG-patient] No chunks above threshold.")
+            except Exception as e:
+                print(f"[RAG-{key}] retrieve failed: {e} — continuing without retrieval.")
 
-    # ── 4. Disease retrieval — semantic search against HPO + ICD-10 + MedlinePlus index
+    # ── 4. Disease retrieval — semantic search against HPO + ICD-10 index ─────
     ranked_diseases = []
     try:
         ranked_diseases = retrieve_diseases(report["entities"], diagnostic_query)
@@ -180,30 +202,60 @@ def pipeline_finalize():
         print(f"[DiseaseRAG] retrieve_diseases failed: {e} — continuing without disease candidates.")
 
     # ── 5. openFDA — live lookup per medication (non-critical) ────────────────
+    # profile_medications merges profile drugs with session-extracted ones inside
+    # get_medication_info; currently [] until Express passes the patient's profile.
     med_names = [
         e["keyword"] for e in report["entities"]
         if e.get("category") == "medication"
     ]
     medication_info = {}
-    if med_names:
+    if med_names or profile_medications:
         try:
-            medication_info = get_medication_info(med_names)
+            medication_info = get_medication_info(med_names, profile_medications)
         except Exception as e:
             print(f"[openFDA] get_medication_info failed: {e} — continuing without drug data.")
 
-    # ── 6. Combined report — one LLM call for doctor + patient + diagnoses ────
-    combined = generate_combined_report(
-        transcript_text, report["entities"], retrieved_chunks, medication_info,
-        ranked_diseases, retrieval_status,
+    # ── 6. Call 1 — Diagnosis Assessment (must complete before Calls 2 & 3) ───
+    assessment = generate_diagnosis_assessment(
+        verified_entities = report["entities"],
+        ranked_diseases   = ranked_diseases,
+        medication_info   = medication_info,
+        retrieved_chunks  = retrieved_chunks,
+        transcript_text   = transcript_text,
     )
 
-    doctor_report         = combined.get("doctorReport", {})
-    patient_summary       = combined.get("patientSummary", {})
-    interpreted_diagnoses = combined.get("interpretedDiagnoses", [])
+    # ── 7. Calls 2 & 3 — Doctor Report + Patient Summary (concurrent) ─────────
+    # Both depend on assessment but are fully independent of each other.
+    # These are I/O-bound LLM API calls — ThreadPoolExecutor genuinely
+    # parallelises the network wait time despite Python's GIL.
+    doctor_report   = {}
+    patient_summary = {}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_doctor  = pool.submit(
+            generate_doctor_report,
+            assessment, report["entities"], retrieved_chunks, transcript_text,
+        )
+        fut_patient = pool.submit(
+            generate_patient_summary,
+            assessment, report["entities"], retrieved_patient_chunks,
+            medication_info, transcript_text,
+        )
+        try:
+            doctor_report = fut_doctor.result()
+        except Exception as e:
+            print(f"[Call2] generate_doctor_report failed: {e}")
+        try:
+            patient_summary = fut_patient.result()
+        except Exception as e:
+            print(f"[Call3] generate_patient_summary failed: {e}")
 
-    # ── 7. Session name — produced by finalize_report() in step 2 ────────────
-    session_name = report.get("sessionName", "")
-    print(f"[Session Name] {session_name!r}")
+    # ── 8. Assemble final response ─────────────────────────────────────────────
+    # emergencyWarning surfaces at top-level for easy frontend access.
+    # interpretedDiagnoses at top-level is the full list for storage/audit;
+    # doctorReport.topDiagnoses is the display-ready top-5 subset.
+    # patient_summary["emergencyWarning"] is removed from the nested dict to
+    # avoid duplication — the top-level copy is the authoritative one.
+    patient_summary.pop("emergencyWarning", None)
 
     return jsonify({
         "verifiedEntities"    : report["entities"],
@@ -212,10 +264,12 @@ def pipeline_finalize():
         "diagnosticQuery"     : diagnostic_query,
         "retrievedSources"    : retrieved_chunks,
         "medicationInfo"      : medication_info,
+        "sessionName"         : session_name,
+        "emergencyWarning"    : assessment.get("emergencyWarning",
+                                               {"triggered": False, "reason": "", "message": ""}),
+        "interpretedDiagnoses": assessment.get("interpretedDiagnoses", []),
         "doctorReport"        : doctor_report,
         "patientSummary"      : patient_summary,
-        "interpretedDiagnoses": interpreted_diagnoses,
-        "sessionName"         : session_name,
     })
 
 

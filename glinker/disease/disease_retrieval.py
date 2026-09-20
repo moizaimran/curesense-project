@@ -7,9 +7,8 @@
 # has been run at least once to create the FAISS files).
 #
 # Then call retrieve_diseases(entities, diagnostic_query) at pipeline time.
-# It returns top-k disease paragraphs that the combined_report LLM uses to
-# evaluate plausibility — same interface as the old rank_diseases() output
-# but semantically matched instead of TF-IDF vocabulary matched.
+# It returns top-k disease candidates that the assessment LLM uses to
+# evaluate plausibility — semantically matched via FAISS rather than TF-IDF.
 # ==============================================================================
 import json
 import numpy as np

@@ -35,12 +35,26 @@ FINALIZE_PROMPT = (
     "\n"
     "JOB 3 — DIAGNOSTIC QUERY. Write a symptom-focused keyword string specifically "
     "designed for semantic disease retrieval. Include ONLY presenting symptoms, signs, "
-    "body parts, severity descriptors, and duration — NO medications, NO clinical "
-    "abbreviations, NO lab values, NO condition names. Use plain descriptive terms that "
-    "match how symptoms are listed in symptom-disease datasets. Put in \"diagnosticQuery\".\n"
-    "  Good: \"throbbing headache left side behind eye temple nausea blurry vision light "
-    "sensitivity severe constant worsening 24 hours\"\n"
-    "  Bad:  \"migraine ibuprofen 8/10 retro-orbital\"\n"
+    "and body parts — NO medications, NO clinical abbreviations, NO lab values, "
+    "NO condition names. Use plain descriptive terms that match how symptoms are listed "
+    "in symptom-disease datasets. Put in \"diagnosticQuery\".\n"
+    "\n"
+    "FREQUENCY NORMALIZATION — convert patient phrasing about timing and pattern into "
+    "the disease corpus vocabulary before writing diagnosticQuery:\n"
+    "  • Timing: 'acute' (hours to a few days) or 'chronic' (weeks, months, recurring)\n"
+    "  • Pattern: 'constant' (continuous, unrelenting) or 'episodic' (comes and goes)\n"
+    "  Examples:\n"
+    "    'comes and goes for months' → chronic episodic\n"
+    "    'started this morning and hasn't let up' → acute constant\n"
+    "Use these normalized terms in diagnosticQuery — not the patient's original phrasing.\n"
+    "\n"
+    "SEVERITY EXCLUSION — never include severity in diagnosticQuery: no numeric scores "
+    "(e.g. '6/10', '8/10'), no severity adjectives (mild, moderate, severe, intense). "
+    "The disease corpus has no severity data — severity terms reduce retrieval accuracy.\n"
+    "\n"
+    "  Good: \"throbbing headache left side behind eye temple nausea blurry vision "
+    "light sensitivity chronic episodic\"\n"
+    "  Bad:  \"migraine ibuprofen 8/10 severe retro-orbital\"\n"
     "\n"
     "JOB 4 — SESSION NAME. Generate a concise 2-5 word memorable clinical name for this "
     "interview session that captures the main complaint clearly. Put in \"sessionName\".\n"
@@ -138,176 +152,3 @@ FINALIZE_FEWSHOT = [
     },
 ]
 
-
-# ── COMBINED REPORT (doctor + patient + interpreted diagnoses — single LLM call) ─
-
-COMBINED_REPORT_PROMPT = (
-    "You generate a structured report from one patient intake in one pass. "
-    "THREE sections: DOCTOR, PATIENT, and INTERPRETED DIAGNOSES.\n"
-    "\n"
-    "INPUTS you receive:\n"
-    "  (1) Patient transcript\n"
-    "  (2) Verified clinical entities (GLiNER + LLM verified — trust these)\n"
-    "  (3) Reference chunks from medical textbooks and clinical guidelines\n"
-    "  (4) Medication information from openFDA drug labels (may be empty)\n"
-    "  (5) Semantic search candidates from HPO + ICD-10 knowledge base. "
-    "High similarity = vocabulary match; evaluate clinical plausibility independently.\n"
-    "\n"
-    "━━━ SECTION A — DOCTOR REPORT ━━━\n"
-    "\n"
-    "A1 — PATIENT COMPLAINT SUMMARY. 2-3 sentences summarising what the patient "
-    "described: chief complaint, site, character, severity, duration, associated "
-    "symptoms, medications, allergies. Clear, plain language — no diagnosis, no "
-    "speculation. Put in \"patientComplaintSummary\".\n"
-    "\n"
-    "A2 — RAG SUMMARY. 2-3 sentences summarising what the retrieved reference "
-    "material says that is relevant to this patient's symptoms. If nothing was "
-    "retrieved, state: 'No relevant reference material was found for this symptom "
-    "pattern.' Put in \"ragSummary\".\n"
-    "\n"
-    "A3 — MEDICATION FLAGS (doctor-facing). For each medication the patient reported, "
-    "one clinical sentence covering the key safety point, interaction, or monitoring "
-    "requirement relevant to THIS patient's presentation. Use openFDA data when "
-    "available. Empty array [] if no medications reported. Put in \"medicationFlags\" "
-    "as [{\"drug\": \"...\", \"flag\": \"...\"}].\n"
-    "\n"
-    "━━━ SECTION B — PATIENT SUMMARY ━━━\n"
-    "\n"
-    "B1 — PATIENT COMPLAINT SUMMARY. Copy the exact same text from A1 word for word "
-    "into \"patientComplaintSummary\".\n"
-    "\n"
-    "B2 — REFERRAL SPECIALTY. Name the single medical specialty the patient should "
-    "see based on their chief complaint (e.g. 'Gastroenterologist', 'Neurologist', "
-    "'General Practitioner'). One specialty name only, no explanation. "
-    "Put in \"referralSpecialty\".\n"
-    "\n"
-    "B3 — MEDICATION NOTES (patient-facing). For each medication the patient reported, "
-    "one warm, non-alarmist plain-language sentence with the single most important "
-    "thing they should know (e.g. what to avoid, when to call a doctor). Use openFDA "
-    "data when available. Empty array [] if no medications reported. Put in "
-    "\"medicationNotes\" as [{\"drug\": \"...\", \"note\": \"...\"}].\n"
-    "\n"
-    "B4 — APPOINTMENT GUIDANCE. 2-4 bullet points from retrieved reference material "
-    "only — what the doctor may ask, check, or watch for at the appointment. Attribute "
-    "each to a source name. Empty array [] if nothing was retrieved. Put in "
-    "\"appointmentGuidance\" as [{\"point\": \"...\", \"source\": \"...\"}].\n"
-    "\n"
-    "━━━ SECTION C — INTERPRETED DIAGNOSES ━━━\n"
-    "\n"
-    "You are given semantic search candidates retrieved from a medical knowledge base "
-    "(HPO symptom ontology + ICD-10). Each candidate includes the disease name, "
-    "ICD-10 code, symptom frequency data, and description.\n"
-    "\n"
-    "STEP 1 — Evaluate each supplied candidate against the verified entities:\n"
-    "  'likely'   — primary symptoms are present AND clinically coherent with this disease\n"
-    "  'possible' — at least one verified symptom overlaps; worth clinical investigation\n"
-    "  'unlikely' — retrieved by vocabulary match only; inconsistent with the overall picture\n"
-    "\n"
-    "STEP 2 — If fewer than 2 candidates are rated 'likely' or 'possible' after step 1, "
-    "independently generate up to 3 additional conditions that ARE clinically consistent "
-    "with the verified entities. Mark these 'likely' or 'possible' as appropriate. "
-    "Prefer common, well-established diagnoses — never fabricate rare exotic conditions.\n"
-    "\n"
-    "For each entry (supplied OR self-generated):\n"
-    "  icdCode        — the ICD-10 code from the candidate data (e.g. 'K85.9'). "
-    "Use the code shown in brackets after 'Candidate N'. Set to '' if none provided "
-    "or if self-generated and you are not certain of the exact code.\n"
-    "  clinicalReason — 1 sentence for the doctor explaining the verdict\n"
-    "  patientNote    — 1-2 plain-language sentences describing what this condition IS "
-    "(what it is, what it does to the body). Set to '' if plausibility is 'unlikely'.\n"
-    "\n"
-    "Never diagnose. Never fabricate diseases. "
-    "Return only the JSON object the schema requires — no extra text."
-)
-
-COMBINED_REPORT_SCHEMA = {
-    "name"  : "combined_report",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "doctorReport": {
-                "type": "object",
-                "properties": {
-                    "patientComplaintSummary": {"type": "string"},
-                    "ragSummary"             : {"type": "string"},
-                    "medicationFlags": {
-                        "type" : "array",
-                        "items": {
-                            "type"      : "object",
-                            "properties": {
-                                "drug": {"type": "string"},
-                                "flag": {"type": "string"},
-                            },
-                            "required"            : ["drug", "flag"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                "required"            : ["patientComplaintSummary", "ragSummary", "medicationFlags"],
-                "additionalProperties": False,
-            },
-            "patientSummary": {
-                "type": "object",
-                "properties": {
-                    "patientComplaintSummary": {"type": "string"},
-                    "referralSpecialty"      : {"type": "string"},
-                    "medicationNotes": {
-                        "type" : "array",
-                        "items": {
-                            "type"      : "object",
-                            "properties": {
-                                "drug": {"type": "string"},
-                                "note": {"type": "string"},
-                            },
-                            "required"            : ["drug", "note"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "appointmentGuidance": {
-                        "type" : "array",
-                        "items": {
-                            "type"      : "object",
-                            "properties": {
-                                "point" : {"type": "string"},
-                                "source": {"type": "string"},
-                            },
-                            "required"            : ["point", "source"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                "required"            : ["patientComplaintSummary", "referralSpecialty", "medicationNotes", "appointmentGuidance"],
-                "additionalProperties": False,
-            },
-            "interpretedDiagnoses": {
-                "type" : "array",
-                "items": {
-                    "type"      : "object",
-                    "properties": {
-                        "disease"       : {"type": "string"},
-                        "icdCode"       : {"type": "string"},
-                        "plausibility"  : {
-                            "type": "string",
-                            "enum": ["likely", "possible", "unlikely"],
-                        },
-                        "clinicalReason": {"type": "string"},
-                        "patientNote"   : {"type": "string"},
-                    },
-                    "required"            : ["disease", "icdCode", "plausibility", "clinicalReason", "patientNote"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        "required"            : ["doctorReport", "patientSummary", "interpretedDiagnoses"],
-        "additionalProperties": False,
-    },
-}
-
-# Legacy aliases
-DOCTOR_REPORT_PROMPT = COMBINED_REPORT_PROMPT
-DOCTOR_REPORT_SCHEMA = COMBINED_REPORT_SCHEMA
-PATIENT_SUMMARY_PROMPT = COMBINED_REPORT_PROMPT
-PATIENT_SUMMARY_SCHEMA = COMBINED_REPORT_SCHEMA
-DIAGNOSE_PROMPT = COMBINED_REPORT_PROMPT
-DIAGNOSE_SCHEMA = COMBINED_REPORT_SCHEMA
