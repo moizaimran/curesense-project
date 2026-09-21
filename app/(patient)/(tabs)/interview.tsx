@@ -580,7 +580,7 @@ function renderInput(
 ) {
   switch (type) {
     case "yes_no":
-      return <YesNoInput onSubmit={onSend} />;
+      return <YesNoInput options={options} onSubmit={onSend} />;
 
     case "mcq":
       return <MCQInput options={options} onSubmit={onSend} />;
