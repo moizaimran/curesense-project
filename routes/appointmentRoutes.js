@@ -5,6 +5,7 @@ const express = require("express");
 const router  = express.Router();
 const {
   createAppointment,
+  getMyAppointments,
   getAppointmentById,
   getDoctorAppointments,
   adminGetAppointments,
@@ -24,7 +25,9 @@ const { validateObjectId }     = require("../middleware/validate");
 
 // ── Patient routes ────────────────────────────────────────────────────────────
 // Creating an appointment is write-heavy (triggers admin queue + assignment upsert)
-router.post("/", protect, authorize("patient"), writeLimiter, createAppointment);
+router.post("/",    protect, authorize("patient"), writeLimiter, createAppointment);
+// /my must be before /:id so Express doesn't treat "my" as an ObjectId
+router.get("/my",   protect, authorize("patient"), getMyAppointments);
 
 // ── Doctor routes ─────────────────────────────────────────────────────────────
 router.get("/doctor", protect, authorize("doctor"), getDoctorAppointments);

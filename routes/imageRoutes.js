@@ -6,12 +6,14 @@ const router   = express.Router();
 const { protect, authorize } = require("../middleware/auth");
 const { writeLimiter }       = require("../middleware/rateLimiter");
 const { validateObjectId }   = require("../middleware/validate");
-const { uploadImage, listImages, listPatientImages, getImageStatus, deleteImage } = require("../controllers/imageController");
+const { uploadImage, uploadForSession, listImages, listPatientImages, getImageStatus, deleteImage } = require("../controllers/imageController");
 
 router.use(protect);
 
 // Upload is write-heavy and triggers an AI background job — rate limited
-router.post("/",                          writeLimiter, uploadImage);
+router.post("/",                          authorize("patient"), writeLimiter, uploadImage);
+// Post-session: patient uploads a scan after an interview; triggers MedGemma + clinical correlation
+router.post("/upload-for-session",        authorize("patient"), writeLimiter, uploadForSession);
 router.get("/",                           listImages);
 // Doctor/admin view of a patient's scan analyses — never returns raw file URLs
 router.get("/patient/:patientId",         authorize("doctor", "admin"), validateObjectId("patientId"), listPatientImages);

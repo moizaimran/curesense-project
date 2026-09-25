@@ -13,6 +13,9 @@ const UserSchema = new mongoose.Schema(
 
     // patient only — links to their Patient profile
     patient_id: { type: mongoose.Schema.Types.ObjectId, ref: "Patient", default: null },
+
+    // Expo push notification token — registered by the mobile app after login
+    expo_push_token: { type: String, default: null },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );

@@ -28,11 +28,43 @@ const QueryMessageSchema = new mongoose.Schema(
       required: true,
     },
 
+    // Optional when an attachment is present
     message: {
       type: String,
-      required: true,
       trim: true,
+      default: "",
     },
+
+    // ── Image attachment (set when patient sends a medical image) ─────────────
+    // attachment_url is null until the Cloudinary upload completes in background
+    attachment_url: {
+      type: String,
+      default: null,
+    },
+
+    // "analyzing"  → background job running
+    // "analyzed"   → MedGemma result ready
+    // "failed"     → analysis errored
+    // null         → text-only message, no attachment
+    attachment_status: {
+      type: String,
+      enum: ["analyzing", "analyzed", "failed"],
+      default: null,
+    },
+
+    // Ref to the ImageUpload record created alongside this message
+    image_upload_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ImageUpload",
+      default: null,
+    },
+
+    // Raw MedGemma / PDF analysis result stored inline for fast chat rendering
+    ai_analysis: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    // ──────────────────────────────────────────────────────────────────────────
 
     created_at: {
       type: Date,
