@@ -151,6 +151,7 @@ export default function ScanScreen() {
   const [uploading, setUploading] = useState<UploadType | null>(null);
   const [selected, setSelected] = useState<ImageUpload | null>(null);
   const [listError, setListError] = useState("");
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -214,6 +215,43 @@ export default function ScanScreen() {
       setLoading(false);
       setRefreshing(false);
     }
+  }
+
+  // ── Soft delete ────────────────────────────────────────────────────────────
+  async function handleDelete(item: ImageUpload) {
+    Alert.alert(
+      "Remove scan?",
+      "This will remove it from your history. The record is kept securely for your doctor.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            setDeleting(item.id);
+            // Optimistic update — remove from UI immediately
+            setItems((prev) => prev.filter((i) => i.id !== item.id));
+            if (selected?.id === item.id) setSelected(null);
+            try {
+              const headers = await authHeaders();
+              const res = await fetch(`${API_URL}/api/images/${item.id}/delete`, {
+                method: "PATCH",
+                headers,
+              });
+              if (!res.ok) throw new Error("Delete failed");
+            } catch {
+              // Rollback on failure
+              setItems((prev) => [item, ...prev].sort(
+                (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              ));
+              Alert.alert("Error", "Could not remove the scan. Please try again.");
+            } finally {
+              setDeleting(null);
+            }
+          },
+        },
+      ]
+    );
   }
 
   // ── File pick → upload ─────────────────────────────────────────────────────
@@ -423,6 +461,7 @@ export default function ScanScreen() {
                 onPress={() =>
                   item.status !== "processing" ? setSelected(item) : null
                 }
+                onDelete={() => handleDelete(item)}
               />
             ))}
           </>
@@ -446,7 +485,11 @@ export default function ScanScreen() {
 
       {/* Result detail modal */}
       {selected && (
-        <ResultModal item={selected} onClose={() => setSelected(null)} />
+        <ResultModal
+          item={selected}
+          onClose={() => setSelected(null)}
+          onDelete={() => handleDelete(selected)}
+        />
       )}
     </LinearGradient>
   );
@@ -457,9 +500,11 @@ export default function ScanScreen() {
 function HistoryRow({
   item,
   onPress,
+  onDelete,
 }: {
   item: ImageUpload;
   onPress: () => void;
+  onDelete: () => void;
 }) {
   const color = typeColor(item.upload_type);
   const isProcessing = item.status === "processing";
@@ -540,12 +585,18 @@ function HistoryRow({
         ) : null}
       </View>
 
-      {item.status !== "processing" && (
-        <Ionicons
-          name="chevron-forward-outline"
-          size={16}
-          color="rgba(255,255,255,0.25)"
-        />
+      {!isProcessing && (
+        <View style={s.rowActions}>
+          <TouchableOpacity
+            onPress={onDelete}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={s.deleteBtn}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="trash-outline" size={15} color="rgba(248,113,113,0.70)" />
+          </TouchableOpacity>
+          <Ionicons name="chevron-forward-outline" size={16} color="rgba(255,255,255,0.25)" />
+        </View>
       )}
     </TouchableOpacity>
   );
@@ -556,9 +607,11 @@ function HistoryRow({
 function ResultModal({
   item,
   onClose,
+  onDelete,
 }: {
   item: ImageUpload;
   onClose: () => void;
+  onDelete: () => void;
 }) {
   const r = item.analysis_result;
   const color = typeColor(item.upload_type);
@@ -683,6 +736,12 @@ function ResultModal({
                 "This AI analysis is for informational purposes only and does not constitute medical advice. Please consult a qualified healthcare professional."}
             </Text>
           </View>
+
+          {/* Delete button */}
+          <TouchableOpacity style={s.modalDeleteBtn} onPress={onDelete} activeOpacity={0.75}>
+            <Ionicons name="trash-outline" size={15} color="#F87171" />
+            <Text style={s.modalDeleteText}>Remove from history</Text>
+          </TouchableOpacity>
         </ScrollView>
       </LinearGradient>
     </Modal>
@@ -949,5 +1008,34 @@ const s = StyleSheet.create({
     fontSize: 11,
     flex: 1,
     lineHeight: 17,
+  },
+
+  // History row delete action
+  rowActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  deleteBtn: {
+    padding: 4,
+  },
+
+  // Modal delete button
+  modalDeleteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    marginTop: 8,
+    paddingVertical: 13,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(248,113,113,0.30)",
+    backgroundColor: "rgba(248,113,113,0.07)",
+  },
+  modalDeleteText: {
+    color: "#F87171",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });
