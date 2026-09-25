@@ -125,7 +125,7 @@ const listPatientImages = asyncHandler(async (req, res) => {
   if (!patient) return res.status(404).json({ error: "Patient not found" });
 
   const records = await ImageUpload
-    .find({ user_id: patient.user_id })
+    .find({ user_id: patient.user_id, deleted_at: null })
     .sort({ createdAt: -1 })
     .limit(20)
     .select("-storage_url -zip_url -canvas_url -__v");
@@ -148,7 +148,7 @@ const listPatientImages = asyncHandler(async (req, res) => {
 
 const listImages = asyncHandler(async (req, res) => {
   const records = await ImageUpload
-    .find({ user_id: req.user._id })
+    .find({ user_id: req.user._id, deleted_at: null })
     .sort({ createdAt: -1 })
     .limit(20)
     .select("-storage_url -__v");
@@ -169,7 +169,7 @@ const listImages = asyncHandler(async (req, res) => {
 // ── Status / result ───────────────────────────────────────────────────────────
 
 const getImageStatus = asyncHandler(async (req, res) => {
-  const record = await ImageUpload.findOne({ _id: req.params.id, user_id: req.user._id });
+  const record = await ImageUpload.findOne({ _id: req.params.id, user_id: req.user._id, deleted_at: null });
   if (!record) return res.status(404).json({ error: "Upload not found" });
 
   res.json({
@@ -432,4 +432,22 @@ async function _analyzeMedgemma(imageBase64, uploadType, log) {
 
 const _delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = { uploadImage, listImages, listPatientImages, getImageStatus };
+// ── Soft delete ───────────────────────────────────────────────────────────────
+// Sets deleted_at timestamp — record stays in DB for audit, hidden from all
+// patient-facing queries. Doctors also stop seeing it in listPatientImages.
+
+const deleteImage = asyncHandler(async (req, res) => {
+  const record = await ImageUpload.findOne({
+    _id:        req.params.id,
+    user_id:    req.user._id,
+    deleted_at: null,
+  });
+
+  if (!record) return res.status(404).json({ error: "Upload not found" });
+
+  await ImageUpload.findByIdAndUpdate(record._id, { deleted_at: new Date() });
+
+  res.json({ success: true });
+});
+
+module.exports = { uploadImage, listImages, listPatientImages, getImageStatus, deleteImage };

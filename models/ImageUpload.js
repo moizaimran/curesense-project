@@ -24,6 +24,7 @@ const ImageUploadSchema = new mongoose.Schema(
     analysis_result:   { type: mongoose.Schema.Types.Mixed, default: null },
     flagged_abnormal:  { type: Boolean, default: false },
     error_message:     { type: String, default: "" },
+    deleted_at:        { type: Date, default: null, index: true },
   },
   { timestamps: true }
 );

@@ -6,7 +6,7 @@ const router   = express.Router();
 const { protect, authorize } = require("../middleware/auth");
 const { writeLimiter }       = require("../middleware/rateLimiter");
 const { validateObjectId }   = require("../middleware/validate");
-const { uploadImage, listImages, listPatientImages, getImageStatus } = require("../controllers/imageController");
+const { uploadImage, listImages, listPatientImages, getImageStatus, deleteImage } = require("../controllers/imageController");
 
 router.use(protect);
 
@@ -16,5 +16,7 @@ router.get("/",                           listImages);
 // Doctor/admin view of a patient's scan analyses — never returns raw file URLs
 router.get("/patient/:patientId",         authorize("doctor", "admin"), validateObjectId("patientId"), listPatientImages);
 router.get("/:id",                        validateObjectId("id"), getImageStatus);
+// Soft delete — sets deleted_at, keeps record in DB for audit
+router.patch("/:id/delete",              validateObjectId("id"), deleteImage);
 
 module.exports = router;
