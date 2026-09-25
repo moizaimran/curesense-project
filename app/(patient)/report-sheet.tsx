@@ -1,15 +1,19 @@
 import * as Storage from "@/utils/storage";
 import { Ionicons } from "@expo/vector-icons";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   Modal,
   PanResponder,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -53,8 +57,25 @@ interface Diagnosis {
   patientNote: string;
 }
 
+interface SessionScan {
+  _id: string;
+  status: "processing" | "complete" | "error" | "unavailable";
+  upload_type: "pdf" | "xray" | "ct_mri";
+  original_filename: string;
+  analysis_result: {
+    summary?: string;
+    findings?: string[];
+    impression?: string;
+    flagged_abnormal?: boolean;
+  } | null;
+  clinical_correlation: string | null;
+  error_message: string;
+  created_at: string;
+}
+
 interface ReportData {
   _id: string;
+  session_id?: string;
   emergency_warning?: EmergencyWarning;
   patient_summary: {
     patientComplaintSummary: string;
@@ -68,6 +89,7 @@ interface ReportData {
   doctor_report: {
     medicationFlags: MedFlag[];
   };
+  session_scans?: SessionScan[];
 }
 
 interface SessionData {
@@ -89,6 +111,25 @@ function fmtDate(iso: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function scanStatusLabel(status: SessionScan["status"]) {
+  if (status === "complete")   return "Analyzed";
+  if (status === "processing") return "Analyzing…";
+  if (status === "error")      return "Failed";
+  return "Unavailable";
+}
+
+function scanStatusColor(status: SessionScan["status"]) {
+  if (status === "complete")   return "#34D399";
+  if (status === "processing") return "#FBBF24";
+  return "#F87171";
+}
+
+function scanStatusBg(status: SessionScan["status"]) {
+  if (status === "complete")   return "rgba(52,211,153,0.10)";
+  if (status === "processing") return "rgba(251,191,36,0.10)";
+  return "rgba(248,113,113,0.10)";
 }
 
 function plausibilityColor(p: string) {
@@ -363,10 +404,81 @@ export default function ReportSheetScreen() {
   const [activeModal, setActiveModal] = useState<
     "appointment" | "flags" | null
   >(null);
+  const [uploading, setUploading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (session_id) fetchData();
   }, [session_id]);
+
+  // Poll every 8 s while any scan is still processing
+  useEffect(() => {
+    const hasProcessing = (report?.session_scans ?? []).some(
+      (sc) => sc.status === "processing"
+    );
+    if (hasProcessing) {
+      pollTimerRef.current = setTimeout(() => fetchData(), 8_000);
+    }
+    return () => {
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    };
+  }, [report?.session_scans]);
+
+  async function onRefresh() {
+    setRefreshing(true);
+    await fetchData();
+    setRefreshing(false);
+  }
+
+  async function uploadScan() {
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({
+        type: ["image/jpeg", "image/png", "application/pdf"],
+        copyToCacheDirectory: true,
+      });
+      if (picked.canceled || !picked.assets?.length) return;
+
+      const asset = picked.assets[0];
+      const mimeType = asset.mimeType ?? "application/octet-stream";
+      const uploadType = mimeType === "application/pdf" ? "pdf" : "xray";
+
+      setUploading(true);
+
+      // Read file as base64
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const token = await Storage.getItemAsync("token");
+      const res = await fetch(`${API_URL}/api/images/upload-for-session`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          file_base64: base64,
+          upload_type: uploadType,
+          session_id: report!.session_id ?? session_id,
+          mime_type: mimeType,
+          original_filename: asset.name ?? "scan",
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any).error ?? "Upload failed");
+      }
+
+      // Refresh report to show the new scan (status: processing)
+      await fetchData();
+    } catch (e: any) {
+      Alert.alert("Upload failed", e.message ?? "Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function fetchData() {
     try {
@@ -473,6 +585,14 @@ export default function ReportSheetScreen() {
           { paddingBottom: insets.bottom + 48 },
         ]}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#60A5FA"
+            colors={["#60A5FA"]}
+          />
+        }
       >
         {/* Emergency warning banner — only when triggered */}
         {!!report.emergency_warning?.triggered && (
@@ -633,6 +753,110 @@ export default function ReportSheetScreen() {
           ) : (
             <View style={s.emptyCard}>
               <Text style={s.emptyCardText}>No medication flags raised for this session.</Text>
+            </View>
+          )}
+        </View>
+
+        {/* ── Session Scans ──────────────────────────────────────── */}
+        <View style={s.section}>
+          <View style={s.sectionLabelRow}>
+            <Text style={s.sectionLabel}>Scans & Imaging</Text>
+            <View style={s.optionalBadge}>
+              <Text style={s.optionalBadgeText}>Optional</Text>
+            </View>
+          </View>
+          <Text style={s.scanHint}>
+            Upload an X-ray, CT/MRI, or PDF report to get an AI analysis linked to your interview findings. You can skip this and continue to book an appointment below.
+          </Text>
+
+          {/* Upload button */}
+          <TouchableOpacity
+            style={s.uploadScanBtn}
+            onPress={uploadScan}
+            disabled={uploading}
+            activeOpacity={0.8}
+          >
+            {uploading ? (
+              <ActivityIndicator size="small" color="#60A5FA" />
+            ) : (
+              <Ionicons name="cloud-upload-outline" size={16} color="#60A5FA" style={{ flexShrink: 0 }} />
+            )}
+            <Text style={s.uploadScanText}>
+              {uploading ? "Uploading…" : "Upload Scan or Report"}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Existing scans */}
+          {(report.session_scans ?? []).length > 0 ? (
+            (report.session_scans ?? []).map((scan) => (
+              <View key={scan._id} style={s.scanCard}>
+                <View style={s.scanHeader}>
+                  <View style={s.scanIconWrap}>
+                    <Ionicons
+                      name={scan.upload_type === "pdf" ? "document-outline" : "scan-outline"}
+                      size={16}
+                      color="#A78BFA"
+                    />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={s.scanFilename} numberOfLines={1}>
+                      {scan.original_filename || (scan.upload_type === "pdf" ? "Document" : "Scan")}
+                    </Text>
+                    <Text style={s.scanDate}>
+                      {scan.created_at ? new Date(scan.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : ""}
+                    </Text>
+                  </View>
+                  <View style={[s.scanStatusBadge, { backgroundColor: scanStatusBg(scan.status) }]}>
+                    <Text style={[s.scanStatusText, { color: scanStatusColor(scan.status) }]}>
+                      {scanStatusLabel(scan.status)}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Analysis result */}
+                {scan.status === "complete" && scan.analysis_result?.summary ? (
+                  <View style={s.scanBody}>
+                    <Text style={s.scanBodyLabel}>AI Analysis</Text>
+                    <Text style={s.scanBodyText}>{scan.analysis_result.summary}</Text>
+                    {(scan.analysis_result.findings ?? []).length > 0 && (
+                      <View style={s.scanFindings}>
+                        {(scan.analysis_result.findings ?? []).map((f, i) => (
+                          <View key={i} style={s.scanFindingRow}>
+                            <View style={s.scanFindingDot} />
+                            <Text style={s.scanFindingText}>{f}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                ) : null}
+
+                {/* Clinical correlation */}
+                {scan.clinical_correlation ? (
+                  <View style={s.correlationBox}>
+                    <View style={s.correlationHeader}>
+                      <Ionicons name="git-merge-outline" size={14} color="#818CF8" style={{ flexShrink: 0 }} />
+                      <Text style={s.correlationLabel}>Clinical Correlation</Text>
+                    </View>
+                    <Text style={s.correlationText}>{scan.clinical_correlation}</Text>
+                  </View>
+                ) : scan.status === "complete" ? (
+                  <View style={s.correlationBox}>
+                    <Text style={s.correlationPending}>
+                      Clinical correlation not yet available.
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Error message */}
+                {(scan.status === "error" || scan.status === "unavailable") && scan.error_message ? (
+                  <Text style={s.scanError}>{scan.error_message}</Text>
+                ) : null}
+              </View>
+            ))
+          ) : (
+            <View style={s.emptyCard}>
+              <Text style={s.emptyCardText}>No scans uploaded yet.</Text>
             </View>
           )}
         </View>
@@ -826,6 +1050,31 @@ const s = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1,
     marginTop: 4,
+  },
+  sectionLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 2,
+  },
+  optionalBadge: {
+    backgroundColor: "rgba(148,163,184,0.14)",
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  optionalBadgeText: {
+    color: "rgba(148,163,184,0.70)",
+    fontSize: 10,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  scanHint: {
+    color: "rgba(255,255,255,0.38)",
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 10,
   },
 
   diagCard: {
@@ -1032,6 +1281,149 @@ const s = StyleSheet.create({
     lineHeight: 20,
     flex: 1,
     flexShrink: 1,
+  },
+
+  // ── Upload scan button ───────────────────────────────────────────────────────
+  uploadScanBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    backgroundColor: "rgba(37,99,235,0.10)",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(96,165,250,0.22)",
+    borderStyle: "dashed",
+    marginBottom: 10,
+  },
+  uploadScanText: {
+    color: "#60A5FA",
+    fontSize: 13,
+    fontWeight: "700",
+    flex: 1,
+  },
+
+  // ── Scan card ─────────────────────────────────────────────────────────────────
+  scanCard: {
+    backgroundColor: "rgba(167,139,250,0.06)",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.15)",
+    gap: 12,
+    marginBottom: 10,
+  },
+  scanHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  scanIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(167,139,250,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  scanFilename: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  scanDate: {
+    color: "rgba(255,255,255,0.35)",
+    fontSize: 10,
+    marginTop: 2,
+  },
+  scanStatusBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    flexShrink: 0,
+  },
+  scanStatusComplete:   { backgroundColor: "rgba(52,211,153,0.10)"  },
+  scanStatusProcessing: { backgroundColor: "rgba(251,191,36,0.10)"  },
+  scanStatusError:      { backgroundColor: "rgba(248,113,113,0.10)" },
+  scanStatusText: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  scanBody: {
+    gap: 6,
+  },
+  scanBodyLabel: {
+    color: "rgba(255,255,255,0.40)",
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  scanBodyText: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  scanFindings: {
+    gap: 5,
+    marginTop: 4,
+  },
+  scanFindingRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  scanFindingDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#A78BFA",
+    marginTop: 7,
+    flexShrink: 0,
+  },
+  scanFindingText: {
+    color: "rgba(255,255,255,0.65)",
+    fontSize: 12,
+    lineHeight: 18,
+    flex: 1,
+  },
+  scanError: {
+    color: "rgba(248,113,113,0.70)",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  // ── Clinical correlation box ──────────────────────────────────────────────────
+  correlationBox: {
+    backgroundColor: "rgba(99,102,241,0.08)",
+    borderRadius: 11,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(99,102,241,0.20)",
+    gap: 7,
+  },
+  correlationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  correlationLabel: {
+    color: "#818CF8",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  correlationText: {
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 13,
+    lineHeight: 21,
+  },
+  correlationPending: {
+    color: "rgba(255,255,255,0.30)",
+    fontSize: 12,
+    fontStyle: "italic",
   },
 });
 
