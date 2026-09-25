@@ -41,6 +41,7 @@ from glinker.diagnosis.assessment           import generate_diagnosis_assessment
 from glinker.diagnosis.doctor_report        import generate_doctor_report
 from glinker.diagnosis.patient_summary      import generate_patient_summary
 from glinker.images.pdf_analysis            import analyze_pdf
+from glinker.images.correlation             import correlate_image_with_report
 
 app = Flask(__name__)
 
@@ -291,6 +292,42 @@ def images_analyze_pdf():
         return jsonify({"error": str(exc)}), 422
     except Exception as exc:
         return jsonify({"error": f"Analysis failed: {exc}"}), 502
+
+
+# ── Images: clinical correlation ─────────────────────────────────────────────
+
+@app.route("/images/correlate-with-report", methods=["POST"])
+def images_correlate_with_report():
+    """
+    Correlate a MedGemma / PDF image analysis with the patient's interview report.
+
+    Body:
+      {
+        "image_analysis":   { ... },   # analysis_result from ImageUpload
+        "clinical_summary": {          # compact subset of the Report
+          "disease_ranking":       [...],
+          "complaint_summary":     "...",
+          "rag_summary":           "...",
+          "interpreted_diagnoses": [...]
+        }
+      }
+
+    Returns:
+      { "correlation": "<clinical correlation text>" }
+    """
+    data             = request.get_json(force=True)
+    image_analysis   = data.get("image_analysis")
+    clinical_summary = data.get("clinical_summary")
+
+    if not image_analysis:
+        return jsonify({"error": "image_analysis is required"}), 400
+
+    try:
+        result = correlate_image_with_report(image_analysis, clinical_summary or {})
+        return jsonify(result)
+    except Exception as exc:
+        print(f"[images_correlate_with_report] ERROR: {exc}")
+        return jsonify({"error": f"Correlation failed: {exc}"}), 502
 
 
 # ── Launch (called from the notebook after secrets are loaded) ────────────────
