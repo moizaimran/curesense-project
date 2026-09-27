@@ -72,7 +72,7 @@ export default function ProfileScreen() {
 
   async function fetchData() {
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const patient_id = await Storage.getItemAsync("patient_id");
 
       if (!token) {
@@ -99,7 +99,9 @@ export default function ProfileScreen() {
   }
 
   async function handleLogout() {
-    await Storage.deleteItemAsync("token");
+    const { firebaseAuth } = await import("@/utils/firebaseClient");
+    const { signOut }      = await import("firebase/auth");
+    await signOut(firebaseAuth).catch(() => {});
     await Storage.deleteItemAsync("role");
     await Storage.deleteItemAsync("patient_id");
     router.replace("/");
@@ -344,10 +346,10 @@ export default function ProfileScreen() {
             </View>
 
             <View style={s.interviewContent}>
-              <Text style={s.interviewBtnTitle}>Start AI Interview</Text>
+              <Text style={s.interviewBtnTitle}>Start AI Consultation</Text>
 
               <Text style={s.interviewBtnSub}>
-                Describe your symptoms to your AI intake assistant
+                Describe your symptoms to your AI doctor assistant
               </Text>
             </View>
 

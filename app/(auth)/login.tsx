@@ -78,9 +78,8 @@ export default function LoginScreen() {
       );
 
       router.replace("/(patient)/profile" as any);
-    } catch (err) {
-      console.log("LOGIN ERROR:", err);
-      setError(`Could not connect to the server: ${String(err)}`);
+    } catch {
+      setError("Could not connect to the server. Please try again.");
     } finally {
       setLoading(false);
     }

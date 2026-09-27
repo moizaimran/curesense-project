@@ -86,7 +86,7 @@ export default function PatientLayout() {
       <Tabs.Screen
         name="interview"
         options={{
-          title: "Interview",
+          title: "Consult",
           tabBarIcon: ({ color, focused }) => (
             <TabIcon
               name="mic-outline"

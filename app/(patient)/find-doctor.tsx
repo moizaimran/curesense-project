@@ -196,7 +196,7 @@ export default function FindDoctorScreen() {
     else setLoadingMore(true);
     setError("");
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const params = new URLSearchParams({
         page: String(targetPage),
         limit: "20",

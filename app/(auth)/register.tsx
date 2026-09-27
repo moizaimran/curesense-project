@@ -18,7 +18,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { MultiSelect } from "@/components/MultiSelect";
 import { API_URL } from "@/constants/api";
-import * as Storage from "@/utils/storage";
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -409,28 +408,15 @@ export default function RegisterScreen() {
         }),
       });
 
-      console.log("STATUS:", res.status);
-      console.log("OK:", res.ok);
-
       const data = await res.json();
-
-      console.log("RESPONSE:", data);
 
       if (!res.ok) {
         setError(data.error || "Registration failed. Please try again.");
         return;
       }
 
-      await Storage.setItemAsync("token", data.token);
-
-      await Storage.setItemAsync("role", data.user.role);
-
-      await Storage.setItemAsync(
-        "patient_id",
-        data.user.patient_id?.toString() ?? "",
-      );
-
-      router.replace("/(patient)/profile" as any);
+      // Navigate to email verification screen — account is not active yet
+      router.push({ pathname: "/(auth)/verify-email" as any, params: { email: email.trim() } });
     } catch (e: any) {
       setError(e?.message ?? "Registration error. Please try again.");
     } finally {
@@ -500,6 +486,14 @@ export default function RegisterScreen() {
             <Text style={s.heading}>Create your account</Text>
             <Text style={s.sub}>
               Start your smarter health journey with CureSense.
+            </Text>
+          </View>
+
+          {/* ── Email warning ── */}
+          <View style={s.emailWarning}>
+            <Ionicons name="mail-outline" size={18} color="#FBBF24" />
+            <Text style={s.emailWarningText}>
+              <Text style={s.emailWarningBold}>Important:</Text> Enter a real email address you have access to. We'll send a 6-digit verification code there — you cannot complete registration without it.
             </Text>
           </View>
 
@@ -1357,5 +1351,29 @@ const s = StyleSheet.create({
     textAlign: "center",
     marginTop: 17,
     paddingHorizontal: 10,
+  },
+
+  emailWarning: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: 13,
+    borderRadius: 14,
+    backgroundColor: "rgba(251,191,36,0.07)",
+    borderWidth: 1,
+    borderColor: "rgba(251,191,36,0.25)",
+    marginBottom: 16,
+  },
+
+  emailWarningText: {
+    flex: 1,
+    color: "rgba(251,191,36,0.85)",
+    fontSize: 11.5,
+    lineHeight: 17,
+  },
+
+  emailWarningBold: {
+    fontWeight: "800",
+    color: "#FBBF24",
   },
 });

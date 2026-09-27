@@ -191,7 +191,7 @@ export default function BookAppointmentScreen() {
     setDatesLoading(true);
     setDatesError("");
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const res = await fetch(
         `${API_URL}/api/doctors/${doctor_profile_id}/availability/dates`,
         { headers: { Authorization: `Bearer ${token}` } },
@@ -219,7 +219,7 @@ export default function BookAppointmentScreen() {
     setSlotsCapacityMode(false);
     setSlotsSpotsLeft(null);
 
-    Storage.getItemAsync("token").then((token) => {
+    Storage.getAuthToken().then((token) => {
       fetch(
         `${API_URL}/api/doctors/${doctor_profile_id}/availability?date=${selectedDate}`,
         { headers: { Authorization: `Bearer ${token}` } },
@@ -263,7 +263,7 @@ export default function BookAppointmentScreen() {
     }
     setBooking(true);
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const res = await fetch(`${API_URL}/api/appointments`, {
         method: "POST",
         headers: {
@@ -424,7 +424,7 @@ export default function BookAppointmentScreen() {
             />
             <SummaryRow
               label="Report shared"
-              value={report_id ? "Yes — AI interview report" : "None"}
+              value={report_id ? "Yes — AI consultation report" : "None"}
             />
 
             <TouchableOpacity

@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": ["mobile", "com.googleusercontent.apps.404929302395-ul8nq13macaht9u6bp8egheh0vb50ftg"],
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
@@ -37,7 +37,8 @@
         }
       ],
       "expo-secure-store",
-      "expo-audio"
+      "expo-audio",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true

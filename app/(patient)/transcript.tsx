@@ -99,7 +99,7 @@ export default function TranscriptScreen() {
 
   async function fetchSession() {
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const res = await fetch(`${API_URL}/api/sessions/${session_id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -156,7 +156,7 @@ export default function TranscriptScreen() {
             >
               <Ionicons name="pulse" size={12} color={C.white} />
             </LinearGradient>
-            <Text style={s.headerTitle}>Interview Transcript</Text>
+            <Text style={s.headerTitle}>Consultation Transcript</Text>
           </View>
           {meta && <Text style={s.headerDate}>{meta.date}</Text>}
         </View>

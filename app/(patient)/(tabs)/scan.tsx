@@ -133,7 +133,7 @@ function typeColor(t: UploadType) {
 }
 
 async function authHeaders() {
-  const token = await Storage.getItemAsync("token");
+  const token = await Storage.getAuthToken();
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",

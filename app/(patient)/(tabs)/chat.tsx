@@ -159,7 +159,7 @@ export default function AppointmentsScreen() {
     else setLoading(true);
     setError("");
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const patient_id = await Storage.getItemAsync("patient_id");
       const res = await fetch(
         `${API_URL}/api/patients/${patient_id}/appointments`,
@@ -283,7 +283,7 @@ export default function AppointmentsScreen() {
               </Text>
               {activeTab === "ongoing" || activeTab === "pending" ? (
                 <Text style={s.emptySub}>
-                  Complete an AI interview and book a doctor to get started.
+                  Complete an AI consultation and book a doctor to get started.
                 </Text>
               ) : null}
             </View>

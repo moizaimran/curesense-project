@@ -85,7 +85,7 @@ export default function ReportsScreen() {
     setError("");
 
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const patient_id = await Storage.getItemAsync("patient_id");
 
       const headers = {
@@ -103,7 +103,10 @@ export default function ReportsScreen() {
 
       setSessions(sessData);
 
-      if (repRes.ok) setReports(await repRes.json());
+      if (repRes.ok) {
+        const repData = await repRes.json();
+        setReports(Array.isArray(repData) ? repData : repData.results ?? repData.reports ?? []);
+      }
     } catch (e: any) {
       setError(e.message ?? "Failed to load data");
     } finally {
@@ -128,7 +131,7 @@ export default function ReportsScreen() {
             setDeleting(sessionId);
 
             try {
-              const token = await Storage.getItemAsync("token");
+              const token = await Storage.getAuthToken();
 
               const res = await fetch(
                 `${API_URL}/api/sessions/${sessionId}/delete`,
@@ -158,7 +161,7 @@ export default function ReportsScreen() {
   }
 
   const reportBySession = Object.fromEntries(
-    reports.map((r) => [r.session_id, r]),
+    (Array.isArray(reports) ? reports : []).map((r) => [r.session_id, r]),
   );
 
   const active = sessions.filter((s) => s.status === "in_progress");
@@ -233,7 +236,7 @@ export default function ReportsScreen() {
         </View>
 
         <Text style={s.pageDescription}>
-          View your previous medical interviews and generated reports.
+          View your previous AI consultations and generated reports.
         </Text>
 
         {/* ── Error ─────────────────────────────────────────────────── */}
@@ -276,7 +279,7 @@ export default function ReportsScreen() {
             <Text style={s.emptyTitle}>No reports yet</Text>
 
             <Text style={s.emptySub}>
-              Complete an AI medical interview and your reports will appear
+              Complete an AI consultation and your reports will appear
               here.
             </Text>
 
@@ -297,7 +300,7 @@ export default function ReportsScreen() {
                   color="#fff"
                 />
 
-                <Text style={s.emptyActionText}>Start Interview</Text>
+                <Text style={s.emptyActionText}>Start Consultation</Text>
               </LinearGradient>
             </TouchableOpacity>
           </View>
@@ -315,7 +318,7 @@ export default function ReportsScreen() {
                   </View>
 
                   <View style={s.activeTitleWrap}>
-                    <Text style={s.activeTitle}>Medical Interview</Text>
+                    <Text style={s.activeTitle}>AI Consultation</Text>
 
                     <Text style={s.cardDate}>
                       Started {fmtDate(sess.started_at)}
@@ -341,7 +344,7 @@ export default function ReportsScreen() {
 
                 <View style={s.progressArea}>
                   <View style={s.progressHeader}>
-                    <Text style={s.progressLabel}>Interview progress</Text>
+                    <Text style={s.progressLabel}>Consultation progress</Text>
 
                     <Text style={s.progressCount}>
                       {sess.turn_count} question
@@ -426,7 +429,7 @@ export default function ReportsScreen() {
 
                     <View style={s.completedTitleWrap}>
                       <Text style={s.sessionName} numberOfLines={2}>
-                        {sess.session_name || "Medical Interview"}
+                        {sess.session_name || "AI Consultation"}
                       </Text>
 
                       <Text style={s.metaDate}>
@@ -532,7 +535,7 @@ export default function ReportsScreen() {
 
                   <View style={s.expiredInfo}>
                     <Text style={s.expiredTitle}>
-                      {sess.session_name || "Medical Interview"}
+                      {sess.session_name || "AI Consultation"}
                     </Text>
 
                     <Text style={s.expiredDate}>

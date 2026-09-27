@@ -101,7 +101,7 @@ export default function InterviewScreen() {
     setStage("checking");
 
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const patient_id = await Storage.getItemAsync("patient_id");
 
       const res = await fetch(
@@ -207,7 +207,7 @@ export default function InterviewScreen() {
     setStarting(true);
 
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
 
       const res = await fetch(`${API_URL}/api/sessions`, {
         method: "POST",
@@ -274,7 +274,7 @@ export default function InterviewScreen() {
     setIsFirstQ(false);
 
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
 
       const res = await fetch(`${API_URL}/api/sessions/${sid}/turn`, {
         method: "POST",
@@ -352,7 +352,7 @@ export default function InterviewScreen() {
           encoding: FileSystem.EncodingType.Base64,
         });
 
-        const token = await Storage.getItemAsync("token");
+        const token = await Storage.getAuthToken();
 
         const res = await fetch(`${API_URL}/api/sessions/${sessionId}/transcribe`, {
           method: "POST",
@@ -416,7 +416,7 @@ export default function InterviewScreen() {
           style={{ marginTop: 24 }}
         />
 
-        <Text style={s.checkingText}>Preparing your interview...</Text>
+        <Text style={s.checkingText}>Preparing your consultation...</Text>
       </LinearGradient>
     );
   }
@@ -456,7 +456,7 @@ export default function InterviewScreen() {
 
           <View>
             <Text style={s.headerBrand}>CureSense</Text>
-            <Text style={s.headerSubtitle}>AI Health Interview</Text>
+            <Text style={s.headerSubtitle}>AI Doctor Consultation</Text>
           </View>
         </View>
 
@@ -901,7 +901,7 @@ function GreetingScreen({
         <View style={g.titleWrap}>
           <Text style={g.eyebrow}>AI-ASSISTED HEALTHCARE</Text>
 
-          <Text style={g.title}>Medical Interview</Text>
+          <Text style={g.title}>AI Doctor Consultation</Text>
 
           <Text style={g.sub}>
             Answer a few questions about your symptoms so your doctor can
@@ -989,7 +989,7 @@ function GreetingScreen({
               <ActivityIndicator color="#fff" />
             ) : (
               <>
-                <Text style={g.startBtnText}>Begin Interview</Text>
+                <Text style={g.startBtnText}>Begin Consultation</Text>
 
                 <View style={g.arrowCircle}>
                   <Ionicons name="arrow-forward" size={17} color="#2563EB" />

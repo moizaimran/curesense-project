@@ -268,7 +268,7 @@ export default function AppointmentDetailScreen() {
     setError("");
 
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
 
       const res = await fetch(`${API_URL}/api/appointments/${appointment_id}`, {
         headers: {
@@ -298,7 +298,7 @@ export default function AppointmentDetailScreen() {
     setSending(true);
 
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
 
       const res = await fetch(
         `${API_URL}/api/appointments/${appointment_id}/queries`,
@@ -358,7 +358,7 @@ export default function AppointmentDetailScreen() {
     setCancelling(true);
 
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
 
       const res = await fetch(
         `${API_URL}/api/appointments/${appointment_id}/cancel`,
@@ -500,7 +500,7 @@ export default function AppointmentDetailScreen() {
       // Send Base64 to backend
       // ───────────────────────────────────────────────────────────────────────
 
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
 
       const res = await fetch(
         `${API_URL}/api/appointments/${appointment_id}/test-uploads`,

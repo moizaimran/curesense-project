@@ -450,7 +450,7 @@ export default function ReportSheetScreen() {
         encoding: FileSystem.EncodingType.Base64,
       });
 
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const res = await fetch(`${API_URL}/api/images/upload-for-session`, {
         method: "POST",
         headers: {
@@ -482,7 +482,7 @@ export default function ReportSheetScreen() {
 
   async function fetchData() {
     try {
-      const token = await Storage.getItemAsync("token");
+      const token = await Storage.getAuthToken();
       const headers = { Authorization: `Bearer ${token}` };
       const [repRes, sessRes] = await Promise.all([
         fetch(`${API_URL}/api/reports/session/${session_id}`, { headers }),
@@ -543,7 +543,7 @@ export default function ReportSheetScreen() {
   const apptItems =
     ps.selfCareGuidance?.map((g) => g.point).filter(Boolean) ?? [];
   const flagItems = flags.map((f) => `${f.drug}: ${f.flag}`).filter(Boolean);
-  const sessionName = session.session_name || "Medical Interview";
+  const sessionName = session.session_name || "AI Doctor Consultation";
 
   return (
     <View style={{ flex: 1, backgroundColor: "#0B1437" }}>
@@ -766,7 +766,7 @@ export default function ReportSheetScreen() {
             </View>
           </View>
           <Text style={s.scanHint}>
-            Upload an X-ray, CT/MRI, or PDF report to get an AI analysis linked to your interview findings. You can skip this and continue to book an appointment below.
+            Upload an X-ray, CT/MRI, or PDF report to get an AI analysis linked to your consultation findings. You can skip this and continue to book an appointment below.
           </Text>
 
           {/* Upload button */}
@@ -878,7 +878,7 @@ export default function ReportSheetScreen() {
             color="#60A5FA"
             style={{ flexShrink: 0 }}
           />
-          <Text style={s.transcriptBtnText}>View Interview Transcript</Text>
+          <Text style={s.transcriptBtnText}>View Consultation Transcript</Text>
           <Ionicons
             name="chevron-forward"
             size={14}
