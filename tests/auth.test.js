@@ -1,59 +1,110 @@
 // =============================================================================
 // Backend/tests/auth.test.js
 //
-// Coverage: authController (register, login, createStaff, assignPatient, getMe)
+// Coverage: authController (register, verifyEmail, createStaff, assignPatient, getMe)
 //
-// Critical Phase-1 tests:
-//  · Doctor pending/rejected login gate — the verification must block token issuance,
-//    not just hide the dashboard.
-//  · Unified signToken — only one implementation imported from utils/jwt.
-//  · Input validation helpers shared across all three signup flows.
+// Firebase Admin SDK is fully mocked — no real Firebase calls happen.
+// The protect middleware calls admin.auth().verifyIdToken(token); we configure
+// that mock per-test via makeToken() which registers a fake decoded payload.
 // =============================================================================
 
-process.env.JWT_SECRET = "test_secret_for_jest";
+// ── Firebase Admin mocks — must appear before any require("../app") ──────────
+
+jest.mock("firebase-admin/app", () => ({
+  initializeApp: jest.fn(),
+  getApps:       jest.fn(() => [{}]),   // pretend already initialised
+  cert:          jest.fn(x => x),
+}));
+
+jest.mock("firebase-admin/auth", () => {
+  const auth = {
+    verifyIdToken:                   jest.fn(),
+    createUser:                      jest.fn(),
+    getUserByEmail:                  jest.fn(),
+    getUser:                         jest.fn(),
+    generateEmailVerificationLink:   jest.fn().mockResolvedValue("http://fake-verify-link"),
+    generatePasswordResetLink:       jest.fn().mockResolvedValue("http://fake-reset-link"),
+    updateUser:                      jest.fn().mockResolvedValue(undefined),
+    deleteUser:                      jest.fn().mockResolvedValue(undefined),
+  };
+  return { getAuth: jest.fn(() => auth) };
+});
+
+jest.mock("../services/emailService", () => ({
+  sendVerificationLinkEmail:  jest.fn().mockResolvedValue(undefined),
+  sendPasswordResetLinkEmail: jest.fn().mockResolvedValue(undefined),
+  sendOTPEmail:               jest.fn().mockResolvedValue(undefined),
+}));
+
+// ── Imports ───────────────────────────────────────────────────────────────────
 
 const request  = require("supertest");
-const jwt      = require("jsonwebtoken");
 const mongoose = require("mongoose");
 
 const app = require("../app");
 const { connect, closeDatabase, clearDatabase } = require("./mongoTestHelper");
 
-const User         = require("../models/User");
-const Patient      = require("../models/Patient");
-const DoctorProfile = require("../models/DoctorProfile");
-const DoctorAvailability = require("../models/DoctorAvailability");
+const User                    = require("../models/User");
+const Patient                 = require("../models/Patient");
+const DoctorProfile           = require("../models/DoctorProfile");
 const PatientDoctorAssignment = require("../models/PatientDoctorAssignment");
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Get handle to the mocked auth instance so tests can configure it
+const { getAuth } = require("firebase-admin/auth");
+const fbAuth = getAuth();
 
-const makeToken = (userId) =>
-  jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "1d" });
+// ── Token registry ────────────────────────────────────────────────────────────
+// makeToken registers a fake Firebase decoded payload keyed by an arbitrary
+// string. verifyIdToken resolves with the payload when called with that string.
 
-const VALID_PATIENT_BODY = {
-  name:     "Jane Doe",
-  email:    "jane@example.com",
-  password: "password1",
-  dob:      "1990-05-15",
-  gender:   "female",
-};
+let _tokens = {};
+
+function makeToken(user, { emailVerified = true } = {}) {
+  const tok = `mock-fb-token-${user.provider_uid}`;
+  _tokens[tok] = { uid: user.provider_uid, email_verified: emailVerified };
+  return tok;
+}
+
+// ── DB helpers ────────────────────────────────────────────────────────────────
 
 async function createAdminUser() {
+  const uid  = "uid-admin-test";
   const user = await User.create({
-    name:     "Admin User",
-    email:    "admin@example.com",
-    password: "admin1234",
-    role:     "admin",
+    name:         "Admin User",
+    email:        "admin@example.com",
+    role:         "admin",
+    is_verified:  true,
+    provider_uid: uid,
   });
-  return { user, token: makeToken(user._id) };
+  return { user, token: makeToken(user) };
+}
+
+async function createPatientUser() {
+  const uid     = "uid-patient-test";
+  const patient = await Patient.create({
+    name: "Jane Doe", dob: "1990-05-15", gender: "female",
+    contact: { email: "jane@example.com", phone: "" },
+    current_medications: [], allergies: [], medical_conditions: [],
+  });
+  const user = await User.create({
+    name:         "Jane Doe",
+    email:        "jane@example.com",
+    role:         "patient",
+    is_verified:  true,
+    patient_id:   patient._id,
+    provider_uid: uid,
+  });
+  return { user, token: makeToken(user) };
 }
 
 async function createDoctorWithStatus(status) {
+  const uid  = `uid-doctor-${status}`;
   const user = await User.create({
-    name:     "Dr Smith",
-    email:    `doctor-${status}@example.com`,
-    password: "password1",
-    role:     "doctor",
+    name:         "Dr Smith",
+    email:        `doctor-${status}@example.com`,
+    role:         "doctor",
+    is_verified:  status === "verified",
+    provider_uid: uid,
   });
   const profile = await DoctorProfile.create({
     user_id:     user._id,
@@ -64,33 +115,65 @@ async function createDoctorWithStatus(status) {
     contact:     { phone: "0300-0000001", email: user.email },
     status,
   });
-  return { user, profile };
+  return { user, profile, token: makeToken(user) };
 }
+
+// ── Valid registration body ───────────────────────────────────────────────────
+
+const VALID_PATIENT_BODY = {
+  name:     "Jane Doe",
+  email:    "jane@example.com",
+  password: "password1",
+  dob:      "1990-05-15",
+  gender:   "female",
+};
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 
 beforeAll(async () => await connect());
 afterAll(async () => await closeDatabase());
-beforeEach(async () => await clearDatabase());
+
+beforeEach(async () => {
+  await clearDatabase();
+  jest.clearAllMocks();
+  _tokens = {};
+
+  // Default: createUser returns a uid derived from email
+  fbAuth.createUser.mockImplementation(async ({ email }) => ({
+    uid:           `uid-${email.split("@")[0].replace(/[^a-z0-9]/g, "-")}`,
+    email,
+    emailVerified: false,
+    disabled:      false,
+  }));
+
+  // Default: verifyIdToken resolves from the token registry, rejects otherwise
+  fbAuth.verifyIdToken.mockImplementation(async (token) => {
+    if (_tokens[token]) return _tokens[token];
+    const err = Object.assign(new Error("auth/id-token-invalid"), { code: "auth/id-token-invalid" });
+    throw err;
+  });
+
+  // Default: getUser reports email as verified (used by verifyEmail endpoint)
+  fbAuth.getUser.mockResolvedValue({ emailVerified: true });
+
+  // Default: link generators
+  fbAuth.generateEmailVerificationLink.mockResolvedValue("http://fake-verify-link");
+  fbAuth.generatePasswordResetLink.mockResolvedValue("http://fake-reset-link");
+});
 
 // =============================================================================
 // 1. Patient registration
 // =============================================================================
 describe("POST /api/auth/register — patient registration", () => {
-  test("happy path: 201 with token and normalised user shape", async () => {
+  test("happy path: 201 with message + email (no token — client signs in via Firebase SDK)", async () => {
     const res = await request(app)
       .post("/api/auth/register")
       .send(VALID_PATIENT_BODY);
 
     expect(res.status).toBe(201);
-    expect(res.body.token).toBeDefined();
-    expect(res.body.user).toMatchObject({
-      name:           "Jane Doe",
-      email:          "jane@example.com",
-      role:           "patient",
-      doctor_profile: null,
-    });
-    expect(res.body.user.patient_id).toBeTruthy();
+    expect(res.body.message).toMatch(/verification link/i);
+    expect(res.body.email).toBe(VALID_PATIENT_BODY.email);
+    expect(res.body.token).toBeUndefined();
   });
 
   test("creates linked Patient profile in DB", async () => {
@@ -98,6 +181,14 @@ describe("POST /api/auth/register — patient registration", () => {
     const patient = await Patient.findOne({ "contact.email": "jane@example.com" });
     expect(patient).not.toBeNull();
     expect(patient.name).toBe("Jane Doe");
+  });
+
+  test("creates User with provider_uid from Firebase", async () => {
+    await request(app).post("/api/auth/register").send(VALID_PATIENT_BODY);
+    const user = await User.findOne({ email: "jane@example.com" });
+    expect(user).not.toBeNull();
+    expect(user.provider_uid).toBeTruthy();
+    expect(user.is_verified).toBe(false);
   });
 
   test("missing name → 400", async () => {
@@ -155,8 +246,11 @@ describe("POST /api/auth/register — patient registration", () => {
     expect(res.status).toBe(400);
   });
 
-  test("duplicate email → 409", async () => {
+  test("duplicate verified email → 409", async () => {
+    // First registration + mark verified
     await request(app).post("/api/auth/register").send(VALID_PATIENT_BODY);
+    await User.findOneAndUpdate({ email: VALID_PATIENT_BODY.email }, { is_verified: true });
+
     const res = await request(app).post("/api/auth/register").send(VALID_PATIENT_BODY);
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/already registered/i);
@@ -164,116 +258,21 @@ describe("POST /api/auth/register — patient registration", () => {
 });
 
 // =============================================================================
-// 2. Login — including doctor verification gate (Phase 1)
+// 2. POST /api/auth/login — REMOVED
+//    Login is handled entirely by Firebase Client SDK on the mobile/web.
+//    Clients call signInWithEmailAndPassword, get an ID token, and send it
+//    as a Bearer to all API calls. There is no /api/auth/login endpoint.
 // =============================================================================
-describe("POST /api/auth/login", () => {
-  test("patient happy path → 200 with token", async () => {
-    await request(app).post("/api/auth/register").send(VALID_PATIENT_BODY);
-
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: VALID_PATIENT_BODY.email, password: VALID_PATIENT_BODY.password });
-
-    expect(res.status).toBe(200);
-    expect(res.body.token).toBeDefined();
-    expect(res.body.user.role).toBe("patient");
-  });
-
-  test("missing email → 400", async () => {
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ password: "password1" });
-    expect(res.status).toBe(400);
-  });
-
-  test("missing password → 400", async () => {
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: "test@test.com" });
-    expect(res.status).toBe(400);
-  });
-
-  test("wrong password → 401 (not 404)", async () => {
-    await request(app).post("/api/auth/register").send(VALID_PATIENT_BODY);
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: VALID_PATIENT_BODY.email, password: "wrongpassword1" });
-    expect(res.status).toBe(401);
-    expect(res.body.error).toMatch(/Invalid credentials/);
-  });
-
-  test("nonexistent email → 401 (same message as wrong password)", async () => {
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: "nobody@example.com", password: "password1" });
-    expect(res.status).toBe(401);
-    expect(res.body.error).toMatch(/Invalid credentials/);
-  });
-
-  test("verified doctor → 200 with doctor_profile in response", async () => {
-    const { user, profile } = await createDoctorWithStatus("verified");
-
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: user.email, password: "password1" });
-
-    expect(res.status).toBe(200);
-    expect(res.body.token).toBeDefined();
-    expect(res.body.user.doctor_profile).toMatchObject({
-      status:    "verified",
-      specialty: "Cardiology",
-    });
-  });
-
-  // ── PHASE 1: Doctor verification gate ──────────────────────────────────────
-  // Previously, pending/rejected doctors could obtain a valid JWT. This gate
-  // must block token issuance entirely — not just hide UI features.
-
-  test("GATE: pending doctor login → 403, no token issued", async () => {
-    const { user } = await createDoctorWithStatus("pending");
-
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: user.email, password: "password1" });
-
-    expect(res.status).toBe(403);
-    expect(res.body.token).toBeUndefined();
-    expect(res.body.error).toMatch(/pending verification/i);
-  });
-
-  test("GATE: rejected doctor login → 403, no token issued", async () => {
-    const { user } = await createDoctorWithStatus("rejected");
-
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: user.email, password: "password1" });
-
-    expect(res.status).toBe(403);
-    expect(res.body.token).toBeUndefined();
-    expect(res.body.error).toMatch(/not approved/i);
-  });
-
-  test("admin login → 200, doctor_profile null", async () => {
-    const { user } = await createAdminUser();
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: user.email, password: "admin1234" });
-
-    expect(res.status).toBe(200);
-    expect(res.body.user.role).toBe("admin");
-    expect(res.body.user.doctor_profile).toBeNull();
-  });
-});
 
 // =============================================================================
 // 3. Admin staff creation
 // =============================================================================
 describe("POST /api/auth/staff — admin only", () => {
   test("patient role → 403", async () => {
-    const { body } = await request(app).post("/api/auth/register").send(VALID_PATIENT_BODY);
+    const { token } = await createPatientUser();
     const res = await request(app)
       .post("/api/auth/staff")
-      .set("Authorization", `Bearer ${body.token}`)
+      .set("Authorization", `Bearer ${token}`)
       .send({ name: "New Admin", email: "newadmin@example.com", password: "password1", role: "admin" });
     expect(res.status).toBe(403);
   });
@@ -285,17 +284,6 @@ describe("POST /api/auth/staff — admin only", () => {
     expect(res.status).toBe(401);
   });
 
-  test("admin creates doctor user → 201, no token in response", async () => {
-    const { token } = await createAdminUser();
-    const res = await request(app)
-      .post("/api/auth/staff")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ name: "Dr Jones", email: "drjones@example.com", password: "password1", role: "doctor" });
-    expect(res.status).toBe(201);
-    expect(res.body.user.role).toBe("doctor");
-    expect(res.body.token).toBeUndefined();
-  });
-
   test("admin creates admin user → 201", async () => {
     const { token } = await createAdminUser();
     const res = await request(app)
@@ -303,6 +291,18 @@ describe("POST /api/auth/staff — admin only", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ name: "Admin 2", email: "admin2@example.com", password: "password1", role: "admin" });
     expect(res.status).toBe(201);
+    expect(res.body.user.role).toBe("admin");
+    expect(res.body.token).toBeUndefined();
+  });
+
+  test("doctor role via /staff → 400 (doctors must self-register)", async () => {
+    const { token } = await createAdminUser();
+    const res = await request(app)
+      .post("/api/auth/staff")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Dr Jones", email: "drjones@example.com", password: "password1", role: "doctor" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/self-register/i);
   });
 
   test("role 'patient' not allowed via createStaff → 400", async () => {
@@ -317,7 +317,7 @@ describe("POST /api/auth/staff — admin only", () => {
 
   test("duplicate email → 409", async () => {
     const { token } = await createAdminUser();
-    const body = { name: "Dr Jones", email: "drjones2@example.com", password: "password1", role: "doctor" };
+    const body = { name: "Admin 2", email: "admin2@example.com", password: "password1", role: "admin" };
     await request(app).post("/api/auth/staff").set("Authorization", `Bearer ${token}`).send(body);
     const res = await request(app).post("/api/auth/staff").set("Authorization", `Bearer ${token}`).send(body);
     expect(res.status).toBe(409);
@@ -328,7 +328,7 @@ describe("POST /api/auth/staff — admin only", () => {
     const res = await request(app)
       .post("/api/auth/staff")
       .set("Authorization", `Bearer ${token}`)
-      .send({ name: "Dr X", email: "drx@example.com", password: "abc", role: "doctor" });
+      .send({ name: "Dr X", email: "drx@example.com", password: "abc", role: "admin" });
     expect(res.status).toBe(400);
   });
 });
@@ -349,12 +349,10 @@ describe("POST /api/auth/assign — admin only", () => {
 
   test("admin assigns patient to doctor → 200", async () => {
     const { token, doctorUser, patient } = await buildAssignScenario();
-
     const res = await request(app)
       .post("/api/auth/assign")
       .set("Authorization", `Bearer ${token}`)
       .send({ doctor_user_id: doctorUser._id, patient_id: patient._id });
-
     expect(res.status).toBe(200);
     expect(res.body.assignment.status).toBe("active");
   });
@@ -368,10 +366,10 @@ describe("POST /api/auth/assign — admin only", () => {
   });
 
   test("patient role cannot assign → 403", async () => {
-    const { body } = await request(app).post("/api/auth/register").send(VALID_PATIENT_BODY);
+    const { token } = await createPatientUser();
     const res = await request(app)
       .post("/api/auth/assign")
-      .set("Authorization", `Bearer ${body.token}`)
+      .set("Authorization", `Bearer ${token}`)
       .send({ doctor_user_id: new mongoose.Types.ObjectId(), patient_id: new mongoose.Types.ObjectId() });
     expect(res.status).toBe(403);
   });
@@ -391,12 +389,12 @@ describe("POST /api/auth/assign — admin only", () => {
 // =============================================================================
 describe("GET /api/auth/me", () => {
   test("returns own user when authenticated", async () => {
-    const { body } = await request(app).post("/api/auth/register").send(VALID_PATIENT_BODY);
+    const { token } = await createPatientUser();
     const res = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", `Bearer ${body.token}`);
+      .set("Authorization", `Bearer ${token}`);
     expect(res.status).toBe(200);
-    expect(res.body.email).toBe(VALID_PATIENT_BODY.email);
+    expect(res.body.email).toBe("jane@example.com");
   });
 
   test("no token → 401", async () => {
@@ -409,5 +407,19 @@ describe("GET /api/auth/me", () => {
       .get("/api/auth/me")
       .set("Authorization", "Bearer not.a.real.token");
     expect(res.status).toBe(401);
+  });
+
+  test("token with email_verified=false → 403", async () => {
+    const uid  = "uid-unverified";
+    const user = await User.create({
+      name: "Unverified", email: "unverified@example.com",
+      role: "patient", is_verified: false, provider_uid: uid,
+    });
+    const token = makeToken(user, { emailVerified: false });
+    const res = await request(app)
+      .get("/api/auth/me")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/not verified/i);
   });
 });

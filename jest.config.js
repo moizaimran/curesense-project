@@ -1,8 +1,12 @@
 module.exports = {
   testEnvironment: "node",
   testMatch: ["**/tests/**/*.test.js"],
-  // Give mongodb-memory-server time to download its binary on first run
   testTimeout: 30000,
-  // Suppress Mongoose deprecation warnings in test output
   verbose: true,
+  // Map firebase-admin sub-packages to CJS stubs so jest doesn't choke on
+  // the ESM-only 'jose' dependency bundled inside firebase-admin.
+  moduleNameMapper: {
+    "^firebase-admin/app$":  "<rootDir>/tests/__mocks__/firebase-admin-app.js",
+    "^firebase-admin/auth$": "<rootDir>/tests/__mocks__/firebase-admin-auth.js",
+  },
 };

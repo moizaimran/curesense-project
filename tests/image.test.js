@@ -64,8 +64,9 @@ const makeToken = (userId) =>
 
 async function createPatientUser(suffix = "") {
   const email = `img-patient${suffix}@test.com`;
-  const user = await User.create({
-    name: `Img Patient ${suffix}`, email, password: "password1", role: "patient",
+  const uid   = new mongoose.Types.ObjectId();
+  const user  = await User.create({
+    _id: uid, name: `Img Patient ${suffix}`, email, role: "patient", provider_uid: uid.toString(),
   });
   const patient = await Patient.create({
     name: `Img Patient ${suffix}`, dob: new Date("1990-01-01"), gender: "female",
@@ -79,8 +80,9 @@ async function createPatientUser(suffix = "") {
 
 async function createDoctorWithAssignment(patient) {
   const email = `img-doctor@test.com`;
-  const user = await User.create({
-    name: "Img Doctor", email, password: "password1", role: "doctor",
+  const uid   = new mongoose.Types.ObjectId();
+  const user  = await User.create({
+    _id: uid, name: "Img Doctor", email, role: "doctor", provider_uid: uid.toString(),
   });
   const profile = await DoctorProfile.create({
     user_id: user._id, pmdc_number: "PMDC-IMG-001", specialty: "Radiology",
@@ -320,8 +322,9 @@ describe("GET /api/images/patient/:patientId — listPatientImages", () => {
 
   test("doctor without assignment → 403", async () => {
     const { patient: p1 } = await createPatientUser("5b");
+    const unreId = new mongoose.Types.ObjectId();
     const unrelatedDoctor = await User.create({
-      name: "Unrelated", email: "unrelated@test.com", password: "password1", role: "doctor",
+      _id: unreId, name: "Unrelated", email: "unrelated@test.com", role: "doctor", provider_uid: unreId.toString(),
     });
 
     const res = await request(app)
@@ -342,8 +345,9 @@ describe("GET /api/images/patient/:patientId — listPatientImages", () => {
   });
 
   test("invalid patientId ObjectId → 400", async () => {
+    const dr2Id = new mongoose.Types.ObjectId();
     const unrelatedDoctor = await User.create({
-      name: "Dr2", email: "dr2@test.com", password: "password1", role: "doctor",
+      _id: dr2Id, name: "Dr2", email: "dr2@test.com", role: "doctor", provider_uid: dr2Id.toString(),
     });
     const profile = await DoctorProfile.create({
       user_id: unrelatedDoctor._id, pmdc_number: "PMDC-99", specialty: "X",

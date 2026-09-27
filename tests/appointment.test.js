@@ -34,11 +34,10 @@ const makeToken = (userId) =>
 // Returns all created documents so tests can reference them.
 async function buildConfirmedScenario() {
   // Patient user + profile
+  const patUid    = new mongoose.Types.ObjectId();
   const patientUser = await User.create({
-    name: "Test Patient",
-    email: "patient@test.com",
-    password: "hashedPwd!",  // pre-hashed placeholder; we never test login here
-    role: "patient",
+    _id: patUid, name: "Test Patient", email: "patient@test.com",
+    role: "patient", provider_uid: patUid.toString(),
   });
   const patient = await Patient.create({
     name: "Test Patient",
@@ -49,11 +48,10 @@ async function buildConfirmedScenario() {
   await User.updateOne({ _id: patientUser._id }, { $set: { patient_id: patient._id } });
 
   // Doctor user + profile
+  const docUid    = new mongoose.Types.ObjectId();
   const doctorUser = await User.create({
-    name: "Dr Test",
-    email: "doctor@test.com",
-    password: "hashedPwd!",
-    role: "doctor",
+    _id: docUid, name: "Dr Test", email: "doctor@test.com",
+    role: "doctor", provider_uid: docUid.toString(),
   });
   const doctorProfile = await DoctorProfile.create({
     user_id:     doctorUser._id,
@@ -78,7 +76,7 @@ async function buildConfirmedScenario() {
     patient_id:     patient._id,
     doctor_id:      doctorProfile._id,
     assignment_id:  assignment._id,
-    requested_slot: { date: new Date("2026-09-01"), start_time: "09:00", end_time: "09:30" },
+    requested_slot: { date: "2027-01-10", start_time: "09:00", end_time: "09:30" },
     status:         "confirmed",
   });
 
@@ -164,8 +162,9 @@ describe("Query thread", () => {
     const { appointment } = await buildConfirmedScenario();
 
     // Second unrelated patient
+    const otherId = new mongoose.Types.ObjectId();
     const otherUser = await User.create({
-      name: "Other Patient", email: "other@test.com", password: "password!", role: "patient",
+      _id: otherId, name: "Other Patient", email: "other@test.com", role: "patient", provider_uid: otherId.toString(),
     });
     const otherPatient = await Patient.create({
       name: "Other Patient", dob: new Date("1995-01-01"), gender: "female",
@@ -208,7 +207,7 @@ describe("Self-only report isolation", () => {
       patient_id:     patient._id,
       doctor_id:      doctorProfile._id,
       assignment_id:  assignment._id,
-      requested_slot: { date: new Date("2026-09-10"), start_time: "10:00", end_time: "10:30" },
+      requested_slot: { date: "2027-01-11", start_time: "10:00", end_time: "10:30" },
       status:         "confirmed",
       report_id:      linkedReport._id,
     });
@@ -357,8 +356,10 @@ describe("Cancel appointment", () => {
 // Helper: build a first-time booking scenario — assignment is "pending",
 // appointment is "pending_admin_review". No admin approval yet.
 async function buildPendingScenario() {
+  const penPatUid  = new mongoose.Types.ObjectId();
   const patientUser = await User.create({
-    name: "Pending Patient", email: "pending@test.com", password: "pwd1234!", role: "patient",
+    _id: penPatUid, name: "Pending Patient", email: "pending@test.com",
+    role: "patient", provider_uid: penPatUid.toString(),
   });
   const patient = await Patient.create({
     name: "Pending Patient", dob: new Date("1992-05-10"), gender: "female",
@@ -366,8 +367,10 @@ async function buildPendingScenario() {
   });
   await User.updateOne({ _id: patientUser._id }, { $set: { patient_id: patient._id } });
 
+  const penDocUid  = new mongoose.Types.ObjectId();
   const doctorUser = await User.create({
-    name: "Dr Gate", email: "drgate@test.com", password: "pwd1234!", role: "doctor",
+    _id: penDocUid, name: "Dr Gate", email: "drgate@test.com",
+    role: "doctor", provider_uid: penDocUid.toString(),
   });
   const doctorProfile = await DoctorProfile.create({
     user_id:     doctorUser._id,
@@ -379,8 +382,10 @@ async function buildPendingScenario() {
     status:      "verified",
   });
 
-  const adminUser = await User.create({
-    name: "Admin", email: "admin@test.com", password: "pwd1234!", role: "admin",
+  const penAdminUid = new mongoose.Types.ObjectId();
+  const adminUser   = await User.create({
+    _id: penAdminUid, name: "Admin", email: "admin@test.com",
+    role: "admin", provider_uid: penAdminUid.toString(),
   });
 
   // Assignment in pending state — admin has NOT approved yet
@@ -395,7 +400,7 @@ async function buildPendingScenario() {
     patient_id:     patient._id,
     doctor_id:      doctorProfile._id,
     assignment_id:  assignment._id,
-    requested_slot: { date: new Date("2026-09-15"), start_time: "10:00", end_time: "10:30" },
+    requested_slot: { date: "2027-01-12", start_time: "10:00", end_time: "10:30" },
     status:         "pending_admin_review",
   });
 
@@ -525,16 +530,18 @@ describe("Admin-approval gate (regression: doctor must not see patient before ap
 //    · Cancel a completed appointment → 409
 // =============================================================================
 
-// Monday 2026-09-07 is inside weekly_schedule day_of_week:1 09:00–17:00
-const VALID_SLOT   = { date: "2026-09-07", start_time: "09:00", end_time: "09:30" };
-const OUTSIDE_SLOT = { date: "2026-09-07", start_time: "21:00", end_time: "21:30" };
+// Monday 2027-01-04 is inside weekly_schedule day_of_week:1 09:00–17:00
+const VALID_SLOT   = { date: "2027-01-04", start_time: "09:00", end_time: "09:30" };
+const OUTSIDE_SLOT = { date: "2027-01-04", start_time: "21:00", end_time: "21:30" };
 
 async function buildBookingFixture() {
-  const pu = await User.create({ name: "Book Patient", email: "bookpat@test.com", password: "pwd1234!", role: "patient" });
+  const bkPatUid = new mongoose.Types.ObjectId();
+  const pu = await User.create({ _id: bkPatUid, name: "Book Patient", email: "bookpat@test.com", role: "patient", provider_uid: bkPatUid.toString() });
   const pt = await Patient.create({ name: "Book Patient", dob: new Date("1992-06-15"), gender: "female", contact: { email: "bookpat@test.com" } });
   await User.updateOne({ _id: pu._id }, { $set: { patient_id: pt._id } });
 
-  const du = await User.create({ name: "Dr Avail", email: "dravail@test.com", password: "pwd1234!", role: "doctor" });
+  const bkDocUid = new mongoose.Types.ObjectId();
+  const du = await User.create({ _id: bkDocUid, name: "Dr Avail", email: "dravail@test.com", role: "doctor", provider_uid: bkDocUid.toString() });
   const dp = await DoctorProfile.create({
     user_id:     du._id,
     pmdc_number: "PMDC-AV-001",
@@ -553,7 +560,8 @@ async function buildBookingFixture() {
   );
 
   const report = await Report.create({ session_id: new mongoose.Types.ObjectId(), patient_id: pt._id });
-  const adminUser = await User.create({ name: "Admin", email: "admin-bk@test.com", password: "pwd1234!", role: "admin" });
+  const bkAdminUid = new mongoose.Types.ObjectId();
+  const adminUser = await User.create({ _id: bkAdminUid, name: "Admin", email: "admin-bk@test.com", role: "admin", provider_uid: bkAdminUid.toString() });
 
   return { patientUser: await User.findById(pu._id), patient: pt, doctorProfile: dp, report, adminUser };
 }
@@ -573,7 +581,8 @@ describe("Booking business rules", () => {
     const { patientUser, patient, doctorProfile, report } = await buildBookingFixture();
 
     // A different patient already holds the slot
-    const pu2 = await User.create({ name: "Other Patient", email: "otherpat@test.com", password: "pwd1234!", role: "patient" });
+    const pu2Uid = new mongoose.Types.ObjectId();
+    const pu2 = await User.create({ _id: pu2Uid, name: "Other Patient", email: "otherpat@test.com", role: "patient", provider_uid: pu2Uid.toString() });
     const pt2 = await Patient.create({ name: "Other Patient", dob: new Date("1988-01-01"), gender: "male", contact: { email: "otherpat@test.com" } });
     await User.updateOne({ _id: pu2._id }, { $set: { patient_id: pt2._id } });
     const asgn = await PatientDoctorAssignment.create({ patient_id: pt2._id, doctor_id: doctorProfile._id, status: "active" });
@@ -581,7 +590,7 @@ describe("Booking business rules", () => {
       patient_id:     pt2._id,
       doctor_id:      doctorProfile._id,
       assignment_id:  asgn._id,
-      requested_slot: { date: new Date("2026-09-07"), start_time: "09:00", end_time: "09:30" },
+      requested_slot: { date: "2027-01-04", start_time: "09:00", end_time: "09:30" },
       status:         "confirmed",
     });
 
@@ -600,7 +609,7 @@ describe("Booking business rules", () => {
       patient_id:     patient._id,
       doctor_id:      doctorProfile._id,
       assignment_id:  asgn._id,
-      requested_slot: { date: new Date("2026-09-07"), start_time: "10:00", end_time: "10:30" },
+      requested_slot: { date: "2027-01-04", start_time: "10:00", end_time: "10:30" },
       status:         "pending_admin_review",
     });
 
@@ -626,7 +635,7 @@ describe("Booking business rules", () => {
       patient_id:     patient._id,
       doctor_id:      doctorProfile._id,
       assignment_id:  asgn._id,
-      requested_slot: { date: new Date("2026-09-01"), start_time: "09:00", end_time: "09:30" },
+      requested_slot: { date: "2027-01-10", start_time: "09:00", end_time: "09:30" },
       status:         "completed",
     });
 

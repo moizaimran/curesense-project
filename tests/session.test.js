@@ -42,9 +42,10 @@ const makeToken = (userId) =>
   jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "1d" });
 
 async function buildPatientUser(suffix = "") {
-  const email = `patient${suffix}@test.com`;
-  const user = await User.create({
-    name: `Patient ${suffix}`, email, password: "password1", role: "patient",
+  const email  = `patient${suffix}@test.com`;
+  const uid    = new mongoose.Types.ObjectId();
+  const user   = await User.create({
+    _id: uid, name: `Patient ${suffix}`, email, role: "patient", provider_uid: uid.toString(),
   });
   const patient = await Patient.create({
     name: `Patient ${suffix}`, dob: new Date("1990-01-01"), gender: "male",
@@ -57,8 +58,9 @@ async function buildPatientUser(suffix = "") {
 
 async function buildDoctorUser(status = "verified", suffix = "") {
   const email = `doctor${suffix}@test.com`;
-  const user = await User.create({
-    name: `Dr ${suffix}`, email, password: "password1", role: "doctor",
+  const uid   = new mongoose.Types.ObjectId();
+  const user  = await User.create({
+    _id: uid, name: `Dr ${suffix}`, email, role: "doctor", provider_uid: uid.toString(),
   });
   const profile = await DoctorProfile.create({
     user_id: user._id, pmdc_number: `PMDC-${suffix}`, specialty: "General",
@@ -113,8 +115,9 @@ describe("POST /api/sessions — create session", () => {
   });
 
   test("admin cannot create session → 403 (role guard)", async () => {
-    const admin = await User.create({
-      name: "Admin", email: "admin@test.com", password: "admin1234", role: "admin",
+    const adminId = new mongoose.Types.ObjectId();
+    const admin   = await User.create({
+      _id: adminId, name: "Admin", email: "admin@test.com", role: "admin", provider_uid: adminId.toString(),
     });
 
     const res = await request(app)
@@ -125,8 +128,9 @@ describe("POST /api/sessions — create session", () => {
   });
 
   test("patient user with no patient_id → 400", async () => {
-    const user = await User.create({
-      name: "Bare Patient", email: "bare@test.com", password: "password1", role: "patient",
+    const bareId = new mongoose.Types.ObjectId();
+    const user   = await User.create({
+      _id: bareId, name: "Bare Patient", email: "bare@test.com", role: "patient", provider_uid: bareId.toString(),
     });
 
     const res = await request(app)

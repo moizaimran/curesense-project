@@ -9,10 +9,7 @@
 // mock req/res/next objects. No HTTP stack or database involved.
 // =============================================================================
 
-process.env.JWT_SECRET = "test_secret_for_jest";
-
 const mongoose = require("mongoose");
-const jwt      = require("jsonwebtoken");
 
 const { validateObjectId, validateDateQuery } = require("../middleware/validate");
 

@@ -47,17 +47,19 @@ const VALID_DOCTOR_BODY = {
 };
 
 async function createAdminUser() {
-  const user = await User.create({
-    name: "Admin", email: "admin@test.com", password: "admin1234", role: "admin",
+  const adminId = new mongoose.Types.ObjectId();
+  const user    = await User.create({
+    _id: adminId, name: "Admin", email: "admin@test.com", role: "admin", provider_uid: adminId.toString(),
   });
   return { user, token: makeToken(user._id) };
 }
 
 // Creates a doctor user + profile with the given status, bypassing the registration flow.
 async function createDoctorDirect(status = "pending", suffix = "") {
-  const email = `doctor${suffix}@test.com`;
-  const user = await User.create({
-    name: "Dr Direct", email, password: "password1", role: "doctor",
+  const email   = `doctor${suffix}@test.com`;
+  const uid     = new mongoose.Types.ObjectId();
+  const user    = await User.create({
+    _id: uid, name: "Dr Direct", email, role: "doctor", provider_uid: uid.toString(),
   });
   const profile = await DoctorProfile.create({
     user_id:     user._id,
@@ -82,13 +84,12 @@ beforeEach(async () => await clearDatabase());
 // 1. Doctor registration
 // =============================================================================
 describe("POST /api/doctors/register", () => {
-  test("happy path: 201, token, status='pending'", async () => {
+  test("happy path: 201, status='pending'", async () => {
     const res = await request(app)
       .post("/api/doctors/register")
       .send(VALID_DOCTOR_BODY);
 
     expect(res.status).toBe(201);
-    expect(res.body.token).toBeDefined();
     expect(res.body.user.role).toBe("doctor");
     expect(res.body.user.doctor_profile.status).toBe("pending");
     expect(res.body.user.doctor_profile.specialty).toBe("Cardiology");
@@ -277,13 +278,15 @@ describe("PATCH /api/doctors/admin/:id/verify", () => {
 
   test("non-admin cannot verify → 403", async () => {
     const { profile } = await createDoctorDirect("pending", "7");
-    const { body } = await request(app)
-      .post("/api/auth/register")
-      .send({ name: "P", email: "p@p.com", password: "password1", dob: "1990-01-01", gender: "male" });
+    const patientId = new mongoose.Types.ObjectId();
+    await User.create({
+      _id: patientId, name: "P", email: "p@p.com", role: "patient", provider_uid: patientId.toString(),
+    });
+    const patientToken = makeToken(patientId);
 
     const res = await request(app)
       .patch(`/api/doctors/admin/${profile._id}/verify`)
-      .set("Authorization", `Bearer ${body.token}`)
+      .set("Authorization", `Bearer ${patientToken}`)
       .send({ decision: "approve" });
 
     expect(res.status).toBe(403);
@@ -359,7 +362,7 @@ describe("GET /api/doctors/:id/dashboard-summary", () => {
     // doctor_viewed not set → defaults false → counts as pending_new
     await Appointment.create({
       patient_id: patient._id, doctor_id: profile._id, assignment_id: assignment._id,
-      requested_slot: { date: new Date("2026-09-01"), start_time: "09:00", end_time: "09:30" },
+      requested_slot: { date: "2027-01-10", start_time: "09:00", end_time: "09:30" },
       status: "confirmed",
     });
 
