@@ -5,10 +5,10 @@
 // Firebase Authentication rules, not by keeping this config private.
 
 export const FIREBASE_CONFIG = {
-  apiKey:            "REPLACE_WITH_YOUR_API_KEY",
-  authDomain:        "REPLACE_WITH_YOUR_AUTH_DOMAIN",        // e.g. your-project.firebaseapp.com
-  projectId:         "REPLACE_WITH_YOUR_PROJECT_ID",
-  storageBucket:     "REPLACE_WITH_YOUR_STORAGE_BUCKET",
-  messagingSenderId: "REPLACE_WITH_YOUR_MESSAGING_SENDER_ID",
-  appId:             "REPLACE_WITH_YOUR_APP_ID",
+  apiKey:            "AIzaSyDu6NFa3N5lg5iPgDRsYRyDPHZe7y2OF2M",
+  authDomain:        "curesense-15651.firebaseapp.com",
+  projectId:         "curesense-15651",
+  storageBucket:     "curesense-15651.firebasestorage.app",
+  messagingSenderId: "280753047687",
+  appId:             "1:280753047687:web:1d2e6169593f15bc3ad022",
 };
