@@ -6,7 +6,9 @@ const { AppError } = require("./errors");
 const asyncHandler = fn => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(err => {
     if (err instanceof AppError) {
-      return res.status(err.statusCode).json({ error: err.message });
+      const body = { error: err.message };
+      if (err.unverified) { body.unverified = true; body.email = err.email; }
+      return res.status(err.statusCode).json(body);
     }
     next(err);
   });

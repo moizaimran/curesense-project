@@ -6,6 +6,7 @@
 // against an in-memory MongoDB without starting a real server.
 // =============================================================================
 require("dotenv").config();
+require("./config/firebase");   // initialise Firebase Admin before anything else imports it
 const connectDB = require("./config/db");
 const app       = require("./app");
 

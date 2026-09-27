@@ -6,8 +6,8 @@ const mongoose = require("mongoose");
 const PatientSchema = new mongoose.Schema(
   {
     name:    { type: String, required: true },
-    dob:     { type: Date,   required: true },
-    gender:  { type: String, required: true },
+    dob:     { type: Date,   default: null },
+    gender:  { type: String, default: null },
     contact: {
       phone: { type: String, default: "" },
       email: { type: String, required: true },
@@ -16,6 +16,7 @@ const PatientSchema = new mongoose.Schema(
     medical_conditions:  { type: [String], default: [] },
     allergies:           { type: [String], default: [] },
     current_medications: { type: [String], default: [] },
+    profile_complete:    { type: Boolean, default: false },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );

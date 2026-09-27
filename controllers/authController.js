@@ -6,10 +6,29 @@ const register = asyncHandler(async (req, res) => {
   res.status(201).json(result);
 });
 
-const login = asyncHandler(async (req, res) => {
-  const result = await authService.loginUser(req.body);
+const verifyEmail = asyncHandler(async (req, res) => {
+  const result = await authService.verifyEmail(req.body.email);
   res.json(result);
 });
+
+const resendOTP = asyncHandler(async (req, res) => {
+  const result = await authService.resendOTP(req.body.email, req.body.type);
+  res.json(result);
+});
+
+// login removed — clients authenticate via Firebase Client SDK and send Firebase ID tokens
+
+const googleAuth = asyncHandler(async (req, res) => {
+  const result = await authService.googleAuth(req.body.id_token);
+  res.json(result);
+});
+
+const forgotPassword = asyncHandler(async (req, res) => {
+  const result = await authService.forgotPassword(req.body.email);
+  res.json(result);
+});
+
+// verifyResetOTP and resetPassword removed — Firebase handles password reset end-to-end
 
 const createStaff = asyncHandler(async (req, res) => {
   const result = await authService.createStaffUser(req.body);
@@ -50,4 +69,12 @@ const registerPushToken = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-module.exports = { register, login, createStaff, assignPatient, getMe, updateMe, listStaff, getSettings, updateSettings, registerPushToken };
+module.exports = {
+  register, verifyEmail, resendOTP,
+  googleAuth,
+  forgotPassword,
+  createStaff, assignPatient,
+  getMe, updateMe,
+  listStaff, getSettings, updateSettings,
+  registerPushToken,
+};

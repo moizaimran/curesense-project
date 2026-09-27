@@ -1,4 +1,4 @@
-const { signToken }      = require("../utils/jwt");
+const admin              = require("../config/firebase");
 const { AppError }       = require("../utils/errors");
 const { isStrongPassword, validateEmail } = require("../utils/validation");
 const { normalizeCalendarDate, todayCalendarDate } = require("../utils/date");
@@ -30,8 +30,23 @@ async function registerDoctor(body) {
   if (await DoctorProfile.findOne({ pmdc_number: pmdc_number.toUpperCase() }))
     throw new AppError("PMDC number already registered", 409);
 
+  // Create Firebase account with disabled:true — matches pending status, blocks sign-in until admin approves
+  let fbUser;
+  try {
+    fbUser = await admin.auth().createUser({ email, password, emailVerified: false, disabled: true });
+  } catch (fbErr) {
+    if (fbErr.code === "auth/email-already-exists") throw new AppError("Email already registered", 409);
+    throw fbErr;
+  }
+
   const name = `${firstName.trim()} ${lastName.trim()}`;
-  const user = await User.create({ name, email, password, role: "doctor" });
+  let user;
+  try {
+    user = await User.create({ name, email, role: "doctor", provider_uid: fbUser.uid });
+  } catch (err) {
+    await admin.auth().deleteUser(fbUser.uid).catch(() => {});
+    throw err;
+  }
 
   let profile;
   try {
@@ -49,13 +64,13 @@ async function registerDoctor(body) {
     });
   } catch (err) {
     await User.findByIdAndDelete(user._id);
+    await admin.auth().deleteUser(fbUser.uid).catch(() => {});
     throw err;
   }
 
   await DoctorAvailability.create({ doctor_id: profile._id });
 
   return {
-    token: signToken(user._id),
     user: {
       id:             user._id,
       name:           user.name,
@@ -330,11 +345,17 @@ async function adminVerifyDoctor(id, { decision, rejection_reason }, verifiedByI
   if (profile.status !== "pending") throw new AppError(`Doctor is already ${profile.status}`, 409);
 
   if (decision === "approve") {
+    // Enable Firebase account first — if Firebase fails, we don't falsely mark approved in MongoDB
+    const doctorUser = await User.findById(profile.user_id).select("provider_uid email");
+    if (doctorUser?.provider_uid) {
+      await admin.auth().updateUser(doctorUser.provider_uid, { disabled: false });
+    }
     profile.status      = "verified";
     profile.verified_by = verifiedById;
     profile.verified_at = new Date();
   } else {
     if (!rejection_reason?.trim()) throw new AppError("rejection_reason is required when rejecting", 400);
+    // Leave Firebase account disabled on rejection — do not delete it
     profile.status           = "rejected";
     profile.rejection_reason = rejection_reason.trim();
   }

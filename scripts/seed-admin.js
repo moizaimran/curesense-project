@@ -1,9 +1,11 @@
 // One-time script to create the first admin account.
 // Run: node scripts/seed-admin.js
-// Edit the credentials below before running, then delete this file.
+// Edit the credentials below before running.
 require("dotenv").config({ path: require("path").join(__dirname, "../.env") });
+require("../config/firebase"); // initialise Firebase Admin SDK
 
 const mongoose = require("mongoose");
+const admin    = require("../config/firebase");
 const User     = require("../models/User");
 
 const ADMIN = {
@@ -23,12 +25,24 @@ const ADMIN = {
     } else {
       existing.role = "admin";
       await existing.save();
-      console.log(`[Fixed] ${ADMIN.email} role updated: ${existing.role} → admin`);
+      console.log(`[Fixed] ${ADMIN.email} role updated → admin`);
     }
     process.exit(0);
   }
 
-  await User.create({ ...ADMIN, role: "admin" });
+  // Create Firebase account for the admin
+  let fbUser;
+  try {
+    fbUser = await admin.auth().createUser({ email: ADMIN.email, password: ADMIN.password, emailVerified: true, disabled: false });
+    console.log(`[Firebase] Admin account created → uid: ${fbUser.uid}`);
+  } catch (err) {
+    if (err.code === "auth/email-already-exists") {
+      fbUser = await admin.auth().getUserByEmail(ADMIN.email);
+      console.log(`[Firebase] Admin account already exists → uid: ${fbUser.uid}`);
+    } else throw err;
+  }
+
+  await User.create({ ...ADMIN, role: "admin", is_verified: true, provider_uid: fbUser.uid });
   console.log(`[OK] Admin created → ${ADMIN.email} / ${ADMIN.password}`);
   process.exit(0);
 })().catch(err => { console.error(err); process.exit(1); });
