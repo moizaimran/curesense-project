@@ -3,22 +3,33 @@ import { Link } from "react-router-dom";
 
 import AuthLayout from "../../components/auth/AuthLayout";
 import InputField from "../../components/auth/InputField";
+import ResetStatus from "../../components/auth/ResetStatus";
+import { requestPasswordReset } from "../../utils/auth";
 
 
 const ForgotPassword = () => {
 
 
     const [email, setEmail] = useState("");
+    const [sending, setSending] = useState(false);
+    const [result, setResult] = useState(null);
 
 
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
 
         e.preventDefault();
+        setSending(true);
+        setResult(null);
 
-        console.log(email);
-
-        // Backend reset password API will come later
+        try {
+            const data = await requestPasswordReset(email);
+            setResult({ ok: true, message: data.message });
+        } catch (err) {
+            setResult({ ok: false, message: err.message });
+        } finally {
+            setSending(false);
+        }
 
     };
 
@@ -52,6 +63,8 @@ const ForgotPassword = () => {
 
 
 
+                <ResetStatus result={result} />
+
                 <form onSubmit={handleSubmit}>
 
 
@@ -73,6 +86,7 @@ const ForgotPassword = () => {
 
                     <button
                         type="submit"
+                        disabled={sending}
                         className="
                             w-full
                             bg-blue-600
@@ -83,9 +97,10 @@ const ForgotPassword = () => {
                             hover:bg-blue-700
                             transition
                             shadow-md
+                            disabled:opacity-60
                         "
                     >
-                        Send Reset Link
+                        {sending ? "Sending…" : "Send Reset Link"}
                     </button>
 
 

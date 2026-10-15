@@ -1,5 +1,7 @@
 import { useLocation, useNavigate } from "react-router-dom";
+import { LogOut } from "lucide-react";
 import patientPlaceholder from "../../../assets/images/patient-avatar.jpg";
+import { useSignOut } from "../../../features/auth/useSignOut";
 
 const pageTitles = {
     "/admin": "Dashboard",
@@ -12,6 +14,7 @@ const pageTitles = {
 export default function AdminNavbar() {
     const location = useLocation();
     const navigate = useNavigate();
+    const signOut = useSignOut("/admin/login");
 
     const pageTitle = pageTitles[location.pathname] || "Admin Panel";
 
@@ -30,6 +33,7 @@ export default function AdminNavbar() {
             </div>
 
             {/* Right */}
+            <div className="flex items-center gap-4">
             <div
                 onClick={() => navigate("/admin/profile")}
                 className="flex items-center gap-4 cursor-pointer hover:bg-gray-100 rounded-xl p-2 transition"
@@ -49,6 +53,16 @@ export default function AdminNavbar() {
                         Administrator
                     </p>
                 </div>
+            </div>
+
+            <button
+                type="button"
+                onClick={signOut}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-red-600 font-medium hover:bg-red-50 transition"
+            >
+                <LogOut size={18} />
+                Sign Out
+            </button>
             </div>
 
         </nav>

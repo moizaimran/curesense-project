@@ -4,8 +4,9 @@ import { useDispatch, useSelector } from "react-redux";
 import AuthLayout from "../../components/auth/AuthLayout";
 import InputField from "../../components/auth/InputField";
 import PasswordInput from "../../components/auth/PasswordInput";
+import GoogleSignInButton from "../../components/auth/GoogleSignInButton";
 import { loginStart, loginSuccess, loginFailure, selectAuthLoading, selectAuthError } from "../../features/auth/authSlice";
-import { api } from "../../utils/api";
+import { signInToPortal } from "../../utils/auth";
 
 const DoctorLogin = () => {
     const navigate  = useNavigate();
@@ -23,15 +24,8 @@ const DoctorLogin = () => {
         dispatch(loginStart());
 
         try {
-            const data = await api.post("/api/auth/login", { email, password });
-
-            // Only let doctors through this form
-            if (data.user.role !== "doctor") {
-                dispatch(loginFailure("This login is for doctors only"));
-                return;
-            }
-
-            dispatch(loginSuccess({ token: data.token, user: data.user }));
+            const session = await signInToPortal(email, password, "doctor");
+            dispatch(loginSuccess(session));
             navigate("/");
         } catch (err) {
             dispatch(loginFailure(err.message));
@@ -79,6 +73,8 @@ const DoctorLogin = () => {
                         {loading ? "Signing in…" : "Login"}
                     </button>
                 </form>
+
+                <GoogleSignInButton role="doctor" redirectTo="/" />
 
                 <p className="text-center text-sm text-gray-600 mt-6">
                     Don't have an account?

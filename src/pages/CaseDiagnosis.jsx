@@ -549,6 +549,7 @@ import { api } from "../utils/api";
 import QueryPanel from "../components/CaseDiagnosis/QueryPanel";
 import FeedbackModal from "../components/CaseDiagnosis/FeedbackModal";
 import HistoryModal from "../components/CaseDiagnosis/HistoryModal";
+import TranscriptModal from "../components/CaseDiagnosis/TranscriptModal";
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -765,6 +766,8 @@ export default function CaseDiagnosis() {
 
     const [showHistory, setShowHistory] = useState(false);
 
+    const [showTranscript, setShowTranscript] = useState(false);
+
 
     // ─────────────────────────────────────────────────────────────────────────
     // Appointment status
@@ -787,6 +790,11 @@ export default function CaseDiagnosis() {
         !hasDoctorQuery;
 
     const patientId = appt?.patient_id?._id;
+
+    const sessionId =
+        appt?.session_id?._id ||
+        appt?.session_id ||
+        report?.session_id;
 
     const testUploads = appt?.test_uploads || [];
 
@@ -1110,8 +1118,9 @@ export default function CaseDiagnosis() {
         ? report.emergency_warning.reason || report.emergency_warning.message
         : null;
 
+    // verified === false → written from AI clinical knowledge, no official drug label found
     const medicationFlags = (report?.doctor_report?.medicationFlags || [])
-        .map((f) => `${f.drug}: ${f.flag}`)
+        .map((f) => `${f.drug}: ${f.flag}${f.verified === false ? " (not verified against an official drug label)" : ""}`)
         .filter(Boolean);
 
     const allFlags = [
@@ -1124,9 +1133,11 @@ export default function CaseDiagnosis() {
     // Patient complaint
     // ─────────────────────────────────────────────────────────────────────────
 
+    // Doctor's clinical summary first; the patient-language version only as a fallback
     const complaintSummary =
+        report?.doctor_report?.patientComplaintSummary ||
         ps?.patientComplaintSummary ||
-        "The patient reports right-knee swelling, pressure in the heart/chest area, and tightness in the left biceps beginning 1–2 weeks ago. They also describe shortness of breath rated 5/10 that comes and goes in episodes and worsens with physical activity.";
+        "No complaint summary is available for this consultation.";
 
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1293,6 +1304,17 @@ export default function CaseDiagnosis() {
                     <History size={16} />
                     Visit History
                 </button>
+
+                {sessionId && (
+                    <button
+                        type="button"
+                        onClick={() => setShowTranscript(true)}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-slate-200 bg-white hover:border-blue-300 text-slate-700 text-sm font-medium transition"
+                    >
+                        <MessageCircle size={16} />
+                        View Transcript
+                    </button>
+                )}
 
 
                 <button
@@ -1598,8 +1620,7 @@ export default function CaseDiagnosis() {
                         </p>
 
                         <p className="text-sm text-slate-700 leading-relaxed bg-blue-50 rounded-xl p-4">
-                            {report?.doctor_report?.patientComplaintSummary ||
-                                complaintSummary}
+                            {complaintSummary}
                         </p>
 
                     </div>
@@ -1641,6 +1662,11 @@ export default function CaseDiagnosis() {
                                         >
                                             {medication.drug}:{" "}
                                             {medication.flag}
+                                            {medication.verified === false && (
+                                                <span className="block mt-1 text-[11px] font-semibold text-orange-500">
+                                                    Not verified against an official drug label
+                                                </span>
+                                            )}
                                         </span>
 
                                     )
@@ -2129,6 +2155,17 @@ export default function CaseDiagnosis() {
                     }
                 />
 
+            )}
+
+            {/* Interview transcript */}
+
+            {showTranscript && (
+                <TranscriptModal
+                    sessionId={sessionId}
+                    patientName={patient?.name}
+                    token={token}
+                    onClose={() => setShowTranscript(false)}
+                />
             )}
 
         </div>

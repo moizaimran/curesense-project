@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { mockPortalLogin } from './helpers/firebaseAuth';
 
 // ── Doctor Availability ───────────────────────────────────────────────────────
 //
@@ -18,23 +19,14 @@ const MOCK_AVAIL_EMPTY = {
 };
 
 async function loginAsDoctor(page: any) {
-  await page.route('**/api/auth/login', route =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        token: 'fake.jwt.token',
-        user: {
-          id: 'u1',
-          name: 'Dr Test',
-          email: 'doctor@example.com',
-          role: 'doctor',
-          patient_id: null,
-          doctor_profile: { id: 'dp1', status: 'verified' },
-        },
-      }),
-    })
-  );
+  await mockPortalLogin(page, {
+    id: 'u1',
+    name: 'Dr Test',
+    email: 'doctor@example.com',
+    role: 'doctor',
+    patient_id: null,
+    doctor_profile: { id: 'dp1', status: 'verified' },
+  });
   await page.goto('/doctor/login');
   await page.getByPlaceholder('doctor@example.com').fill('doctor@example.com');
   await page.locator('input[type="password"]').fill('password1');

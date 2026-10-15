@@ -1,12 +1,17 @@
-import { Outlet } from "react-router-dom";
+import { Navigate, Outlet } from "react-router-dom";
 import { useSelector } from "react-redux";
-import { selectUser } from "../features/auth/authSlice";
+import { selectToken, selectUser } from "../features/auth/authSlice";
 import Sidebar from "../components/Sidebar";
 import NavBar from "../components/NavBar/Navbar";
 
 export default function DashboardLayout() {
+    const token = useSelector(selectToken);
     const user = useSelector(selectUser);
     const status = user?.doctor_profile?.status;
+
+    if (!token || user?.role !== "doctor") {
+        return <Navigate to="/doctor/login" replace />;
+    }
 
     if (status && status !== "verified") {
         return (

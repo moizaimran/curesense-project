@@ -1,7 +1,7 @@
 import { LayoutDashboard, Users, Bell, User, LogOut, CalendarDays } from "lucide-react";
 import { NavLink } from "react-router-dom";
-import { useNavigate } from "react-router-dom";
 import { HeartPulse } from "lucide-react";
+import { useSignOut } from "../features/auth/useSignOut";
 
 const menuItems = [
     { title: 'Dashboard',    icon: LayoutDashboard, path: '/'              },
@@ -13,7 +13,7 @@ const menuItems = [
 
 
 export default function Sidebar() {
-    const navigate = useNavigate();
+    const signOut = useSignOut("/doctor/login");
   return (
     <aside className="fixed left-0 top-0 w-64 h-screen bg-blue-900 border-r border-gray-200 flex flex-col shadow-sm">
         
@@ -75,7 +75,7 @@ export default function Sidebar() {
 
 
       <div className="p-4 border-t border-gray-200">
-        <button  onClick={()=>navigate('/doctor/login')} className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-medium text-white hover:bg-red-50 hover:text-red-600 transition">
+        <button  onClick={signOut}className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-medium text-white hover:bg-red-50 hover:text-red-600 transition">
           <LogOut size={21}/>
           Logout
         </button>

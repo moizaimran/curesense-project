@@ -1,8 +1,11 @@
+import { useSpecialties } from "../../utils/useSpecialties";
+
 export default function PersonalInfo({
     profile,
     setProfile,
     isEditing,
 }) {
+    const { specialties } = useSpecialties();
     return (
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
@@ -184,9 +187,7 @@ export default function PersonalInfo({
 
     </p>
 
-    <input
-
-        type="text"
+    <select
 
         value={profile.specialization}
 
@@ -205,7 +206,13 @@ export default function PersonalInfo({
         : "bg-slate-50 text-slate-700 cursor-not-allowed"
 }`}
 
-    />
+    >
+        {/* Keep a legacy value visible until the doctor picks a listed specialty */}
+        {profile.specialization && !specialties.includes(profile.specialization) && (
+            <option value={profile.specialization}>{profile.specialization}</option>
+        )}
+        {specialties.map((s) => <option key={s} value={s}>{s}</option>)}
+    </select>
 
 </div>
 

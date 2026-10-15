@@ -6,23 +6,10 @@ import InputField from "../../components/auth/InputField";
 import PasswordInput from "../../components/auth/PasswordInput";
 import { loginStart, loginFailure, selectAuthLoading, selectAuthError } from "../../features/auth/authSlice";
 import { api } from "../../utils/api";
-
-const SPECIALTIES = [
-  "Cardiologist",
-  "Neurologist",
-  "Dermatologist",
-  "General Physician",
-  "Orthopedic Surgeon",
-  "Pediatrician",
-  "Psychiatrist",
-  "Radiologist",
-  "Ophthalmologist",
-  "ENT Specialist",
-  "Gynecologist",
-  "Urologist",
-];
+import { useSpecialties } from "../../utils/useSpecialties";
 
 const DoctorSignup = () => {
+    const { specialties, error: specialtiesError } = useSpecialties();
     const navigate  = useNavigate();
     const dispatch  = useDispatch();
     const loading   = useSelector(selectAuthLoading);
@@ -117,8 +104,9 @@ const DoctorSignup = () => {
                             <select name="specialization" value={formData.specialization} onChange={handleChange}
                                 className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="">Select specialization</option>
-                                {SPECIALTIES.map(s => <option key={s}>{s}</option>)}
+                                {specialties.map(s => <option key={s}>{s}</option>)}
                             </select>
+                            {specialtiesError && <p className="text-sm text-red-600 mt-1">{specialtiesError}</p>}
                         </div>
 
                         <InputField label="Sub-Specialty (optional)" placeholder="e.g. Interventional Cardiology" value={formData.sub_specialty} onChange={handleChange} name="sub_specialty" />

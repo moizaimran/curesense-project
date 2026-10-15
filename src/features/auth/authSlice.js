@@ -1,7 +1,8 @@
 // =============================================================================
 // web/src/features/auth/authSlice.js
-// Stores authenticated user info + JWT token.
-// Token is also persisted in localStorage so it survives page refresh.
+// Stores the signed-in user and their Firebase ID token.
+// Both are persisted in localStorage so they survive a page refresh; the token is
+// replaced via tokenRefreshed whenever the Firebase SDK refreshes it (hourly).
 // =============================================================================
 import { createSlice } from "@reduxjs/toolkit";
 
@@ -44,6 +45,13 @@ const authSlice = createSlice({
         localStorage.setItem(USER_KEY, JSON.stringify(action.payload.user));
       } catch {}
     },
+    tokenRefreshed: (state, action) => {
+      if (!state.user) return;
+      state.token = action.payload;
+      try {
+        localStorage.setItem(TOKEN_KEY, action.payload);
+      } catch {}
+    },
     loginFailure: (state, action) => {
       state.loading = false;
       state.error   = action.payload;
@@ -62,7 +70,7 @@ const authSlice = createSlice({
   },
 });
 
-export const { loginStart, loginSuccess, loginFailure, logout, clearError } = authSlice.actions;
+export const { loginStart, loginSuccess, tokenRefreshed, loginFailure, logout, clearError } = authSlice.actions;
 
 // Selectors
 export const selectToken    = (state) => state.auth.token;

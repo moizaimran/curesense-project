@@ -21,11 +21,22 @@ test.describe('Forgot password page', () => {
     await expect(page).toHaveURL('/doctor/login');
   });
 
-  test('form accepts an email address without error', async ({ page }) => {
+  test('submitting an email requests a reset link and shows the confirmation', async ({ page }) => {
+    let requestedEmail = '';
+    await page.route('**/api/auth/forgot-password', async route => {
+      requestedEmail = route.request().postDataJSON().email;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'If an account with that email exists, a reset link has been sent.' }),
+      });
+    });
+
     await page.getByPlaceholder('doctor@example.com').fill('doctor@example.com');
-    // The backend is not wired yet; just verify the submit does not crash the page
     await page.getByRole('button', { name: 'Send Reset Link' }).click();
+
+    await expect(page.getByText('If an account with that email exists, a reset link has been sent.')).toBeVisible();
+    expect(requestedEmail).toBe('doctor@example.com');
     await expect(page).toHaveURL('/doctor/forgot-password');
-    await expect(page.getByRole('heading', { name: 'Forgot Password?' })).toBeVisible();
   });
 });

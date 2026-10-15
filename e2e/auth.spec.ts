@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
+import { mockPortalLogin, mockFirebaseSignInError, signInThroughForm } from './helpers/firebaseAuth';
 
-// ── Doctor Login ──────────────────────────────────────────────────────────────
+// ── Doctor Login (Firebase Authentication) ──────────────────────────────────
 
 test.describe('Doctor login page', () => {
   test.beforeEach(async ({ page }) => {
@@ -23,111 +24,55 @@ test.describe('Doctor login page', () => {
     await expect(page).toHaveURL('/doctor/forgot-password');
   });
 
-  test('API error is shown inline', async ({ page }) => {
-    // Intercept before filling form so the route is ready
-    await page.route('**/api/auth/login', route =>
-      route.fulfill({
-        status: 401,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: 'Invalid credentials' }),
-      })
-    );
+  test('wrong password shows an inline error', async ({ page }) => {
+    await mockFirebaseSignInError(page, 'INVALID_LOGIN_CREDENTIALS');
+    await signInThroughForm(page, '/doctor/login', 'bad@example.com', 'wrongpass');
 
-    await page.getByPlaceholder('doctor@example.com').fill('bad@example.com');
-    await page.getByPlaceholder('doctor@example.com').press('Tab');
-    // PasswordInput renders a visible input with type=password
-    await page.locator('input[type="password"]').fill('wrongpass');
-    await page.getByRole('button', { name: 'Login' }).click();
-
-    await expect(page.getByText('Invalid credentials')).toBeVisible();
+    await expect(page.getByText('Incorrect email or password.')).toBeVisible();
     await expect(page).toHaveURL('/doctor/login');
   });
 
   test('successful login redirects to dashboard', async ({ page }) => {
-    await page.route('**/api/auth/login', route =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          token: 'fake.jwt.token',
-          user: {
-            id: '1',
-            name: 'Dr Test',
-            email: 'doctor@example.com',
-            role: 'doctor',
-            patient_id: null,
-            doctor_profile: { status: 'verified' },
-          },
-        }),
-      })
-    );
-
-    await page.getByPlaceholder('doctor@example.com').fill('doctor@example.com');
-    await page.locator('input[type="password"]').fill('correct');
-    await page.getByRole('button', { name: 'Login' }).click();
+    await mockPortalLogin(page, {
+      id: '1', name: 'Dr Test', email: 'doctor@example.com', role: 'doctor',
+      patient_id: null, doctor_profile: { id: 'dp1', status: 'verified' },
+    });
+    await signInThroughForm(page, '/doctor/login', 'doctor@example.com', 'correct');
 
     await expect(page).toHaveURL('/');
   });
 
   test('non-doctor role shows role error', async ({ page }) => {
-    await page.route('**/api/auth/login', route =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          token: 'fake.jwt.token',
-          user: {
-            id: '2',
-            name: 'Patient Joe',
-            email: 'patient@example.com',
-            role: 'patient',
-            patient_id: '99',
-            doctor_profile: null,
-          },
-        }),
-      })
-    );
-
-    await page.getByPlaceholder('doctor@example.com').fill('patient@example.com');
-    await page.locator('input[type="password"]').fill('pass');
-    await page.getByRole('button', { name: 'Login' }).click();
+    await mockPortalLogin(page, {
+      id: '2', name: 'Patient Joe', email: 'patient@example.com', role: 'patient',
+      patient_id: '99', doctor_profile: null,
+    });
+    await signInThroughForm(page, '/doctor/login', 'patient@example.com', 'pass1234');
 
     await expect(page.getByText('This login is for doctors only')).toBeVisible();
     await expect(page).toHaveURL('/doctor/login');
   });
 
-  test('pending doctor login shows verification-pending error', async ({ page }) => {
-    await page.route('**/api/auth/login', route =>
-      route.fulfill({
-        status: 403,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: 'Your account is pending verification by an admin' }),
-      })
-    );
+  test('pending or rejected doctor (Firebase account disabled) shows not-active message', async ({ page }) => {
+    await mockFirebaseSignInError(page, 'USER_DISABLED');
+    await signInThroughForm(page, '/doctor/login', 'pending@example.com', 'password123');
 
-    await page.getByPlaceholder('doctor@example.com').fill('pending@example.com');
-    await page.locator('input[type="password"]').fill('password123');
-    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page.getByText(/not active yet/)).toBeVisible();
+    await expect(page).toHaveURL('/doctor/login');
+  });
+});
 
-    await expect(page.getByText('pending verification')).toBeVisible();
+// ── Route guards ─────────────────────────────────────────────────────────────
+
+test.describe('Signed-out access', () => {
+  test('doctor dashboard redirects to the doctor login', async ({ page }) => {
+    await page.goto('/');
     await expect(page).toHaveURL('/doctor/login');
   });
 
-  test('rejected doctor login shows rejection error', async ({ page }) => {
-    await page.route('**/api/auth/login', route =>
-      route.fulfill({
-        status: 403,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: 'Your registration was rejected' }),
-      })
-    );
-
-    await page.getByPlaceholder('doctor@example.com').fill('rejected@example.com');
-    await page.locator('input[type="password"]').fill('password123');
-    await page.getByRole('button', { name: 'Login' }).click();
-
-    await expect(page.getByText('rejected')).toBeVisible();
-    await expect(page).toHaveURL('/doctor/login');
+  test('admin dashboard redirects to the admin login', async ({ page }) => {
+    await page.goto('/admin');
+    await expect(page).toHaveURL('/admin/login');
   });
 });
 

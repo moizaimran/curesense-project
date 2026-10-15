@@ -2,8 +2,14 @@ import { test, expect } from '@playwright/test';
 
 // ── Doctor Signup ─────────────────────────────────────────────────────────────
 
+// The specialization dropdown loads the backend's list (GET /api/doctors/specialties)
+const SPECIALTIES = ['General Physician', 'Cardiologist', 'Neurologist', 'Pediatrician', 'Orthopedic Surgeon'];
+
 test.describe('Doctor signup page', () => {
   test.beforeEach(async ({ page }) => {
+    await page.route('**/api/doctors/specialties', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ specialties: SPECIALTIES }) })
+    );
     await page.goto('/doctor/signup');
   });
 

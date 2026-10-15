@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { mockPortalLogin } from './helpers/firebaseAuth';
 
 // ── Case lifecycle ────────────────────────────────────────────────────────────
 //
@@ -41,9 +42,7 @@ const COMPLETED_APPOINTMENT = { ...PENDING_APPOINTMENT, status: 'completed' };
 
 test.describe('Case lifecycle — happy path (approve → query → complete)', () => {
   test('admin approves a pending appointment and it disappears from the review queue', async ({ page }) => {
-    await page.route('**/api/auth/login', route =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(ADMIN_TOKEN_PAYLOAD) })
-    );
+    await mockPortalLogin(page, ADMIN_TOKEN_PAYLOAD.user);
 
     // Queue returns one pending appointment, then empty after approval
     let approvalDone = false;
@@ -71,6 +70,8 @@ test.describe('Case lifecycle — happy path (approve → query → complete)', 
     await page.getByPlaceholder('admin@curesense.com').fill('admin@example.com');
     await page.locator('input[type="password"]').fill('adminpass1');
     await page.getByRole('button', { name: /login/i }).click();
+    // Sign-in must finish (session persisted) before the full-page navigation below
+    await expect(page).toHaveURL('/admin');
 
     await page.goto('/admin/appointments');
     await expect(page.getByText('Jane Patient')).toBeVisible();
@@ -83,9 +84,7 @@ test.describe('Case lifecycle — happy path (approve → query → complete)', 
   });
 
   test('doctor sees confirmed appointment in dashboard after approval', async ({ page }) => {
-    await page.route('**/api/auth/login', route =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DOCTOR_TOKEN_PAYLOAD) })
-    );
+    await mockPortalLogin(page, DOCTOR_TOKEN_PAYLOAD.user);
 
     await page.route('**/api/appointments/doctor*', route =>
       route.fulfill({
@@ -115,9 +114,7 @@ test.describe('Case lifecycle — happy path (approve → query → complete)', 
   });
 
   test('doctor opens case detail — doctor_viewed flip is called', async ({ page }) => {
-    await page.route('**/api/auth/login', route =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DOCTOR_TOKEN_PAYLOAD) })
-    );
+    await mockPortalLogin(page, DOCTOR_TOKEN_PAYLOAD.user);
 
     let viewedCalled = false;
     await page.route('**/api/appointments/appt-1', route => {
@@ -162,9 +159,7 @@ test.describe('Case lifecycle — happy path (approve → query → complete)', 
 
 test.describe('Case lifecycle — cancel path', () => {
   test('admin rejects an appointment with a reason and it disappears from the queue', async ({ page }) => {
-    await page.route('**/api/auth/login', route =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(ADMIN_TOKEN_PAYLOAD) })
-    );
+    await mockPortalLogin(page, ADMIN_TOKEN_PAYLOAD.user);
 
     let rejectionDone = false;
     await page.route('**/api/appointments/admin*', route => {
@@ -195,6 +190,8 @@ test.describe('Case lifecycle — cancel path', () => {
     await page.getByPlaceholder('admin@curesense.com').fill('admin@example.com');
     await page.locator('input[type="password"]').fill('adminpass1');
     await page.getByRole('button', { name: /login/i }).click();
+    // Sign-in must finish (session persisted) before the full-page navigation below
+    await expect(page).toHaveURL('/admin');
 
     await page.goto('/admin/appointments');
     await expect(page.getByText('Jane Patient')).toBeVisible();

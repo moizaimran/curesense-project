@@ -1,9 +1,17 @@
-import { Outlet } from "react-router-dom";
+import { Navigate, Outlet } from "react-router-dom";
+import { useSelector } from "react-redux";
+import { selectToken, selectUser } from "../features/auth/authSlice";
 
 import AdminSidebar from "../components/admin/Sidebar/AdminSidebar";
 import AdminNavbar from "../components/admin/NavBar/AdminNavbar";
 
 export default function AdminLayout() {
+    const token = useSelector(selectToken);
+    const user = useSelector(selectUser);
+
+    if (!token || user?.role !== "admin") {
+        return <Navigate to="/admin/login" replace />;
+    }
 
     return (
 

@@ -1,20 +1,16 @@
 // =============================================================================
 // DoctorLogin.test.jsx
 //
-// Regression tests for three previously-fixed behaviors on the doctor login form:
+// The doctor login form signs in with Firebase Authentication, then loads the
+// backend profile from GET /api/auth/me with the Firebase ID token.
 //
-//  1. Non-doctor role rejection: if the backend returns a non-doctor user the
-//     form must dispatch loginFailure with "This login is for doctors only" and
-//     NOT navigate to the dashboard.  (Prevents patient credentials bypassing
-//     the doctor dashboard.)
-//
-//  2. Pending/rejected doctor error display: the backend now returns 403 for
-//     unverified doctors.  The form catches this, dispatches loginFailure with
-//     the server's error message, and renders it in the error banner.
-//
-//  3. Post-signup pending banner: when navigating to the login page from the
-//     doctor signup screen (location.state.registered = true), a "pending
-//     verification" confirmation message must be shown.
+// Behaviours under test:
+//  1. Verified doctor: ID token and backend user are stored in the auth slice.
+//  2. Non-doctor accounts are rejected at the form and signed out of Firebase.
+//  3. Pending/rejected doctors (Firebase account disabled until admin approval)
+//     and wrong passwords get clear messages; backend 403s are surfaced.
+//  4. Post-signup "pending verification" banner.
+//  5. Loading state and navigation links.
 // =============================================================================
 
 import { describe, test, expect, vi, beforeEach } from "vitest";
@@ -23,27 +19,46 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../test-utils";
 import DoctorLogin from "../pages/auth/DoctorLogin";
 
-// Mock the api module — component tests must not make real HTTP calls
-vi.mock("../utils/api", () => ({
-  api: { post: vi.fn() },
+vi.mock("../config/firebase", () => ({ firebaseAuth: {} }));
+
+vi.mock("firebase/auth", () => ({
+  signInWithEmailAndPassword: vi.fn(),
+  signInWithPopup: vi.fn(),
+  getAdditionalUserInfo: vi.fn(),
+  GoogleAuthProvider: vi.fn(),
+  signOut: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock react-router-dom's useNavigate so we can assert on navigation without
-// a real router history.
+// Component tests must not make real HTTP calls
+vi.mock("../utils/api", () => ({
+  api: { get: vi.fn(), post: vi.fn() },
+}));
+
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async (importOriginal) => {
   const actual = await importOriginal();
-  return {
-    ...actual,
-    useNavigate: () => mockNavigate,
-  };
+  return { ...actual, useNavigate: () => mockNavigate };
 });
 
+import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { api } from "../utils/api";
+
+const DOCTOR = {
+  id: "abc", name: "Dr Test", email: "doctor@example.com", role: "doctor",
+  patient_id: null, doctor_profile: { id: "dp1", status: "verified", specialty: "Cardiology" },
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
+
+function firebaseSignInSucceeds(token = "firebase.id.token") {
+  signInWithEmailAndPassword.mockResolvedValueOnce({ user: { getIdToken: async () => token } });
+}
+
+function firebaseSignInFails(code) {
+  signInWithEmailAndPassword.mockRejectedValueOnce(Object.assign(new Error(code), { code }));
+}
 
 function mountLogin(routerState = {}) {
   return renderWithProviders(<DoctorLogin />, {
@@ -64,22 +79,19 @@ async function fillAndSubmit(email = "doctor@example.com", password = "password1
 // 1. Happy path — verified doctor
 // =============================================================================
 describe("DoctorLogin — happy path", () => {
-  test("successful doctor login stores token in auth state", async () => {
-    api.post.mockResolvedValueOnce({
-      token: "fake.jwt.token",
-      user:  { id: "abc", name: "Dr Test", email: "doctor@example.com", role: "doctor",
-               patient_id: null, doctor_profile: { status: "verified" } },
-    });
+  test("successful Firebase sign-in stores the ID token and backend user", async () => {
+    firebaseSignInSucceeds("firebase.id.token");
+    api.get.mockResolvedValueOnce(DOCTOR);
 
-    // renderWithProviders returns { store, ...rtlResult }
     const { store } = mountLogin();
     await fillAndSubmit();
 
-    // MemoryRouter supplies its own navigate context, so the module-level
-    // mockNavigate won't be called — assert on Redux state instead.
     await waitFor(() => {
-      expect(store.getState().auth.token).toBe("fake.jwt.token");
+      expect(store.getState().auth.token).toBe("firebase.id.token");
     });
+    expect(store.getState().auth.user.doctor_profile.id).toBe("dp1");
+    expect(signInWithEmailAndPassword).toHaveBeenCalledWith({}, "doctor@example.com", "password1");
+    expect(api.get).toHaveBeenCalledWith("/api/auth/me", "firebase.id.token");
   });
 });
 
@@ -87,54 +99,61 @@ describe("DoctorLogin — happy path", () => {
 // 2. Regression: non-doctor role check
 // =============================================================================
 describe("REGRESSION — non-doctor role is rejected at the form level", () => {
-  test("patient credentials → shows 'doctors only' error, no navigation", async () => {
-    // Backend accepts the login (200 OK) but returns a patient user
-    api.post.mockResolvedValueOnce({
-      token: "fake.jwt.token",
-      user:  { id: "xyz", name: "Jane Patient", email: "jane@example.com", role: "patient",
-               patient_id: "p1", doctor_profile: null },
-    });
+  test("patient account → shows 'doctors only' error, signs out, no navigation", async () => {
+    firebaseSignInSucceeds();
+    api.get.mockResolvedValueOnce({ ...DOCTOR, role: "patient", doctor_profile: null });
 
-    mountLogin();
+    const { store } = mountLogin();
     await fillAndSubmit("jane@example.com", "password1");
 
     await waitFor(() => {
       expect(screen.getByText(/doctors only/i)).toBeInTheDocument();
     });
+    expect(signOut).toHaveBeenCalled();
+    expect(store.getState().auth.token).toBeNull();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 });
 
 // =============================================================================
-// 3. Regression: pending/rejected doctor error display
+// 3. Sign-in failures
 // =============================================================================
-describe("REGRESSION — pending/rejected doctor 403 is surfaced to the user", () => {
-  test("pending doctor: 403 error message is displayed in the error banner", async () => {
-    api.post.mockRejectedValueOnce(
-      new Error("Your account is pending verification. Please wait for admin approval before logging in.")
-    );
+describe("REGRESSION — pending/rejected doctors and failed sign-ins are surfaced", () => {
+  test("disabled Firebase account (pending or rejected doctor) shows the not-active message", async () => {
+    firebaseSignInFails("auth/user-disabled");
 
     mountLogin();
     await fillAndSubmit();
 
     await waitFor(() => {
-      expect(screen.getByText(/pending verification/i)).toBeInTheDocument();
+      expect(screen.getByText(/not active yet/i)).toBeInTheDocument();
     });
+    expect(api.get).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  test("rejected doctor: 403 error message is displayed", async () => {
-    api.post.mockRejectedValueOnce(
-      new Error("Your account was not approved. Please contact support for more information.")
-    );
+  test("wrong password shows 'Incorrect email or password.'", async () => {
+    firebaseSignInFails("auth/invalid-credential");
 
     mountLogin();
     await fillAndSubmit();
 
     await waitFor(() => {
-      expect(screen.getByText(/not approved/i)).toBeInTheDocument();
+      expect(screen.getByText("Incorrect email or password.")).toBeInTheDocument();
     });
-    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  test("backend 403 (email not verified) is displayed and the Firebase session is closed", async () => {
+    firebaseSignInSucceeds();
+    api.get.mockRejectedValueOnce(new Error("Email not verified. Please click the link in your inbox."));
+
+    mountLogin();
+    await fillAndSubmit();
+
+    await waitFor(() => {
+      expect(screen.getByText(/email not verified/i)).toBeInTheDocument();
+    });
+    expect(signOut).toHaveBeenCalled();
   });
 });
 
@@ -158,8 +177,7 @@ describe("REGRESSION — post-signup pending verification banner", () => {
 // =============================================================================
 describe("DoctorLogin — loading and form rendering", () => {
   test("Submit button shows 'Signing in…' while loading", async () => {
-    // Never resolves — keeps loading state active
-    api.post.mockReturnValueOnce(new Promise(() => {}));
+    signInWithEmailAndPassword.mockReturnValueOnce(new Promise(() => {}));
 
     mountLogin();
     await fillAndSubmit();
