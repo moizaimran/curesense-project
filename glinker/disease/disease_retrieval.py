@@ -17,8 +17,10 @@ import faiss
 from glinker import config
 
 DISEASE_INDEX_DIR   = "/kaggle/working/disease_index"
-SIMILARITY_THRESHOLD = 0.80   # high bar — only very confident HPO matches pass; LLM handles rest
+SIMILARITY_THRESHOLD = 0.65   # bge cosine scores for symptom query vs disease paragraph rarely pass 0.80
 TOP_K               = 5       # number of disease candidates to return to the LLM
+# bge-v1.5 retrieval: queries carry this instruction, indexed passages do not
+QUERY_INSTRUCTION   = "Represent this sentence for searching relevant passages: "
 
 # ── Module-level state ────────────────────────────────────────────────────────
 _disease_index = None
@@ -87,7 +89,7 @@ def retrieve_diseases(
     # ── Embed + search ────────────────────────────────────────────────────────
     try:
         model = config.get_embed_model()
-        q_vec = model.encode([query], normalize_embeddings=True)
+        q_vec = model.encode([QUERY_INSTRUCTION + query], normalize_embeddings=True)
         q_vec = np.array(q_vec, dtype="float32")
 
         # Over-fetch then filter — ensures we get k results above threshold
@@ -114,7 +116,8 @@ def retrieve_diseases(
         if results:
             print(f"[DiseaseRAG] {len(results)} candidate(s) retrieved for: {query[:80]!r}")
         else:
-            print("[DiseaseRAG] No candidates above threshold — LLM will use clinical knowledge only.")
+            print(f"[DiseaseRAG] No candidates above {SIMILARITY_THRESHOLD} (best score "
+                  f"{float(scores[0][0]):.3f}) — LLM will use clinical knowledge only.")
 
         return results
 
