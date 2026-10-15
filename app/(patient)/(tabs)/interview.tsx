@@ -295,6 +295,26 @@ export default function InterviewScreen() {
       if (!res.ok) {
         opacity.setValue(1);
 
+        // 409/410: session already ended or expired; session_status "failed": report could not be generated
+        const reportFailed = data.session_status === "failed";
+        if (reportFailed || res.status === 409 || res.status === 410) {
+          await Storage.deleteItemAsync(SESSION_KEY);
+          setSessionId(null);
+          setTurnCount(0);
+          setStage("greeting");
+          Alert.alert(
+            reportFailed ? "Report could not be generated" : "Interview ended",
+            reportFailed
+              ? "Your answers were saved, but the analysis service had a problem, so this interview has ended. You can find it under Reports. Please start a new interview."
+              : (data.error ?? "This interview has ended. Please start a new one."),
+            [
+              { text: "Not now", style: "cancel" },
+              { text: "Start New Interview", onPress: () => { void startInterview(); } },
+            ],
+          );
+          return;
+        }
+
         Alert.alert("Error", data.error ?? "Something went wrong.");
 
         return;

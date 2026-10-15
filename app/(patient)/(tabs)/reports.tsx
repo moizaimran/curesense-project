@@ -576,11 +576,16 @@ export default function ReportsScreen() {
 
                 <Text style={s.expiredSub}>
                   {sess.turn_count} question
-                  {sess.turn_count !== 1 ? "s" : ""} completed before expiry.
+                  {sess.turn_count !== 1 ? "s" : ""}{" "}
+                  {sess.status === "failed"
+                    ? "answered — the interview finished, but analysis failed."
+                    : "completed before expiry."}
                 </Text>
 
                 <Text style={s.noReport}>
-                  No report was generated for this session.
+                  {sess.status === "failed"
+                    ? "The report could not be generated. Please start a new interview."
+                    : "No report was generated for this session."}
                 </Text>
               </View>
             ))}

@@ -16,7 +16,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { signInWithEmailAndPassword } from "firebase/auth";
 import { API_URL } from "@/constants/api";
+import { firebaseAuth } from "@/utils/firebaseClient";
 import * as Storage from "@/utils/storage";
 
 const C = {
@@ -58,28 +60,38 @@ export default function LoginScreen() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+      // Same flow as the landing screen: Firebase sign-in, then load role and
+      // patient_id from the backend with the Firebase ID token.
+      const credential = await signInWithEmailAndPassword(firebaseAuth, email.trim(), password);
+      const idToken = await credential.user.getIdToken();
+
+      const res = await fetch(`${API_URL}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${idToken}` },
       });
       const data = await res.json();
 
+      if (res.status === 403 && data.error?.toLowerCase().includes("verified")) {
+        router.push({ pathname: "/(auth)/verify-email" as any, params: { email: email.trim() } });
+        return;
+      }
       if (!res.ok) {
         setError(data.error ?? "Login failed.");
         return;
       }
 
-      await Storage.setItemAsync("token", data.token);
-      await Storage.setItemAsync("role", data.user.role);
-      await Storage.setItemAsync(
-        "patient_id",
-        data.user.patient_id?.toString() ?? "",
-      );
+      await Storage.setItemAsync("role", data.role);
+      await Storage.setItemAsync("patient_id", data.patient_id?.toString() ?? "");
 
       router.replace("/(patient)/profile" as any);
-    } catch {
-      setError("Could not connect to the server. Please try again.");
+    } catch (err: any) {
+      const code = err?.code ?? "";
+      if (code === "auth/user-disabled") {
+        setError("Your account is not active. Please contact support.");
+      } else if (["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found"].includes(code)) {
+        setError("Invalid email or password.");
+      } else {
+        setError("Could not connect to the server. Please try again.");
+      }
     } finally {
       setLoading(false);
     }

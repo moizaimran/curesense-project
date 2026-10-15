@@ -166,7 +166,7 @@ export default function FindDoctorScreen() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(specialty ?? "");
   const [cityFilter, setCityFilter] = useState("");
   const [genderFilter, setGenderFilter] = useState<"" | "male" | "female">("");
   const [page, setPage] = useState(1);
@@ -267,9 +267,16 @@ export default function FindDoctorScreen() {
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={s.headerTitle}>Find a Doctor</Text>
           {specialty ? (
-            <Text style={s.headerSub} numberOfLines={1}>
-              Recommended: {specialty}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Text style={s.headerSub} numberOfLines={1}>
+                Recommended: {specialty}
+              </Text>
+              {search === specialty ? (
+                <TouchableOpacity onPress={() => setSearch("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={[s.headerSub, { color: "#60A5FA", fontWeight: "700" }]}>Show all</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
           ) : null}
         </View>
       </View>

@@ -30,30 +30,19 @@ const DOT_CLAMP_BOTTOM = 130;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface MedFlag {
-  drug: string;
-  flag: string;
-  citation?: string;
-}
 interface MedNote {
   drug: string;
   note: string;
 }
-interface DiagnosisNote {
-  disease: string;
-  note: string;
-}
 interface EmergencyWarning {
   triggered: boolean;
-  reason: string;
   message: string;
 }
 
 interface Diagnosis {
   disease: string;
   icdCode?: string;
-  plausibility: "likely" | "possible" | "unlikely";
-  clinicalReason: string;
+  plausibility: "likely" | "possible";
   patientNote: string;
 }
 
@@ -82,13 +71,10 @@ interface ReportData {
     referralSpecialty: string;
     selfCareGuidance?: { point: string }[];
     researchSummary?: string;
-    diagnosisNotes?: DiagnosisNote[];
     medicationNotes: MedNote[];
   };
+  // Patient view from the backend: likely/possible conditions only, no clinical fields
   interpreted_diagnoses: Diagnosis[];
-  doctor_report: {
-    medicationFlags: MedFlag[];
-  };
   session_scans?: SessionScan[];
 }
 
@@ -271,8 +257,23 @@ function FloatingDot({
   onOpen: (type: "appointment" | "flags") => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [seen, setSeen] = useState(false);
   const menuOpenRef = useRef(false);
   const menuAnim = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(1)).current;
+
+  // Pulse the handle until the patient opens the menu for the first time
+  useEffect(() => {
+    if (seen) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.12, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [seen, pulse]);
   const posY = useRef(new Animated.Value(SCREEN_H * 0.42)).current;
   const posOffset = useRef(SCREEN_H * 0.42);
   const dragDelta = useRef(0);
@@ -308,6 +309,7 @@ function FloatingDot({
           const opening = !menuOpenRef.current;
           menuOpenRef.current = opening;
           setMenuOpen(opening);
+          if (opening) setSeen(true);
           Animated.spring(menuAnim, {
             toValue: opening ? 1 : 0,
             useNativeDriver: true,
@@ -365,27 +367,37 @@ function FloatingDot({
           onPress={() => selectOption("appointment")}
           activeOpacity={0.8}
         >
-          <Ionicons name="calendar-outline" size={14} color="#22C55E" />
-          <Text style={[dot.menuLabel, { color: "#22C55E" }]}>Guidelines</Text>
+          <Ionicons name="heart-outline" size={14} color="#22C55E" />
+          <Text style={[dot.menuLabel, { color: "#22C55E" }]}>Guidelines ({apptItems.length})</Text>
         </TouchableOpacity>
         <View style={dot.menuDivider} />
-        {/* Always show Flags */}
+        {/* Medication notes (plain-language, one per medicine) */}
         <TouchableOpacity
           style={dot.menuItem}
           onPress={() => selectOption("flags")}
           activeOpacity={0.8}
         >
-          <Ionicons name="warning-outline" size={14} color="#F87171" />
-          <Text style={[dot.menuLabel, { color: "#F87171" }]}>Flags</Text>
+          <Ionicons name="medkit-outline" size={14} color="#60A5FA" />
+          <Text style={[dot.menuLabel, { color: "#60A5FA" }]}>Medicines ({flagItems.length})</Text>
         </TouchableOpacity>
       </Animated.View>
 
+      {/* First-visit hint so the menu is not missed */}
+      {!seen && !menuOpen && (
+        <View style={dot.hint} pointerEvents="none">
+          <Text style={dot.hintText}>Tips & medicines</Text>
+        </View>
+      )}
+
       {/* The pill handle (snapped to right edge) */}
-      <View style={[dot.pill, menuOpen && dot.pillOpen]}>
+      <Animated.View style={[dot.pill, menuOpen && dot.pillOpen, { transform: [{ scale: seen ? 1 : pulse }] }]}>
         <View style={dot.line} />
         <View style={dot.line} />
         <View style={dot.line} />
-      </View>
+        <View style={dot.badge} pointerEvents="none">
+          <Text style={dot.badgeText}>{apptItems.length + flagItems.length}</Text>
+        </View>
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -536,13 +548,10 @@ export default function ReportSheetScreen() {
   }
 
   const ps = report.patient_summary;
-  const diagnoses = report.interpreted_diagnoses
-    .filter((d) => d.plausibility !== "unlikely")
-    .slice(0, 3);
-  const flags = report.doctor_report?.medicationFlags ?? [];
+  const diagnoses = (report.interpreted_diagnoses ?? []).slice(0, 3);
   const apptItems =
     ps.selfCareGuidance?.map((g) => g.point).filter(Boolean) ?? [];
-  const flagItems = flags.map((f) => `${f.drug}: ${f.flag}`).filter(Boolean);
+  const flagItems = (ps.medicationNotes ?? []).map((m) => `${m.drug}: ${m.note}`).filter(Boolean);
   const sessionName = session.session_name || "AI Doctor Consultation";
 
   return (
@@ -594,17 +603,17 @@ export default function ReportSheetScreen() {
           />
         }
       >
-        {/* Emergency warning banner — only when triggered */}
-        {!!report.emergency_warning?.triggered && (
+        {/* Emergency warning banner — always shown */}
+        {report.emergency_warning?.triggered ? (
           <View style={s.emergencyBanner}>
-            <Ionicons
-              name="warning"
-              size={20}
-              color="#fff"
-              style={{ flexShrink: 0 }}
-            />
-            <Text style={s.emergencyText}>
-              {report.emergency_warning.message}
+            <Ionicons name="warning" size={20} color="#fff" style={{ flexShrink: 0 }} />
+            <Text style={s.emergencyText}>{report.emergency_warning.message}</Text>
+          </View>
+        ) : (
+          <View style={[s.emergencyBanner, { backgroundColor: "rgba(34,197,94,0.12)", borderColor: "rgba(34,197,94,0.30)" }]}>
+            <Ionicons name="checkmark-circle" size={20} color="#22C55E" style={{ flexShrink: 0 }} />
+            <Text style={[s.emergencyText, { color: "#22C55E", fontWeight: "600" }]}>
+              No emergency warning signs were found in your answers.
             </Text>
           </View>
         )}
@@ -633,126 +642,58 @@ export default function ReportSheetScreen() {
         {/* Patient complaint summary */}
         <View style={s.card}>
           <View style={s.cardHeader}>
-            <Ionicons
-              name="document-text-outline"
-              size={16}
-              color="#60A5FA"
-              style={{ flexShrink: 0 }}
-            />
+            <Ionicons name="document-text-outline" size={16} color="#60A5FA" style={{ flexShrink: 0 }} />
             <Text style={s.cardTitle}>Your Summary</Text>
           </View>
           <Text style={s.summaryText}>
-            {ps.patientComplaintSummary?.trim() || "No summary available."}
+            {ps.patientComplaintSummary?.trim() || "Your summary is not available for this consultation."}
           </Text>
         </View>
 
-        {/* Research summary */}
-        {!!ps.researchSummary?.trim() && (
-          <View style={s.card}>
-            <View style={s.cardHeader}>
-              <Ionicons
-                name="book-outline"
-                size={16}
-                color="#34D399"
-                style={{ flexShrink: 0 }}
-              />
-              <Text style={[s.cardTitle, { color: "#34D399" }]}>
-                What We Found
-              </Text>
-            </View>
-            <Text style={s.summaryText}>{ps.researchSummary.trim()}</Text>
+        {/* Research summary — always shown */}
+        <View style={s.card}>
+          <View style={s.cardHeader}>
+            <Ionicons name="book-outline" size={16} color="#34D399" style={{ flexShrink: 0 }} />
+            <Text style={[s.cardTitle, { color: "#34D399" }]}>What We Found</Text>
           </View>
-        )}
-
-        {/* Diagnosis list — top 3, unlikely filtered */}
-        {diagnoses.length > 0 && (
-          <View style={s.section}>
-            <Text style={s.sectionLabel}>Possible Conditions</Text>
-            {diagnoses.map((d, i) => (
-              <View key={i} style={s.diagCard}>
-                <View style={s.diagRow}>
-                  <View style={s.rankBadge}>
-                    <Text style={s.rankText}>{i + 1}</Text>
-                  </View>
-                  <Text style={s.diagName} numberOfLines={3}>
-                    {d.disease}
-                  </Text>
-                  <View
-                    style={[
-                      s.plausBadge,
-                      { backgroundColor: plausibilityBg(d.plausibility) },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        s.plausText,
-                        { color: plausibilityColor(d.plausibility) },
-                      ]}
-                    >
-                      {d.plausibility.charAt(0).toUpperCase() +
-                        d.plausibility.slice(1)}
-                    </Text>
-                  </View>
-                </View>
-                {!!d.icdCode?.trim() && (
-                  <View style={s.icdRow}>
-                    <Text style={s.icdLabel}>ICD-10</Text>
-                    <Text style={s.icdCode}>{d.icdCode.trim()}</Text>
-                  </View>
-                )}
-                {!!d.patientNote?.trim() && (
-                  <Text style={s.diagNote}>{d.patientNote.trim()}</Text>
-                )}
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* Diagnosis notes — plain-language per-condition explanations */}
-        {ps.diagnosisNotes && ps.diagnosisNotes.length > 0 && (
-          <View style={s.section}>
-            <Text style={s.sectionLabel}>What These Conditions Mean</Text>
-            {ps.diagnosisNotes.map((dn, i) => (
-              <View key={i} style={s.diagNoteCard}>
-                <Text style={s.diagNoteDisease}>{dn.disease}</Text>
-                <Text style={s.diagNoteText}>{dn.note?.trim()}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* Medication notes — always visible */}
-        <View style={s.section}>
-          <Text style={s.sectionLabel}>Medication Notes</Text>
-          {ps.medicationNotes && ps.medicationNotes.length > 0 ? (
-            ps.medicationNotes.map((med, i) => (
-              <View key={i} style={s.medNoteCard}>
-                <Text style={s.medNoteDrug} numberOfLines={2}>
-                  {med.drug}
-                </Text>
-                <Text style={s.medNoteText}>{med.note?.trim()}</Text>
-              </View>
-            ))
-          ) : (
-            <View style={s.emptyCard}>
-              <Text style={s.emptyCardText}>No medications were mentioned during this session.</Text>
-            </View>
-          )}
+          <Text style={s.summaryText}>
+            {ps.researchSummary?.trim() || "We couldn't find specific reference material for your symptoms."}
+          </Text>
         </View>
 
-        {/* Medication flags — always visible */}
+        {/* Possible conditions — likely/possible only (the backend sends no others) */}
         <View style={s.section}>
-          <Text style={s.sectionLabel}>Medical Flags</Text>
-          {flagItems.length > 0 ? (
-            flagItems.map((item, i) => (
-              <View key={i} style={s.flagCard}>
-                <Ionicons name="warning-outline" size={15} color="#F87171" style={{ flexShrink: 0, marginTop: 1 }} />
-                <Text style={s.flagText}>{item}</Text>
+          <Text style={s.sectionLabel}>Possible Conditions ({diagnoses.length})</Text>
+          {diagnoses.length > 0 ? diagnoses.map((d, i) => (
+            <View key={i} style={s.diagCard}>
+              <View style={s.diagRow}>
+                <View style={s.rankBadge}>
+                  <Text style={s.rankText}>{i + 1}</Text>
+                </View>
+                <Text style={s.diagName} numberOfLines={3}>{d.disease}</Text>
+                <View style={[s.plausBadge, { backgroundColor: plausibilityBg(d.plausibility) }]}>
+                  <Text style={[s.plausText, { color: plausibilityColor(d.plausibility) }]}>
+                    {d.plausibility.charAt(0).toUpperCase() + d.plausibility.slice(1)}
+                  </Text>
+                </View>
               </View>
-            ))
-          ) : (
+              {!!d.icdCode?.trim() && (
+                <View style={s.icdRow}>
+                  <Text style={s.icdLabel}>ICD-10</Text>
+                  <Text style={s.icdCode}>{d.icdCode.trim()}</Text>
+                </View>
+              )}
+              {/* Patient note */}
+              <View style={{ backgroundColor: "rgba(96,165,250,0.07)", borderRadius: 8, padding: 10, borderWidth: 1, borderColor: "rgba(96,165,250,0.18)" }}>
+                <Text style={{ color: "rgba(96,165,250,0.60)", fontSize: 9, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Patient Note</Text>
+                <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, lineHeight: 18 }}>
+                  {d.patientNote?.trim() || "No description is available for this condition."}
+                </Text>
+              </View>
+            </View>
+          )) : (
             <View style={s.emptyCard}>
-              <Text style={s.emptyCardText}>No medication flags raised for this session.</Text>
+              <Text style={s.emptyCardText}>No likely conditions were identified from your answers.</Text>
             </View>
           )}
         </View>
@@ -952,17 +893,17 @@ export default function ReportSheetScreen() {
       <ModalSheet
         visible={activeModal === "appointment"}
         onClose={() => setActiveModal(null)}
-        icon="calendar-outline"
-        title="Guidelines"
+        icon="heart-outline"
+        title="Self-Care Guidelines"
         color="#22C55E"
         items={apptItems}
       />
       <ModalSheet
         visible={activeModal === "flags"}
         onClose={() => setActiveModal(null)}
-        icon="warning-outline"
-        title="Medical Flags"
-        color="#F87171"
+        icon="medkit-outline"
+        title="Medication Notes"
+        color="#60A5FA"
         items={flagItems}
       />
     </View>
@@ -1560,4 +1501,29 @@ const dot = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: "rgba(255,255,255,0.50)",
   },
+  badge: {
+    position: "absolute",
+    top: -7,
+    left: -7,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 5,
+    borderRadius: 10,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#0B1437",
+  },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
+  hint: {
+    position: "absolute",
+    right: 46,
+    top: 18,
+    backgroundColor: "rgba(37,99,235,0.92)",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  hintText: { color: "#fff", fontSize: 11, fontWeight: "700" },
 });
