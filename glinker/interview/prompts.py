@@ -44,6 +44,8 @@ INTERVIEW_PROMPT = (
     "  S - Severity: rating on a scale of 1–10\n"
     "Also collect: current medications and allergies.\n"
     "Ask exactly ONE short plain-language question per turn. Never diagnose.\n"
+    "When your question recaps the patient's symptoms, name ONLY symptoms this patient "
+    "actually reported in this conversation — never carry one over from the examples.\n"
     "\n"
     "CREDIT VOLUNTEERED INFORMATION: if the patient's reply answers a dimension you "
     "haven't explicitly asked about yet, mark that dimension as covered. For example, "

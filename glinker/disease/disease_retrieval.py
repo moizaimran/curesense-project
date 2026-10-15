@@ -95,12 +95,18 @@ def retrieve_diseases(
         # Over-fetch then filter — ensures we get k results above threshold
         scores, indices = _disease_index.search(q_vec, k * 4)
 
+        # An entry named after a symptom the patient reported ("Cough", "Sore Throat")
+        # is not a diagnosis — skip it so the LLM fills the list from clinical knowledge
+        reported = {kw.strip().lower() for kw in symptom_kws}
+
         results = []
         for score, idx in zip(scores[0], indices[0]):
             if idx == -1 or float(score) < SIMILARITY_THRESHOLD:
                 continue
 
             meta      = _metadata[idx]
+            if meta["disease"].strip().lower() in reported:
+                continue
             paragraph = _paragraphs[idx]
 
             results.append({
