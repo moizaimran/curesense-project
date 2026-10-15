@@ -7,7 +7,7 @@ const mongoose = require("mongoose");
 const TurnSchema = new mongoose.Schema(
   {
     turn_number:       { type: Number, required: true },
-    patient_raw:       { type: String, required: true }, // as received: raw text or Whisper output
+    patient_raw:       { type: String, required: true }, // exactly what the patient sent (typed, or reviewed /transcribe text)
     patient_corrected: { type: String, required: true }, // after LLM spelling-correction pass
     assistant_message: { type: String, required: true }, // question or closing line from LLM
     voice_message_url: { type: String, default: null  }, // Cloudinary URL — null for text turns

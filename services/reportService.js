@@ -6,6 +6,35 @@ const { canAccessPatient } = require("../middleware/auth");
 // only returned on single-report fetch (getReport / getReportForSession)
 const LIST_EXCLUDE = "-retrieved_chunks -entities -openfda_results";
 
+// ── Role-based view ───────────────────────────────────────────────────────────
+// Patients receive only patient-facing content. Clinical material (doctor report,
+// retrieved sources, entities, search queries, raw disease ranking, drug labels,
+// clinical reasoning, unlikely diagnoses, doctor flags) never leaves the server
+// for a patient. Doctors and admins receive the full report.
+
+const PATIENT_FIELDS = ["_id", "session_id", "patient_id", "appointment_id", "generated_at",
+                        "patient_summary", "session_scans"];
+
+function toPatientView(report) {
+  const view = {};
+  for (const field of PATIENT_FIELDS) {
+    if (report[field] !== undefined) view[field] = report[field];
+  }
+  view.emergency_warning = {
+    triggered: !!report.emergency_warning?.triggered,
+    message:   report.emergency_warning?.message || "",
+  };
+  view.interpreted_diagnoses = (report.interpreted_diagnoses || [])
+    .filter((d) => d.plausibility !== "unlikely")
+    .map(({ disease, icdCode, plausibility, patientNote }) => ({ disease, icdCode, plausibility, patientNote }));
+  return view;
+}
+
+// report: a plain object (use .toObject() on documents first)
+function viewFor(user, report) {
+  return user.role === "patient" ? toPatientView(report) : report;
+}
+
 async function getReport(id, user) {
   const report = await Report.findOne({ _id: id, is_deleted: { $ne: true } });
   if (!report) throw new AppError("Report not found", 404);
@@ -17,7 +46,10 @@ async function getReport(id, user) {
     const Appointment   = require("../models/Appointment");
     const profile = await DoctorProfile.findOne({ user_id: user._id }).select("_id");
     if (profile) {
-      hasAccess = !!(await Appointment.exists({ _id: report.appointment_id, doctor_id: profile._id }));
+      // Only an admin-approved consultation grants access — never a pending or rejected request
+      hasAccess = !!(await Appointment.exists({
+        _id: report.appointment_id, doctor_id: profile._id, status: { $in: ["confirmed", "completed"] },
+      }));
     }
   }
 
@@ -31,7 +63,7 @@ async function getReport(id, user) {
     .select("-storage_url -zip_url -canvas_url -__v")
     .sort({ createdAt: -1 });
 
-  return { ...report.toObject(), session_scans: scans };
+  return viewFor(user, { ...report.toObject(), session_scans: scans });
 }
 
 // Gap 2 fixed: excludes heavy internal fields not needed in a list
@@ -47,7 +79,7 @@ async function getReportsForPatient(patientId, user, { page = 1, limit = 20 } = 
     .skip(skip)
     .limit(Number(limit));
 
-  return { total, page: Number(page), results };
+  return { total, page: Number(page), results: results.map((r) => viewFor(user, r.toObject())) };
 }
 
 async function getReportForSession(sessionId, user) {
@@ -61,24 +93,8 @@ async function getReportForSession(sessionId, user) {
     .select("-storage_url -zip_url -canvas_url -__v")
     .sort({ createdAt: -1 });
 
-  return { ...report.toObject(), session_scans: scans };
+  return viewFor(user, { ...report.toObject(), session_scans: scans });
 }
 
-// Gap 1 fixed: patient or admin can soft-delete a report directly
-async function softDeleteReport(id, user) {
-  const report = await Report.findOne({ _id: id, is_deleted: { $ne: true } });
-  if (!report) throw new AppError("Report not found", 404);
 
-  // Only the patient who owns the report or an admin can delete it
-  if (user.role === "patient") {
-    if (!user.patient_id || report.patient_id.toString() !== user.patient_id.toString())
-      throw new AppError("Access denied", 403);
-  } else if (user.role !== "admin") {
-    throw new AppError("Access denied", 403);
-  }
-
-  await Report.findByIdAndUpdate(id, { is_deleted: true });
-  return { message: "Report removed successfully" };
-}
-
-module.exports = { getReport, getReportsForPatient, getReportForSession, softDeleteReport };
+module.exports = { getReport, getReportsForPatient, getReportForSession, viewFor };

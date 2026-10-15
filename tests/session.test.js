@@ -304,7 +304,7 @@ describe("POST /api/sessions/:id/turn — processTurn", () => {
     expect(res.body.error).toMatch(/2000/);
   });
 
-  test("no patient_text and no audio → 400", async () => {
+  test("no patient_text → 400", async () => {
     const { patient, token } = await buildPatientUser("N");
     const session = await Session.create({ patient_id: patient._id });
 
@@ -382,7 +382,6 @@ describe("POST /api/sessions/:id/turn — processTurn", () => {
         status:               "in_progress",
         message:              "What other symptoms do you have?",
         correctedPatientText: "I have a headache",
-        rawPatientText:       "i have a headache",
         questionType:         "text",
         options:              [],
       },
@@ -414,7 +413,6 @@ describe("POST /api/sessions/:id/turn — processTurn", () => {
         status:               "complete",
         message:              "Thank you — generating your report.",
         correctedPatientText: "I feel better now",
-        rawPatientText:       "i feel better now",
         questionType:         "text",
         options:              [],
         sessionName:          "Headache Session",
@@ -423,7 +421,6 @@ describe("POST /api/sessions/:id/turn — processTurn", () => {
     // Second mock: the finalize pipeline response
     axios.post.mockResolvedValueOnce({
       data: {
-        sessionName:          "Headache Session",
         ragQuery:             "headache symptoms",
         diagnosticQuery:      "headache",
         verifiedEntities:     [],
@@ -444,6 +441,14 @@ describe("POST /api/sessions/:id/turn — processTurn", () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("complete");
     expect(res.body.report_id).toBeDefined();
+    // The finalize request carries the specialty list the AI must choose from
+    expect(axios.post.mock.calls.at(-1)[1].specialties).toContain("General Physician");
+    // and the patient's saved profile history
+    expect(axios.post.mock.calls.at(-1)[1]).toEqual(expect.objectContaining({
+      profile_medications: expect.any(Array),
+      profile_allergies:   expect.any(Array),
+      profile_conditions:  expect.any(Array),
+    }));
 
     // Session marked completed
     const updatedSession = await Session.findById(session._id);
@@ -478,4 +483,129 @@ describe("POST /api/sessions/:id/turn — processTurn", () => {
     expect(res.status).toBe(502);
     expect(res.body.error).toBe("AI service error");
   });
+});
+
+// =============================================================================
+// Session failure and automatic abandonment
+// =============================================================================
+describe("Session end states", () => {
+  test("finalize pipeline error on the last turn → session marked failed, final turn kept, 502", async () => {
+    const { patient, token } = await buildPatientUser("F");
+    const session = await Session.create({ patient_id: patient._id });
+
+    axios.post.mockResolvedValueOnce({
+      data: {
+        status: "complete", message: "Thank you — generating your report.",
+        correctedPatientText: "No allergies",
+        questionType: "text", options: [],
+      },
+    });
+    axios.post.mockRejectedValueOnce(Object.assign(new Error("AI down"), { response: { status: 500, data: {} } }));
+
+    const res = await request(app)
+      .post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ patient_text: "no allergies" });
+
+    expect(res.status).toBe(502);
+    expect(res.body.session_status).toBe("failed");
+    const saved = await Session.findById(session._id);
+    expect(saved.status).toBe("failed");
+    expect(saved.transcript).toHaveLength(1);
+    expect(saved.completed_at).toBeNull();
+    expect(await Report.countDocuments({ session_id: session._id })).toBe(0);
+  });
+
+  test("abandonInactiveSessions marks only in-progress sessions idle for over 48 hours", async () => {
+    const { abandonInactiveSessions } = require("../services/sessionService");
+    const { patient } = await buildPatientUser("A");
+    const old = new Date(Date.now() - 49 * 36e5);
+    const idle      = await Session.create({ patient_id: patient._id });
+    const recent    = await Session.create({ patient_id: patient._id });
+    const completed = await Session.create({ patient_id: patient._id, status: "completed" });
+    await setSessionLastActivity(idle._id, old);
+    await setSessionLastActivity(completed._id, old);
+
+    expect(await abandonInactiveSessions()).toBe(1);
+    expect((await Session.findById(idle._id)).status).toBe("abandoned");
+    expect((await Session.findById(recent._id)).status).toBe("in_progress");
+    expect((await Session.findById(completed._id)).status).toBe("completed");
+  });
+});
+
+describe("Session name from the first turn", () => {
+  test("turn 1 requests and stores the name; later turns do not request it", async () => {
+    const { patient, token } = await buildPatientUser("N");
+    const session = await Session.create({ patient_id: patient._id });
+    const turnReply = (sessionName) => ({
+      data: {
+        status: "continue", message: "Where is the pain?", correctedPatientText: "My back hurts.", questionType: "text", options: [], sessionName,
+      },
+    });
+
+    axios.post.mockClear();
+    axios.post.mockResolvedValueOnce(turnReply("Lower Back Pain"));
+    await request(app).post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`).send({ patient_text: "my back hurts" });
+
+    expect(axios.post.mock.calls[0][1].request_session_name).toBe(true);
+    expect((await Session.findById(session._id)).session_name).toBe("Lower Back Pain");
+
+    axios.post.mockResolvedValueOnce(turnReply(""));
+    await request(app).post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`).send({ patient_text: "lower back" });
+
+    expect(axios.post.mock.calls[1][1].request_session_name).toBe(false);
+    expect((await Session.findById(session._id)).session_name).toBe("Lower Back Pain");
+  });
+});
+
+describe("Voice message URL validation", () => {
+  const turnReply = {
+    data: { status: "continue", message: "Next?", correctedPatientText: "Back pain.", questionType: "text", options: [], sessionName: "" },
+  };
+
+  test("a link outside this project's Cloudinary account → 400, turn not forwarded", async () => {
+    process.env.CLOUDINARY_CLOUD_NAME = "curesense-test";
+    const { patient, token } = await buildPatientUser("V1");
+    const session = await Session.create({ patient_id: patient._id });
+    axios.post.mockClear();
+
+    const res = await request(app).post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ patient_text: "back pain", voice_message_url: "https://evil.example.com/track.mp3" });
+
+    expect(res.status).toBe(400);
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test("own Cloudinary link is accepted and stored with the turn", async () => {
+    process.env.CLOUDINARY_CLOUD_NAME = "curesense-test";
+    const { patient, token } = await buildPatientUser("V2");
+    const session = await Session.create({ patient_id: patient._id });
+    const url = "https://res.cloudinary.com/curesense-test/video/upload/v1/abc.m4a";
+    axios.post.mockResolvedValueOnce(turnReply);
+
+    const res = await request(app).post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ patient_text: "back pain", voice_message_url: url });
+
+    expect(res.status).toBe(200);
+    expect((await Session.findById(session._id)).transcript[0].voice_message_url).toBe(url);
+  });
+});
+
+test("patient_raw stores the text the patient sent, not the AI service's copy", async () => {
+  const { patient, token } = await buildPatientUser("R");
+  const session = await Session.create({ patient_id: patient._id });
+  axios.post.mockResolvedValueOnce({
+    data: { status: "continue", message: "Since when?", correctedPatientText: "My head hurts a lot.", questionType: "text", options: [], sessionName: "" },
+  });
+
+  await request(app).post(`/api/sessions/${session._id}/turn`)
+    .set("Authorization", `Bearer ${token}`).send({ patient_text: "mera sar bohot dard kar raha hai" });
+
+  const turn = (await Session.findById(session._id)).transcript[0];
+  expect(turn.patient_raw).toBe("mera sar bohot dard kar raha hai");
+  expect(turn.patient_corrected).toBe("My head hurts a lot.");
 });

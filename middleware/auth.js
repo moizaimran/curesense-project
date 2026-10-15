@@ -7,8 +7,6 @@ const User         = require("../models/User");
 
 // Verify Firebase ID token and attach req.user.
 // Rejects with 403 if the token's email_verified flag is false.
-// Falls back to legacy JWT for backward-compat during the migration window — remove
-// the fallback block once all clients have upgraded to Firebase-issued tokens.
 const protect = asyncHandler(async (req, res, next) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) {

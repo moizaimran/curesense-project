@@ -20,15 +20,17 @@ const processTurn = async (req, res) => {
       if (err.session_id) body.session_id = err.session_id;
       return res.status(err.statusCode).json(body);
     }
+    // session_status: "failed" → the interview ended because no report could be produced
+    const ended = err.sessionFailed ? { session_status: "failed" } : {};
     if (err.response) {
       req.log.error(
         { req_id: req.id, session_id: req.params.id, ai_status: err.response.status },
         "AI service returned an error response"
       );
-      return res.status(502).json({ error: "AI service error", detail: err.response.data });
+      return res.status(502).json({ error: "AI service error", detail: err.response.data, ...ended });
     }
     req.log.error({ err, req_id: req.id, session_id: req.params.id }, "Unexpected error in processTurn");
-    res.status(500).json({ error: "An unexpected error occurred. Please try again." });
+    res.status(500).json({ error: "An unexpected error occurred. Please try again.", ...ended });
   }
 };
 

@@ -2,6 +2,7 @@ const { AppError }          = require("../utils/errors");
 const Patient               = require("../models/Patient");
 const Report                = require("../models/Report");
 const { canAccessPatient }  = require("../middleware/auth");
+const { escapeRegex }       = require("../utils/validation");
 
 async function createPatient(body) {
   const { name, dob, gender, phone, contact, medical_conditions, allergies, current_medications } = body;
@@ -31,26 +32,40 @@ async function updatePatientProfile(patientId, body, user) {
   if (!patient) throw new AppError("Patient not found", 404);
   if (!(await canAccessPatient(user, patient._id))) throw new AppError("Access denied", 403);
 
-  const { allergies, current_medications, medical_conditions } = body;
+  const { allergies, current_medications, medical_conditions, dob, gender, profile_complete } = body;
   const updates = { updated_at: new Date() };
   if (allergies)           updates.allergies           = allergies;
   if (current_medications) updates.current_medications = current_medications;
   if (medical_conditions)  updates.medical_conditions  = medical_conditions;
+
+  // Sent by the mobile Complete Profile screen (Google sign-ups start without dob/gender)
+  if (dob !== undefined) {
+    const parsed = new Date(dob);
+    if (Number.isNaN(parsed.getTime())) throw new AppError("dob must be a valid date", 400);
+    updates.dob = parsed;
+  }
+  if (gender !== undefined) {
+    if (typeof gender !== "string" || !gender.trim()) throw new AppError("gender must be a non-empty string", 400);
+    updates.gender = gender.trim();
+  }
+  if (profile_complete !== undefined) updates.profile_complete = profile_complete === true;
 
   return Patient.findByIdAndUpdate(patientId, { $set: updates }, { new: true });
 }
 
 async function getPatientReports(patientId, user) {
   if (!(await canAccessPatient(user, patientId))) throw new AppError("Access denied", 403);
-  return Report.find({ patient_id: patientId, is_deleted: { $ne: true } }).sort({ generated_at: -1 });
+  const { viewFor } = require("./reportService");
+  const reports = await Report.find({ patient_id: patientId, is_deleted: { $ne: true } }).sort({ generated_at: -1 });
+  return reports.map((r) => viewFor(user, r.toObject()));
 }
 
 async function listPatients({ page = 1, limit = 20, search } = {}) {
   const filter = {};
   if (search) {
     filter.$or = [
-      { name:            { $regex: search, $options: "i" } },
-      { "contact.email": { $regex: search, $options: "i" } },
+      { name:            { $regex: escapeRegex(search), $options: "i" } },
+      { "contact.email": { $regex: escapeRegex(search), $options: "i" } },
     ];
   }
   const skip    = (Number(page) - 1) * Number(limit);

@@ -27,10 +27,15 @@ const UserSchema = new mongoose.Schema(
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );
 
-// Auto-delete unverified accounts after 24 hours
+// Auto-delete patient accounts whose email is still unverified after 24 hours.
+// Doctors are excluded: they stay unverified until an admin reviews their PMDC, which can take longer.
 UserSchema.index(
   { created_at: 1 },
-  { expireAfterSeconds: 86400, partialFilterExpression: { is_verified: false } }
+  {
+    name: "unverified_patient_ttl",
+    expireAfterSeconds: 86400,
+    partialFilterExpression: { is_verified: false, role: "patient" },
+  }
 );
 
 // password field and bcrypt hooks removed — Firebase Authentication now holds credentials

@@ -346,6 +346,17 @@ async function assignPatientToDoctor(body) {
   return { message: "Patient assigned successfully", assignment };
 }
 
+// Current user plus, for doctors, the profile summary the web portal needs after sign-in.
+async function getMe(user) {
+  const me = user.toObject();
+  let doctor_profile = null;
+  if (user.role === "doctor") {
+    const profile = await DoctorProfile.findOne({ user_id: user._id }).select("_id status specialty");
+    if (profile) doctor_profile = { id: profile._id, status: profile.status, specialty: profile.specialty };
+  }
+  return { ...me, id: user._id, doctor_profile };
+}
+
 async function updateUserName(userId, name) {
   if (!name?.trim()) throw new AppError("name is required", 400);
   return User.findByIdAndUpdate(userId, { name: name.trim() }, { new: true }).select("name email role patient_id provider_uid google_id expo_push_token created_at updated_at");
@@ -394,6 +405,7 @@ async function registerPushToken(userId, token) {
 }
 
 module.exports = {
+  getMe,
   registerPatient,
   verifyEmail,
   resendOTP,

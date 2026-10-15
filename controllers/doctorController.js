@@ -1,5 +1,6 @@
 const asyncHandler   = require("../utils/asyncHandler");
 const doctorService  = require("../services/doctorService");
+const { SPECIALTIES } = require("../constants/specialties");
 
 const register = asyncHandler(async (req, res) => {
   const result = await doctorService.registerDoctor(req.body);
@@ -10,6 +11,10 @@ const searchDoctors = asyncHandler(async (req, res) => {
   const result = await doctorService.searchDoctors(req.query);
   res.json(result);
 });
+
+const getSpecialties = (req, res) => {
+  res.json({ specialties: SPECIALTIES });
+};
 
 const getMyProfile = asyncHandler(async (req, res) => {
   const profile = await doctorService.getMyProfile(req.user._id);
@@ -59,6 +64,7 @@ const getDashboardSummary = asyncHandler(async (req, res) => {
 module.exports = {
   register,
   searchDoctors,
+  getSpecialties,
   getMyProfile,
   updateMyProfile,
   getDoctorById,

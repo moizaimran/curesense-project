@@ -10,6 +10,7 @@ const router  = express.Router();
 const {
   register,
   searchDoctors,
+  getSpecialties,
   getMyProfile,
   updateMyProfile,
   getDoctorById,
@@ -28,6 +29,7 @@ const { validateObjectId, validateDateQuery } = require("../middleware/validate"
 // Doctor registration is rate-limited the same as patient login/register
 router.post("/register", authLimiter, register);
 router.get("/",          searchDoctors);
+router.get("/specialties", getSpecialties);   // public; must stay above "/:id"
 
 // ── Doctor-only (own profile / availability) — must come before /:id ─────────
 router.get("/me/profile",        protect, authorize("doctor"), getMyProfile);

@@ -1,7 +1,10 @@
 const admin              = require("../config/firebase");
 const { AppError }       = require("../utils/errors");
-const { isStrongPassword, validateEmail } = require("../utils/validation");
+const { isStrongPassword, validateEmail, escapeRegex } = require("../utils/validation");
 const { normalizeCalendarDate, todayCalendarDate } = require("../utils/date");
+const { isValidSpecialty } = require("../constants/specialties");
+
+const INVALID_SPECIALTY = "specialty must be one of the listed specialties (GET /api/doctors/specialties)";
 const User               = require("../models/User");
 const DoctorProfile      = require("../models/DoctorProfile");
 const DoctorAvailability = require("../models/DoctorAvailability");
@@ -25,6 +28,8 @@ async function registerDoctor(body) {
     throw new AppError("Passwords do not match", 400);
   if (!["male", "female"].includes(gender))
     throw new AppError("gender must be 'male' or 'female'", 400);
+  if (!isValidSpecialty(specialty))
+    throw new AppError(INVALID_SPECIALTY, 400);
   if (await User.findOne({ email }))
     throw new AppError("Email already registered", 409);
   if (await DoctorProfile.findOne({ pmdc_number: pmdc_number.toUpperCase() }))
@@ -92,17 +97,17 @@ async function searchDoctors(query) {
   } = query;
 
   const filter = { status: "verified" };
-  if (specialty)       filter.specialty              = { $regex: specialty,       $options: "i" };
-  if (sub_specialty)   filter.sub_specialty          = { $regex: sub_specialty,   $options: "i" };
+  if (specialty)       filter.specialty              = { $regex: escapeRegex(specialty),       $options: "i" };
+  if (sub_specialty)   filter.sub_specialty          = { $regex: escapeRegex(sub_specialty),   $options: "i" };
   if (gender)          filter.gender                 = gender;
-  if (city)            filter["location.city"]       = { $regex: city,            $options: "i" };
-  if (hospital_clinic) filter.hospital_clinic        = { $regex: hospital_clinic, $options: "i" };
+  if (city)            filter["location.city"]       = { $regex: escapeRegex(city),            $options: "i" };
+  if (hospital_clinic) filter.hospital_clinic        = { $regex: escapeRegex(hospital_clinic), $options: "i" };
   if (min_experience || max_experience) {
     filter.experience_years = {};
     if (min_experience) filter.experience_years.$gte = Number(min_experience);
     if (max_experience) filter.experience_years.$lte = Number(max_experience);
   }
-  if (education_degree) filter["education.degree"] = { $regex: education_degree, $options: "i" };
+  if (education_degree) filter["education.degree"] = { $regex: escapeRegex(education_degree), $options: "i" };
 
   const skip  = (Number(page) - 1) * Number(limit);
   const total = await DoctorProfile.countDocuments(filter);
@@ -130,6 +135,8 @@ async function getMyProfile(userId) {
 async function updateMyProfile(userId, body) {
   const { specialty, sub_specialty, hospital_clinic, experience_years, location, contact } = body;
   const update = {};
+  if (specialty !== undefined && !isValidSpecialty(specialty))
+    throw new AppError(INVALID_SPECIALTY, 400);
   if (specialty         !== undefined) update.specialty              = specialty;
   if (sub_specialty     !== undefined) update.sub_specialty          = sub_specialty;
   if (hospital_clinic   !== undefined) update.hospital_clinic        = hospital_clinic;
@@ -345,11 +352,14 @@ async function adminVerifyDoctor(id, { decision, rejection_reason }, verifiedByI
   if (profile.status !== "pending") throw new AppError(`Doctor is already ${profile.status}`, 409);
 
   if (decision === "approve") {
-    // Enable Firebase account first — if Firebase fails, we don't falsely mark approved in MongoDB
+    // Enable Firebase account first — if Firebase fails, we don't falsely mark approved in MongoDB.
+    // Admin review of the PMDC registration and contact email is the doctor's verification step,
+    // so approval also marks the email verified (protect() rejects unverified tokens).
     const doctorUser = await User.findById(profile.user_id).select("provider_uid email");
     if (doctorUser?.provider_uid) {
-      await admin.auth().updateUser(doctorUser.provider_uid, { disabled: false });
+      await admin.auth().updateUser(doctorUser.provider_uid, { disabled: false, emailVerified: true });
     }
+    await User.findByIdAndUpdate(profile.user_id, { is_verified: true });
     profile.status      = "verified";
     profile.verified_by = verifiedById;
     profile.verified_at = new Date();

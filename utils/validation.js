@@ -10,4 +10,10 @@ function validateEmail(email) {
   return at > 0 && dot > at + 1 && dot < email.length - 1 && !/\s/.test(email);
 }
 
-module.exports = { isStrongPassword, validateEmail };
+// Escapes user text for use inside a MongoDB $regex so it is matched literally —
+// characters like ( * + would otherwise raise errors or allow very slow patterns.
+function escapeRegex(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+module.exports = { isStrongPassword, validateEmail, escapeRegex };

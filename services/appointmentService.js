@@ -248,6 +248,9 @@ async function adminReviewAppointment(id, { decision, rejection_reason }, adminU
     appointment.status           = "rejected";
     appointment.rejection_reason = rejection_reason.trim();
     await appointment.save();
+    if (appointment.report_id) {
+      await Report.findByIdAndUpdate(appointment.report_id, { $unset: { appointment_id: "" } });
+    }
   }
 
   return { appointment };

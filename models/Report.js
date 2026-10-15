@@ -32,9 +32,10 @@ const RetrievedChunkSchema = new mongoose.Schema(
 
 const MedicationFlagSchema = new mongoose.Schema(
   {
-    drug:     { type: String, default: "" },
-    flag:     { type: String, default: "" },
-    citation: { type: String, default: "" },
+    drug:     { type: String,  default: "" },
+    flag:     { type: String,  default: "" },
+    // true = based on the drug's official openFDA label; false = AI clinical knowledge only
+    verified: { type: Boolean, default: false },
   },
   { _id: false }
 );
@@ -54,14 +55,6 @@ const InterpretedDiagnosisSchema = new mongoose.Schema(
 const SelfCareGuidanceItemSchema = new mongoose.Schema(
   {
     point: { type: String, default: "" },
-  },
-  { _id: false }
-);
-
-const DiagnosisNoteSchema = new mongoose.Schema(
-  {
-    disease: { type: String, default: "" },
-    note:    { type: String, default: "" },
   },
   { _id: false }
 );
@@ -106,7 +99,6 @@ const ReportSchema = new mongoose.Schema(
       referralSpecialty:       { type: String,                        default: "" },
       selfCareGuidance:        { type: [SelfCareGuidanceItemSchema],  default: [] },
       researchSummary:         { type: String,                        default: "" },
-      diagnosisNotes:          { type: [DiagnosisNoteSchema],         default: [] },
       medicationNotes:         { type: [MedicationNoteSchema],        default: [] },
     },
 
@@ -135,8 +127,6 @@ const ReportSchema = new mongoose.Schema(
       default: null,
     },
 
-    // Flags attached by the doctor (e.g. "urgent", "abnormal_finding", "medication_interaction").
-    flags: { type: [String], default: [] },
   },
   { timestamps: false }
 );

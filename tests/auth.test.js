@@ -33,7 +33,6 @@ jest.mock("firebase-admin/auth", () => {
 jest.mock("../services/emailService", () => ({
   sendVerificationLinkEmail:  jest.fn().mockResolvedValue(undefined),
   sendPasswordResetLinkEmail: jest.fn().mockResolvedValue(undefined),
-  sendOTPEmail:               jest.fn().mockResolvedValue(undefined),
 }));
 
 // ── Imports ───────────────────────────────────────────────────────────────────

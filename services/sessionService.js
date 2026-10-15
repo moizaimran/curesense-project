@@ -5,6 +5,7 @@ const { canAccessPatient } = require("../middleware/auth");
 const Session          = require("../models/Session");
 const Report           = require("../models/Report");
 const Patient          = require("../models/Patient");
+const { SPECIALTIES }  = require("../constants/specialties");
 
 const ABANDONED_AFTER_HOURS = 48;
 
@@ -18,6 +19,34 @@ async function callAI(url, payload, timeout) {
     await new Promise(r => setTimeout(r, 2000));
     return await axios.post(url, payload, { timeout });
   }
+}
+
+// Voice links are rendered in the doctor's browser, so only accept https links
+// to this project's own Cloudinary account (as returned by /transcribe).
+function isOwnCloudinaryUrl(value) {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  if (!cloudName || typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      && url.hostname === "res.cloudinary.com"
+      && url.pathname.startsWith(`/${cloudName}/`);
+  } catch {
+    return false;
+  }
+}
+
+// ── Background: abandon idle sessions ─────────────────────────────────────────
+// Marks every in-progress session with no activity for ABANDONED_AFTER_HOURS as
+// abandoned. Run periodically by server.js. Returns the number of sessions updated.
+
+async function abandonInactiveSessions(now = new Date()) {
+  const cutoff = new Date(now.getTime() - ABANDONED_AFTER_HOURS * 36e5);
+  const res = await Session.updateMany(
+    { status: "in_progress", last_activity_at: { $lt: cutoff } },
+    { $set: { status: "abandoned" } }
+  );
+  return res.modifiedCount;
 }
 
 // ── POST /api/sessions ────────────────────────────────────────────────────────
@@ -54,24 +83,18 @@ async function processTurn(sessionId, body, user) {
     throw err;
   }
 
-  const { patient_text, patient_audio_base64, mime_type, voice_message_url: clientVoiceUrl } = body;
+  // Voice answers are transcribed first via /transcribe; the turn always carries text,
+  // plus the recording's link when the answer was spoken.
+  const { patient_text, voice_message_url: clientVoiceUrl } = body;
   const TEXT_MAX_CHARS = 2000;
 
-  let voice_message_url = clientVoiceUrl || null;
-  let patient_audio_url = null;
-
-  if (patient_audio_base64) {
-    const uploadResult = await cloudinary.uploader.upload(
-      `data:${mime_type || "audio/m4a"};base64,${patient_audio_base64}`,
-      { resource_type: "video" }
-    );
-    voice_message_url = uploadResult.secure_url;
-    patient_audio_url = voice_message_url;
-  } else if (!patient_text) {
-    throw new AppError("patient_text or patient_audio_base64 is required", 400);
-  } else if (patient_text.length > TEXT_MAX_CHARS) {
+  if (!patient_text)
+    throw new AppError("patient_text is required", 400);
+  if (patient_text.length > TEXT_MAX_CHARS)
     throw new AppError(`patient_text must be ${TEXT_MAX_CHARS} characters or fewer`, 400);
-  }
+  if (clientVoiceUrl && !isOwnCloudinaryUrl(clientVoiceUrl))
+    throw new AppError("voice_message_url must be a recording uploaded through /transcribe", 400);
+  const voice_message_url = clientVoiceUrl || null;
 
   const history = session.transcript.flatMap((t) => [
     { role: "user",      content: t.patient_corrected },
@@ -81,7 +104,9 @@ async function processTurn(sessionId, body, user) {
   const turnPayload = {
     turn_number: session.turn_count + 1,
     history,
-    ...(patient_audio_url ? { patient_audio_url } : { patient_text }),
+    patient_text,
+    // The title comes from the first turn's own LLM call (retried on turn 2 if it came back empty)
+    request_session_name: !session.session_name && session.turn_count < 2,
   };
 
   // Throws axios error if Flask call fails — controller handles those separately
@@ -90,11 +115,13 @@ async function processTurn(sessionId, body, user) {
     turnPayload,
     60_000
   );
-  const { status, message, correctedPatientText, rawPatientText, questionType, options } = aiResp.data;
+  const { status, message, correctedPatientText, questionType, options, sessionName } = aiResp.data;
+
+  if (!session.session_name && sessionName?.trim()) session.session_name = sessionName.trim();
 
   session.transcript.push({
     turn_number:       session.turn_count + 1,
-    patient_raw:       rawPatientText,
+    patient_raw:       patient_text,   // exactly what the patient sent, before AI correction
     patient_corrected: correctedPatientText,
     assistant_message: message,
     voice_message_url,
@@ -106,39 +133,63 @@ async function processTurn(sessionId, body, user) {
   if (status === "complete") {
     const fullTranscript = session.transcript.map((t) => t.patient_corrected).join(" ");
 
-    let profileMedications = [];
+    // Saved profile history — the AI treats it like information the patient reported
+    let profile = { medications: [], allergies: [], conditions: [] };
     try {
-      const patient = await Patient.findById(session.patient_id).select("current_medications").lean();
-      if (patient) profileMedications = patient.current_medications || [];
+      const patient = await Patient.findById(session.patient_id)
+        .select("current_medications allergies medical_conditions").lean();
+      if (patient) {
+        profile = {
+          medications: patient.current_medications || [],
+          allergies:   patient.allergies           || [],
+          conditions:  patient.medical_conditions  || [],
+        };
+      }
     } catch (_) { /* non-critical */ }
 
-    const finalizeResp = await callAI(
-      `${process.env.AI_SERVICE_URL}/pipeline/finalize`,
-      { full_transcript_text: fullTranscript, profile_medications: profileMedications },
-      120_000
-    );
-    const result = finalizeResp.data;
+    let result;
+    let report;
+    try {
+      const finalizeResp = await callAI(
+        `${process.env.AI_SERVICE_URL}/pipeline/finalize`,
+        // specialties: the AI must choose the referral specialty from this list
+        {
+          full_transcript_text: fullTranscript,
+          profile_medications:  profile.medications,
+          profile_allergies:    profile.allergies,
+          profile_conditions:   profile.conditions,
+          specialties:          SPECIALTIES,
+        },
+        120_000
+      );
+      result = finalizeResp.data;
+
+      report = await Report.create({
+        session_id:            session._id,
+        patient_id:            session.patient_id,
+        generated_at:          new Date(),
+        rag_query:             result.ragQuery         || "",
+        diagnostic_query:      result.diagnosticQuery  || "",
+        entities:              result.verifiedEntities || [],
+        disease_ranking:       result.rankedDiseases   || [],
+        retrieved_chunks:      result.retrievedSources || [],
+        openfda_results:       result.medicationInfo   || {},
+        doctor_report:         result.doctorReport         || {},
+        patient_summary:       result.patientSummary       || {},
+        interpreted_diagnoses: result.interpretedDiagnoses || [],
+        emergency_warning:     result.emergencyWarning      || {},
+      });
+    } catch (err) {
+      // Interview finished but no report could be produced — keep the final turn and end the session.
+      session.status = "failed";
+      await session.save();
+      err.sessionFailed = true; // lets the controller tell the client this interview has ended
+      throw err;
+    }
 
     session.status       = "completed";
     session.completed_at = new Date();
-    if (result.sessionName) session.session_name = result.sessionName;
     await session.save();
-
-    const report = await Report.create({
-      session_id:            session._id,
-      patient_id:            session.patient_id,
-      generated_at:          new Date(),
-      rag_query:             result.ragQuery         || "",
-      diagnostic_query:      result.diagnosticQuery  || "",
-      entities:              result.verifiedEntities || [],
-      disease_ranking:       result.rankedDiseases   || [],
-      retrieved_chunks:      result.retrievedSources || [],
-      openfda_results:       result.medicationInfo   || {},
-      doctor_report:         result.doctorReport         || {},
-      patient_summary:       result.patientSummary       || {},
-      interpreted_diagnoses: result.interpretedDiagnoses || [],
-      emergency_warning:     result.emergencyWarning      || {},
-    });
 
     return {
       status: "complete", message, correctedPatientText,
@@ -216,6 +267,7 @@ async function softDeleteSession(sessionId, user) {
 }
 
 module.exports = {
+  abandonInactiveSessions,
   callAI,
   createSession,
   processTurn,

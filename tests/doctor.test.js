@@ -41,7 +41,7 @@ const VALID_DOCTOR_BODY = {
   password:        "password1",
   confirmPassword: "password1",
   pmdc_number:     "PMDC-DOC-001",
-  specialty:       "Cardiology",
+  specialty:       "Cardiologist",
   gender:          "female",
   city:            "Karachi",
 };
@@ -92,7 +92,7 @@ describe("POST /api/doctors/register", () => {
     expect(res.status).toBe(201);
     expect(res.body.user.role).toBe("doctor");
     expect(res.body.user.doctor_profile.status).toBe("pending");
-    expect(res.body.user.doctor_profile.specialty).toBe("Cardiology");
+    expect(res.body.user.doctor_profile.specialty).toBe("Cardiologist");
     expect(res.body.user.patient_id).toBeNull();
   });
 
@@ -185,7 +185,7 @@ describe("GET /api/doctors — public search", () => {
   });
 
   test("specialty filter narrows results", async () => {
-    // VALID_DOCTOR_BODY specialty is Cardiology; createDoctorDirect uses Orthopedics
+    // VALID_DOCTOR_BODY specialty is Cardiologist; createDoctorDirect uses Orthopedics
     await request(app).post("/api/doctors/register").send({
       ...VALID_DOCTOR_BODY,
       email: "cardiologist@test.com",
@@ -197,9 +197,9 @@ describe("GET /api/doctors — public search", () => {
       { $set: { status: "verified" } }
     );
 
-    const res = await request(app).get("/api/doctors?specialty=Cardiology");
+    const res = await request(app).get("/api/doctors?specialty=Cardiologist");
     expect(res.status).toBe(200);
-    expect(res.body.results.every(d => d.specialty === "Cardiology")).toBe(true);
+    expect(res.body.results.every(d => d.specialty === "Cardiologist")).toBe(true);
   });
 });
 
@@ -222,6 +222,39 @@ describe("PATCH /api/doctors/admin/:id/verify", () => {
     const updated = await DoctorProfile.findById(profile._id);
     expect(updated.status).toBe("verified");
     expect(updated.verified_at).not.toBeNull();
+  });
+
+  test("approval enables the Firebase account, marks its email verified and sets User.is_verified", async () => {
+    const { getAuth } = require("firebase-admin/auth");
+    const { token: adminToken } = await createAdminUser();
+    const { user, profile } = await createDoctorDirect("pending", "7");
+    getAuth().updateUser.mockClear();
+
+    const res = await request(app)
+      .patch(`/api/doctors/admin/${profile._id}/verify`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ decision: "approve" });
+
+    expect(res.status).toBe(200);
+    expect(getAuth().updateUser).toHaveBeenCalledWith(user.provider_uid, { disabled: false, emailVerified: true });
+    expect((await User.findById(user._id)).is_verified).toBe(true);
+  });
+
+  test("rejection leaves User.is_verified false", async () => {
+    const { token: adminToken } = await createAdminUser();
+    const { user, profile } = await createDoctorDirect("pending", "8");
+
+    await request(app)
+      .patch(`/api/doctors/admin/${profile._id}/verify`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ decision: "reject", rejection_reason: "Invalid PMDC" });
+
+    expect((await User.findById(user._id)).is_verified).toBe(false);
+  });
+
+  test("unverified-account auto-delete (TTL) applies to patients only, never to pending doctors", () => {
+    const ttl = User.schema.indexes().find(([, opts]) => opts.expireAfterSeconds);
+    expect(ttl[1].partialFilterExpression).toEqual({ is_verified: false, role: "patient" });
   });
 
   test("admin rejects pending doctor with reason → status becomes 'rejected'", async () => {
@@ -374,5 +407,67 @@ describe("GET /api/doctors/:id/dashboard-summary", () => {
     expect(res.body.ongoing).toBe(1);
     // pending_new = confirmed + !doctor_viewed: new cases doctor hasn't opened yet
     expect(res.body.pending_new).toBe(1);
+  });
+});
+
+// =============================================================================
+// 5. Signed-in doctor identity (used by the web portal after Firebase sign-in)
+// =============================================================================
+describe("GET /api/auth/me — doctor", () => {
+  test("includes doctor_profile with id, status and specialty", async () => {
+    const { profile, token } = await createDoctorDirect("verified", "9");
+
+    const res = await request(app).get("/api/auth/me").set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.role).toBe("doctor");
+    expect(res.body.id).toBeDefined();
+    expect(res.body.doctor_profile).toEqual({
+      id: profile._id.toString(), status: "verified", specialty: "Orthopedics",
+    });
+  });
+
+  test("admin gets doctor_profile null", async () => {
+    const { token } = await createAdminUser();
+    const res = await request(app).get("/api/auth/me").set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.doctor_profile).toBeNull();
+  });
+});
+
+// =============================================================================
+// 6. Specialty list — one list for registration, profile edits and AI referrals
+// =============================================================================
+describe("Specialties", () => {
+  test("GET /api/doctors/specialties is public and returns the 30-item list", async () => {
+    const res = await request(app).get("/api/doctors/specialties");
+    expect(res.status).toBe(200);
+    expect(res.body.specialties).toHaveLength(30);
+    expect(res.body.specialties).toEqual(expect.arrayContaining(["General Physician", "Cardiologist", "Dentist"]));
+  });
+
+  test("registration with a specialty outside the list → 400", async () => {
+    const res = await request(app).post("/api/doctors/register").send({ ...VALID_DOCTOR_BODY, specialty: "Cardiology" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/specialty/);
+  });
+
+  test("profile update rejects an unlisted specialty and accepts a listed one", async () => {
+    const { token } = await createDoctorDirect("verified", "S");
+    const bad = await request(app).patch("/api/doctors/me/profile")
+      .set("Authorization", `Bearer ${token}`).send({ specialty: "Bone Doctor" });
+    expect(bad.status).toBe(400);
+
+    const ok = await request(app).patch("/api/doctors/me/profile")
+      .set("Authorization", `Bearer ${token}`).send({ specialty: "Orthopedic Surgeon" });
+    expect(ok.status).toBe(200);
+  });
+});
+
+describe("Search input is matched literally", () => {
+  test("special characters in doctor search do not break the query", async () => {
+    const res = await request(app).get("/api/doctors?specialty=" + encodeURIComponent("Cardio(logist*"));
+    expect(res.status).toBe(200);
+    expect(res.body.results).toEqual([]);
   });
 });

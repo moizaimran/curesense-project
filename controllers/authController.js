@@ -41,7 +41,7 @@ const assignPatient = asyncHandler(async (req, res) => {
 });
 
 const getMe = asyncHandler(async (req, res) => {
-  res.json(req.user);
+  res.json(await authService.getMe(req.user));
 });
 
 const updateMe = asyncHandler(async (req, res) => {

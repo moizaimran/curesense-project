@@ -16,9 +16,4 @@ const getReportForSession = asyncHandler(async (req, res) => {
   res.json(report);
 });
 
-const softDeleteReport = asyncHandler(async (req, res) => {
-  const result = await reportService.softDeleteReport(req.params.id, req.user);
-  res.json(result);
-});
-
-module.exports = { getReport, getReportsForPatient, getReportForSession, softDeleteReport };
+module.exports = { getReport, getReportsForPatient, getReportForSession };

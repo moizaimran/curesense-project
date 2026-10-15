@@ -646,3 +646,52 @@ describe("Booking business rules", () => {
     expect(res.body.error).toMatch(/cannot cancel/i);
   });
 });
+
+// =============================================================================
+// Report access follows the admin-approval gate
+// =============================================================================
+describe("Linked report access (regression: no access before approval or after rejection)", () => {
+  async function scenarioWithLinkedReport() {
+    const sc = await buildPendingScenario();
+    const Session = require("../models/Session");
+    const Report  = require("../models/Report");
+    const session = await Session.create({ patient_id: sc.patient._id, status: "completed" });
+    const report  = await Report.create({
+      session_id: session._id, patient_id: sc.patient._id, appointment_id: sc.appointment._id,
+      doctor_report: { patientComplaintSummary: "clinical summary" },
+    });
+    await Appointment.updateOne({ _id: sc.appointment._id }, { $set: { report_id: report._id } });
+    return { ...sc, report, Report };
+  }
+
+  test("doctor cannot open the linked report while the appointment awaits admin review", async () => {
+    const { doctorUser, report } = await scenarioWithLinkedReport();
+    const res = await request(app).get(`/api/reports/${report._id}`)
+      .set("Authorization", `Bearer ${makeToken(doctorUser._id)}`);
+    expect(res.status).toBe(403);
+  });
+
+  test("admin rejection unlinks the report and the doctor still cannot open it", async () => {
+    const { doctorUser, adminUser, appointment, report, Report } = await scenarioWithLinkedReport();
+    const review = await request(app).patch(`/api/appointments/admin/${appointment._id}/review`)
+      .set("Authorization", `Bearer ${makeToken(adminUser._id)}`)
+      .send({ decision: "reject", rejection_reason: "Slot unavailable" });
+    expect(review.status).toBe(200);
+
+    expect((await Report.findById(report._id)).appointment_id).toBeNull();
+    const res = await request(app).get(`/api/reports/${report._id}`)
+      .set("Authorization", `Bearer ${makeToken(doctorUser._id)}`);
+    expect(res.status).toBe(403);
+  });
+
+  test("after admin approval the doctor can open the linked report", async () => {
+    const { doctorUser, adminUser, appointment, report } = await scenarioWithLinkedReport();
+    await request(app).patch(`/api/appointments/admin/${appointment._id}/review`)
+      .set("Authorization", `Bearer ${makeToken(adminUser._id)}`)
+      .send({ decision: "approve" });
+    const res = await request(app).get(`/api/reports/${report._id}`)
+      .set("Authorization", `Bearer ${makeToken(doctorUser._id)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.doctor_report.patientComplaintSummary).toBe("clinical summary");
+  });
+});
