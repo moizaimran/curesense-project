@@ -50,57 +50,44 @@ HPO_FREQ = {
 
 def _load_icd10() -> dict[str, str]:
     """
-    Download ICD-10-CM codes from CDC FTP.
-    Returns {code: description}, e.g. {"K58.9": "Irritable bowel syndrome..."}
-
-    Primary: CDC FTP direct .txt (stable, no zip, consistent URL).
-    Fallback: CMS zip (year-specific, internal filename varies).
+    Download ICD-10-CM codes from the CDC's yearly "Code Descriptions" zip.
+    Returns {code: description}, e.g. {"K58.9": "Irritable bowel syndrome..."}.
+    Returns {} if unavailable — the pipeline still works and the LLM assigns codes.
     """
-    primary_urls = [
-        "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2025/icd10cm_codes_2025.txt",
-        "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2024/icd10cm_codes_2024.txt",
-    ]
-    fallback_urls = [
-        "https://www.cms.gov/files/zip/2025-icd-10-cm-codes.zip",
-        "https://www.cms.gov/files/zip/2024-icd-10-cm-codes.zip",
+    # The CDC publishes the code list inside a yearly "Code Descriptions" zip
+    # (the plain .txt links used before no longer exist).
+    base = "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM"
+    zip_urls = [
+        f"{base}/2026/icd10cm-Code%20Descriptions-2026.zip",
+        f"{base}/2025/ICD10-CM%20Code%20Descriptions%202025.zip",
     ]
 
     raw_text = None
-
-    for url in primary_urls:
+    for url in zip_urls:
         try:
             print(f"[ICD-10] Trying {url} ...")
-            r = requests.get(url, timeout=60)
-            if r.ok:
-                raw_text = r.text
-                print("[ICD-10] Downloaded from CDC FTP.")
-                break
+            r = requests.get(url, timeout=120)
+            if not r.ok:
+                print(f"[ICD-10] HTTP {r.status_code}")
+                continue
+            with zipfile.ZipFile(BytesIO(r.content)) as z:
+                # "icd10cm-codes-YYYY.txt" = "CODE  description" per line; skip the
+                # "order" file (different column layout) and addenda.
+                txts = [n for n in z.namelist() if n.lower().endswith(".txt")]
+                codes_files = [n for n in txts if "code" in n.lower()
+                               and "order" not in n.lower() and "addend" not in n.lower()]
+                if codes_files:
+                    with z.open(codes_files[0]) as f:
+                        raw_text = f.read().decode("utf-8", errors="ignore")
+                    print(f"[ICD-10] Loaded {codes_files[0]}")
+                    break
+                print(f"[ICD-10] No code list inside zip: {txts}")
         except Exception as e:
-            print(f"[ICD-10] CDC URL failed: {e}")
+            print(f"[ICD-10] Download failed: {e}")
 
     if raw_text is None:
-        for url in fallback_urls:
-            try:
-                print(f"[ICD-10] Trying CMS zip: {url} ...")
-                r = requests.get(url, timeout=60)
-                if r.ok:
-                    with zipfile.ZipFile(BytesIO(r.content)) as z:
-                        candidates = [
-                            n for n in z.namelist()
-                            if n.endswith(".txt") and "code" in n.lower()
-                        ]
-                        if not candidates:
-                            candidates = [n for n in z.namelist() if n.endswith(".txt")]
-                        if candidates:
-                            with z.open(candidates[0]) as f:
-                                raw_text = f.read().decode("utf-8", errors="ignore")
-                            print(f"[ICD-10] Downloaded from CMS zip ({candidates[0]}).")
-                            break
-            except Exception as e:
-                print(f"[ICD-10] CMS URL failed: {e}")
-
-    if raw_text is None:
-        print("[ICD-10] WARNING: Could not download ICD-10-CM. Continuing without it.")
+        print("[ICD-10] WARNING: Could not download ICD-10-CM. Continuing without it — the "
+              "assessment step will assign ICD-10 codes itself.")
         return {}
 
     codes: dict[str, str] = {}
@@ -410,7 +397,7 @@ def _embed_and_save(paragraphs: list[str], metadata: list[dict],
         json.dump({"paragraphs": paragraphs, "metadata": metadata}, f)
 
     print(f"\n✅ Disease index saved → {OUTPUT_DIR}/")
-    print(f"   Vectors : {index.ntotal:,}  |  Dim : {dim}")
+    print(f"   Vectors : {index.ntotal:,}  |  Dim : {index.d}")
     print("\nNext step: download these 2 files and upload as Kaggle dataset 'curesense-disease-index'")
     print(f"  {OUTPUT_DIR}/disease_index.faiss")
     print(f"  {OUTPUT_DIR}/disease_meta.json")
