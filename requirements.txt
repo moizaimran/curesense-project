@@ -5,6 +5,7 @@ openai-whisper
 gliner
 openai
 faiss-cpu
+rank_bm25
 tiktoken
 datasets
 sentence-transformers==2.7.0

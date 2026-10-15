@@ -4,8 +4,10 @@
 # Runtime retrieval — two responsibilities:
 #
 #   retrieve_context(rag_query)
-#       Embeds the query and searches the FAISS index (textbooks + guidelines).
-#       Returns ranked chunks above the similarity threshold.
+#       Hybrid search: FAISS (dense) + BM25 (sparse), merged with Reciprocal
+#       Rank Fusion (RRF). FAISS finds semantically similar chunks; BM25 catches
+#       exact medical keywords (drug names, anatomy codes, lab values) that
+#       semantic embeddings can miss. Result is filtered by similarity threshold.
 #
 #   get_medication_info(drug_names)
 #       Calls openFDA directly for each drug the patient is taking.
@@ -22,30 +24,23 @@ from glinker import config
 from glinker.rag.corpus import fetch_openfda
 
 SIMILARITY_THRESHOLD_CLINICIAN = 0.45
-SIMILARITY_THRESHOLD_PATIENT   = 0.40
 
 # ── Module-level state (populated by load_index()) ────────────────────────────
 _clinician_index    = None
 _clinician_chunks   = None
 _clinician_metadata = None
+_clinician_bm25     = None     # BM25Okapi index, built from _clinician_chunks at load
 CLINICIAN_RAG_READY = False
 
-_patient_index    = None
-_patient_chunks   = None
-_patient_metadata = None
-PATIENT_RAG_READY = False
-
-RAG_READY = False   # backward-compat alias — True when clinician index is loaded
+RAG_READY = False   # backward-compat alias
 
 
 def load_index() -> None:
-    """Load both audience-split FAISS indexes. Call once at startup."""
-    global _clinician_index, _clinician_chunks, _clinician_metadata, CLINICIAN_RAG_READY
-    global _patient_index, _patient_chunks, _patient_metadata, PATIENT_RAG_READY
-    global RAG_READY
-    index_dir = config.RAG_INDEX_DIR
+    """Load clinician FAISS index and build a BM25 index from the same chunks."""
+    global _clinician_index, _clinician_chunks, _clinician_metadata
+    global _clinician_bm25, CLINICIAN_RAG_READY, RAG_READY
 
-    # Clinician index (required — doctor report depends on it)
+    index_dir = config.RAG_INDEX_DIR
     try:
         _clinician_index = faiss.read_index(f"{index_dir}/clinician_index.faiss")
         with open(f"{index_dir}/clinician_meta.json") as f:
@@ -58,72 +53,127 @@ def load_index() -> None:
     except Exception as e:
         print(f"⬜ Clinician RAG index not loaded: {e}")
         print("   Run ingestion.build_index() first, then re-call load_index().")
+        return
 
-    # Patient index (optional — pipeline degrades gracefully if absent)
+    # Build BM25 from the same chunk texts — no extra data needed
     try:
-        _patient_index = faiss.read_index(f"{index_dir}/patient_index.faiss")
-        with open(f"{index_dir}/patient_meta.json") as f:
-            data = json.load(f)
-        _patient_chunks   = data["chunks"]
-        _patient_metadata = data["metadata"]
-        PATIENT_RAG_READY = True
-        print(f"✅ Patient RAG index loaded — {_patient_index.ntotal:,} vectors")
+        from rank_bm25 import BM25Okapi
+        tokenized = [c.lower().split() for c in _clinician_chunks]
+        _clinician_bm25 = BM25Okapi(tokenized)
+        print(f"✅ BM25 index built — {len(_clinician_chunks):,} documents")
+    except ImportError:
+        print("⬜ rank_bm25 not installed — falling back to FAISS-only retrieval.")
+        print("   pip install rank_bm25")
     except Exception as e:
-        print(f"⬜ Patient RAG index not loaded: {e}")
+        print(f"⬜ BM25 index build failed: {e} — falling back to FAISS-only.")
 
 
-def _search(index, chunks, metadata, query: str, k: int, threshold: float) -> list[dict]:
-    """Shared FAISS search logic used by both retrieve functions."""
+# ── Core search helpers ───────────────────────────────────────────────────────
+
+def _faiss_search(index, query: str, k: int) -> list[tuple[int, float]]:
+    """Return (chunk_idx, cosine_score) pairs, sorted descending, no threshold applied."""
     model = config.get_embed_model()
     q_vec = model.encode([query], normalize_embeddings=True)
     q_vec = np.array(q_vec, dtype="float32")
-    scores, indices = index.search(q_vec, k * 5)
+    scores, indices = index.search(q_vec, k)
     results = []
     for score, idx in zip(scores[0], indices[0]):
-        if idx == -1 or float(score) < threshold:
-            continue
-        results.append({
-            "text"    : chunks[idx],
-            "source"  : metadata[idx].get("source", "unknown"),
-            "doc_type": metadata[idx].get("doc_type", ""),
-            "title"   : metadata[idx].get("title", ""),
-            "audience": metadata[idx].get("audience", ""),
-            "score"   : round(float(score), 4),
-        })
-        if len(results) == k:
-            break
-    return results
+        if idx != -1:
+            results.append((int(idx), float(score)))
+    return results   # already sorted descending by FAISS
 
 
-def retrieve_context(rag_query: str, k: int = 4) -> list[dict]:
+def _bm25_search(bm25, query: str, k: int) -> list[tuple[int, float]]:
+    """Return (chunk_idx, bm25_score) pairs for the top-k BM25 results."""
+    tokens = query.lower().split()
+    scores = bm25.get_scores(tokens)        # array of length N
+    top_k  = int(np.argsort(scores)[-k:][::-1][0]) if k == 1 else \
+              [int(i) for i in np.argsort(scores)[-k:][::-1]]
+    if isinstance(top_k, int):
+        top_k = [top_k]
+    return [(idx, float(scores[idx])) for idx in top_k]
+
+
+def _rrf_merge(
+    dense : list[tuple[int, float]],
+    sparse: list[tuple[int, float]],
+    rrf_k : int = 60,
+) -> list[tuple[int, float]]:
     """
-    Doctor-facing retrieval. Searches the clinician corpus (textbooks + clinician
-    and mixed guidelines) using ragQuery. Threshold: 0.45.
-    Returns [] when CLINICIAN_RAG_READY is False or nothing matches.
+    Reciprocal Rank Fusion of two ranked lists.
+    Each list is (chunk_idx, score); only ranks matter, not score magnitudes.
+    Returns merged list sorted by combined RRF score, descending.
+    """
+    combined: dict[int, float] = {}
+    for rank, (idx, _) in enumerate(dense):
+        combined[idx] = combined.get(idx, 0.0) + 1.0 / (rrf_k + rank + 1)
+    for rank, (idx, _) in enumerate(sparse):
+        combined[idx] = combined.get(idx, 0.0) + 1.0 / (rrf_k + rank + 1)
+    return sorted(combined.items(), key=lambda x: -x[1])
+
+
+def _make_result(chunks, metadata, idx: int, score: float) -> dict:
+    return {
+        "text"    : chunks[idx],
+        "source"  : metadata[idx].get("source", "unknown"),
+        "doc_type": metadata[idx].get("doc_type", ""),
+        "title"   : metadata[idx].get("title", ""),
+        "audience": metadata[idx].get("audience", ""),
+        "score"   : round(score, 4),
+    }
+
+
+def retrieve_context(rag_query: str, k: int = 8) -> list[dict]:
+    """
+    Hybrid retrieval for the doctor report. Combines FAISS dense search with
+    BM25 sparse search via Reciprocal Rank Fusion, then filters by threshold.
+
+    k=8 gives the LLM more grounding material (was 4 — often left doctor report
+    empty when the top chunk was below threshold but chunks 5-8 were good).
+    BM25 fallback: if rank_bm25 is not installed, uses FAISS only.
+    Returns [] when CLINICIAN_RAG_READY is False or nothing survives threshold.
     """
     if not CLINICIAN_RAG_READY:
         return []
     try:
-        return _search(_clinician_index, _clinician_chunks, _clinician_metadata,
-                       rag_query, k, SIMILARITY_THRESHOLD_CLINICIAN)
+        fetch_k = k * 5   # over-fetch before threshold filter
+
+        # Dense search
+        dense = _faiss_search(_clinician_index, rag_query, fetch_k)
+
+        if _clinician_bm25 is not None:
+            # Sparse search + RRF merge
+            sparse  = _bm25_search(_clinician_bm25, rag_query, fetch_k)
+            ranked  = _rrf_merge(dense, sparse)
+            # Use the dense cosine score for threshold filtering — BM25 scores
+            # are not cosine similarities so we look up the FAISS score by idx.
+            dense_score_map = dict(dense)
+            results = []
+            for idx, _rrf_score in ranked:
+                dense_score = dense_score_map.get(idx, 0.0)
+                if dense_score < SIMILARITY_THRESHOLD_CLINICIAN:
+                    continue
+                results.append(_make_result(
+                    _clinician_chunks, _clinician_metadata, idx, dense_score
+                ))
+                if len(results) == k:
+                    break
+        else:
+            # FAISS-only fallback
+            results = []
+            for idx, score in dense:
+                if score < SIMILARITY_THRESHOLD_CLINICIAN:
+                    continue
+                results.append(_make_result(
+                    _clinician_chunks, _clinician_metadata, idx, score
+                ))
+                if len(results) == k:
+                    break
+
+        return results
+
     except Exception as e:
         print(f"[retrieve_context] ERROR: {e}")
-        return []
-
-
-def retrieve_patient_context(diagnostic_query: str, k: int = 4) -> list[dict]:
-    """
-    Patient-facing retrieval. Searches the patient corpus (wikidoc + mixed guidelines)
-    using diagnosticQuery (jargon-free, from the finalize step). Threshold: 0.40.
-    Returns [] when PATIENT_RAG_READY is False or nothing matches.
-    """
-    if not PATIENT_RAG_READY:
-        return []
-    try:
-        return _search(_patient_index, _patient_chunks, _patient_metadata,
-                       diagnostic_query, k, SIMILARITY_THRESHOLD_PATIENT)
-    except Exception as e:
-        print(f"[retrieve_patient_context] ERROR: {e}")
         return []
 
 

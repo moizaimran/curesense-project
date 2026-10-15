@@ -17,7 +17,7 @@ import faiss
 from glinker import config
 
 DISEASE_INDEX_DIR   = "/kaggle/working/disease_index"
-SIMILARITY_THRESHOLD = 0.35   # lower than RAG threshold — disease names are shorter
+SIMILARITY_THRESHOLD = 0.80   # high bar — only very confident HPO matches pass; LLM handles rest
 TOP_K               = 5       # number of disease candidates to return to the LLM
 
 # ── Module-level state ────────────────────────────────────────────────────────

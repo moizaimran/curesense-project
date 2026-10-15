@@ -99,7 +99,7 @@ def generate_patient_summary(
     # Empty patientNote means plausibility == "unlikely" — exclude those entries.
     diagnosis_notes = [
         {"disease": d["disease"], "note": d["patientNote"]}
-        for d in assessment.get("interpretedDiagnoses", [])[:5]
+        for d in assessment.get("interpretedDiagnoses", [])
         if d.get("patientNote")
     ]
 

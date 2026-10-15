@@ -161,72 +161,56 @@ def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
     return all_chunks
 
 
-def _chunks_from_wikidoc(max_entries: int | None = None) -> list[dict]:
-    """
-    Load patient-friendly medical content as the patient corpus.
-    Tries medalpaca/medical_meadow_wikidoc (wikidoc patient information pages).
-    Each entry has 'instruction' (question) + 'output' (plain-language answer).
-    """
-    from datasets import load_dataset
-
-    DATASET = "medalpaca/medical_meadow_wikidoc"
-    print(f"Loading {DATASET} …")
-    ds = load_dataset(DATASET, split="train")
-    print(f"  {len(ds):,} entries found")
-
-    all_chunks = []
-    entries = ds if max_entries is None else ds.select(range(min(max_entries, len(ds))))
-    for i, entry in enumerate(entries):
-        # Combine question + answer into a single readable passage
-        question = entry.get("instruction", "").strip()
-        answer   = entry.get("output", "").strip()
-        if not answer or len(answer) < 50:
-            continue
-        text = f"{question}\n\n{answer}" if question else answer
-        meta = {
-            "source"  : f"wikidoc_{i}",
-            "doc_type": "wikidoc",
-            "title"   : question[:120] if question else "",
-            "audience": "patient",
-        }
-        all_chunks.extend(chunk_text(text, meta))
-        if (i + 1) % 5000 == 0:
-            print(f"  Processed {i+1:,} wikidoc entries ({len(all_chunks):,} chunks so far)")
-
-    print(f"  → {len(all_chunks):,} chunks from wikidoc")
-    return all_chunks
-
 
 # ── Embedding ─────────────────────────────────────────────────────────────────
 
-def _embed_chunks(chunks: list[dict], batch_size: int = 512) -> np.ndarray:
-    """Embed all chunks locally with sentence-transformers (free, GPU-accelerated)."""
-    model  = config.get_embed_model()
-    texts  = [c["text"] for c in chunks]
-    total  = len(texts)
-    all_vecs = []
-    for i in range(0, total, batch_size):
-        batch = texts[i : i + batch_size]
-        vecs  = model.encode(batch, show_progress_bar=False, normalize_embeddings=True)
-        all_vecs.extend(vecs.tolist())
-        done = min(i + batch_size, total)
-        if done % 2000 == 0 or done == total:
-            print(f"  Embedded {done:,}/{total:,} chunks")
-    return np.array(all_vecs, dtype="float32")
-
-
 # ── Main build function ───────────────────────────────────────────────────────
 
-def _save_index(chunks: list[dict], index_dir: str, name: str) -> int:
-    """Embed chunks, build FAISS IndexFlatIP, save .faiss + _meta.json. Returns vector count."""
+def _save_index(chunks: list[dict], index_dir: str, name: str,
+                embed_batch: int = 512) -> int:
+    """
+    Embed chunks and build FAISS IndexFlatIP incrementally.
+
+    Vectors are added to FAISS one embed_batch at a time and the numpy
+    array is deleted immediately after each add — peak RAM stays constant
+    regardless of total corpus size:
+
+        peak ≈ FAISS accumulated (3KB/vec) + 1 batch (~150MB for 512 chunks)
+
+    This allows corpora of several million chunks to build on Kaggle (29GB RAM)
+    without OOM. The old approach (embed all → add all) would hold two full
+    numpy arrays simultaneously, doubling RAM usage at the worst moment.
+
+    Returns vector count added to the index.
+    """
     if not chunks:
         print(f"[ingestion] No chunks for {name} — skipping.")
         return 0
-    print(f"\n[{name}] Embedding {len(chunks):,} chunks …")
-    matrix = _embed_chunks(chunks)
-    faiss.normalize_L2(matrix)
-    index = faiss.IndexFlatIP(matrix.shape[1])
-    index.add(matrix)
+
+    total = len(chunks)
+    print(f"\n[{name}] Embedding {total:,} chunks (batch={embed_batch}) …")
+
+    model = config.get_embed_model()
+    index = None   # created on first batch so we know the embedding dim
+
+    for i in range(0, total, embed_batch):
+        batch       = chunks[i : i + embed_batch]
+        texts       = [c["text"] for c in batch]
+        vecs        = model.encode(texts, show_progress_bar=False,
+                                   normalize_embeddings=True)
+        vecs        = np.array(vecs, dtype="float32")
+        faiss.normalize_L2(vecs)   # redundant when normalize_embeddings=True, kept for safety
+
+        if index is None:
+            index = faiss.IndexFlatIP(vecs.shape[1])
+
+        index.add(vecs)
+        del vecs   # free batch immediately — keeps peak RAM low
+
+        done = min(i + embed_batch, total)
+        if done % 10_000 == 0 or done == total:
+            print(f"  [{name}] {done:,}/{total:,} embedded | index size: {index.ntotal:,}")
+
     faiss.write_index(index, f"{index_dir}/{name}_index.faiss")
     with open(f"{index_dir}/{name}_meta.json", "w") as f:
         json.dump(
@@ -243,22 +227,23 @@ def _save_index(chunks: list[dict], index_dir: str, name: str) -> int:
 def build_index(
     textbooks_limit : int | None = None,
     guidelines_limit: int | None = None,
-    wikidoc_limit   : int | None = None,
 ) -> bool:
     """
-    Build two audience-split FAISS indexes and save to config.RAG_INDEX_DIR:
-      clinician_index — MedRAG/textbooks + clinician/mixed guidelines
-      patient_index   — MedRAG/wikidoc (dedicated) + patient/mixed guidelines
+    Build the single clinician FAISS index and save to config.RAG_INDEX_DIR.
+
+    Sources: MedRAG/textbooks + clinician/mixed guidelines.
+    The separate patient index was removed — the patient summary LLM now
+    receives clinician chunks and is prompted to write in plain language,
+    which is more reliable than a separate wikidoc corpus that rarely
+    returned relevant chunks above threshold.
 
     *_limit params cap entries for quick testing; leave as None for full corpus.
-    wikidoc is the primary patient source — it is loaded regardless of whether
-    epfl-llm/guidelines contains wikidoc entries (ordering-independent).
     """
     index_dir = config.RAG_INDEX_DIR
     os.makedirs(index_dir, exist_ok=True)
 
     # ── Load datasets ────────────────────────────────────────────────────────
-    textbook_chunks, guideline_chunks, wikidoc_chunks = [], [], []
+    textbook_chunks, guideline_chunks = [], []
     try:
         textbook_chunks = _chunks_from_textbooks(max_entries=textbooks_limit)
     except Exception as e:
@@ -269,31 +254,18 @@ def build_index(
     except Exception as e:
         print(f"[ingestion] guidelines failed: {e}")
 
-    try:
-        wikidoc_chunks = _chunks_from_wikidoc(max_entries=wikidoc_limit)
-    except Exception as e:
-        print(f"[ingestion] wikidoc failed: {e}")
-
-    if not textbook_chunks and not guideline_chunks and not wikidoc_chunks:
+    if not textbook_chunks and not guideline_chunks:
         print("[ingestion] No chunks produced — check dataset access.")
         return False
 
-    # ── Split by audience tag (mixed goes into both) ─────────────────────────
-    # wikidoc_chunks are always patient — added directly, no tag check needed
+    # Clinician index: textbooks + clinician/mixed guidelines
     clinician_chunks = textbook_chunks + [
         c for c in guideline_chunks
         if c["metadata"].get("audience") in ("clinician", "mixed")
     ]
-    patient_chunks = wikidoc_chunks + [
-        c for c in guideline_chunks
-        if c["metadata"].get("audience") in ("patient", "mixed")
-    ]
 
-    print(f"\nSplit: {len(clinician_chunks):,} clinician chunks | {len(patient_chunks):,} patient chunks")
+    print(f"\n[Build] {len(clinician_chunks):,} clinician chunks to index.")
 
-    # ── Build and save each index ────────────────────────────────────────────
     n_clinician = _save_index(clinician_chunks, index_dir, "clinician")
-    n_patient   = _save_index(patient_chunks,   index_dir, "patient")
-
-    print(f"\n✅ Done — clinician: {n_clinician:,} vectors | patient: {n_patient:,} vectors")
+    print(f"\n✅ Done — clinician index: {n_clinician:,} vectors")
     return n_clinician > 0

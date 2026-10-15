@@ -35,7 +35,7 @@ from glinker import config
 from glinker.interview.session              import run_interview_turn
 from glinker.interview.prompts              import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT
 from glinker.diagnosis.finalize             import run_gliner, finalize_report
-from glinker.rag.retrieval                  import retrieve_context, retrieve_patient_context, get_medication_info
+from glinker.rag.retrieval                  import retrieve_context, get_medication_info
 from glinker.disease.disease_retrieval      import retrieve_diseases
 from glinker.diagnosis.assessment           import generate_diagnosis_assessment
 from glinker.diagnosis.doctor_report        import generate_doctor_report
@@ -171,28 +171,16 @@ def pipeline_finalize():
     # ── 3. RAG retrieval — clinician + patient corpus run concurrently ─────────
     # Both are in-process FAISS searches on separate index objects — no shared
     # state, so running them in parallel is safe and cuts wall-clock time.
-    retrieved_chunks         = []
-    retrieved_patient_chunks = []
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = {}
+    retrieved_chunks = []
+    with ThreadPoolExecutor(max_workers=1) as pool:
         if rag_query:
-            futures["clinician"] = pool.submit(retrieve_context, rag_query)
-        if diagnostic_query:
-            futures["patient"]   = pool.submit(retrieve_patient_context, diagnostic_query)
-
-        for key, fut in futures.items():
+            fut_clinician = pool.submit(retrieve_context, rag_query)
             try:
-                chunks = fut.result()
-                if key == "clinician":
-                    retrieved_chunks = chunks
-                    n = len(chunks)
-                    print(f"[RAG-clinician] {n} chunk(s)." if n else "[RAG-clinician] No chunks above threshold.")
-                else:
-                    retrieved_patient_chunks = chunks
-                    n = len(chunks)
-                    print(f"[RAG-patient] {n} chunk(s)." if n else "[RAG-patient] No chunks above threshold.")
+                retrieved_chunks = fut_clinician.result()
+                n = len(retrieved_chunks)
+                print(f"[RAG-clinician] {n} chunk(s)." if n else "[RAG-clinician] No chunks above threshold.")
             except Exception as e:
-                print(f"[RAG-{key}] retrieve failed: {e} — continuing without retrieval.")
+                print(f"[RAG-clinician] retrieve failed: {e} — continuing without retrieval.")
 
     # ── 4. Disease retrieval — semantic search against HPO + ICD-10 index ─────
     ranked_diseases = []
@@ -238,7 +226,7 @@ def pipeline_finalize():
         )
         fut_patient = pool.submit(
             generate_patient_summary,
-            assessment, report["entities"], retrieved_patient_chunks,
+            assessment, report["entities"], retrieved_chunks,
             medication_info, transcript_text,
         )
         try:

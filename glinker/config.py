@@ -17,7 +17,7 @@ whisper_model   = None
 embedding_model = None   # SentenceTransformer, loaded on first use by get_embed_model()
 
 # ── Embedding (local, free, GPU-accelerated) ──────────────────────────────────
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"   # 384-dim, trained for retrieval
+EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"    # 768-dim, stronger medical retrieval; rebuild both indexes after changing
 
 def get_embed_model():
     """Load (or return cached) SentenceTransformer embedding model."""

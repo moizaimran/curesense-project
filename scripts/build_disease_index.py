@@ -33,7 +33,7 @@ import requests
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 OUTPUT_DIR      = "/kaggle/working/disease_index"
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"   # must match glinker/config.py
+EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"    # must match glinker/config.py
 
 HPO_FREQ = {
     "HP:0040281": "very frequent",
@@ -226,7 +226,79 @@ def _load_hpo_annotations(hpo_terms: dict[str, str]) -> dict[str, list[tuple[str
 
 
 # ==============================================================================
-# STEP 3 — ICD-10 fuzzy matching
+# STEP 3 — MedlinePlus enrichment (common conditions)
+# ==============================================================================
+
+def _load_medlineplus(max_results: int = 600) -> dict[str, dict]:
+    """
+    Pull plain-language condition summaries from the NIH MedlinePlus Connect API.
+    Returns {topic_title → {"icd_code": str, "summary": str}}.
+
+    This enriches the disease index with common conditions (hypertension, diabetes,
+    GERD, asthma, …) that HPO under-represents because HPO focuses on rare/genetic
+    diseases. MedlinePlus covers the diseases patients actually present with.
+
+    max_results: caps total pages fetched (each page ≤ 10 topics); 600 = ~60 pages.
+    """
+    print("[MedlinePlus] Fetching common condition summaries ...")
+
+    # ICD-10 category codes for the most common primary-care presentations
+    # (3-char codes — each covers a whole category, e.g. J20 = acute bronchitis)
+    COMMON_ICD_CODES = [
+        "J00", "J06", "J20", "J45", "J18",           # respiratory
+        "K21", "K58", "K92", "K70", "K80",           # GI
+        "M54", "M79", "M25", "M10",                   # MSK
+        "I10", "I25", "I50", "I63",                   # cardiovascular
+        "E11", "E66", "E78",                           # metabolic
+        "F32", "F41", "F10", "F20",                   # mental health
+        "N39", "N40", "N18",                           # urological
+        "G43", "G35", "G40",                           # neurological
+        "L20", "L40", "L50",                           # dermatological
+        "A09", "B34", "B49",                           # infectious
+        "C34", "C18", "C50", "C61", "C67",            # common cancers
+        "R05", "R10", "R51", "R07", "R50",            # symptoms
+    ]
+
+    base_url = "https://connect.medlineplus.gov/service"
+    results: dict[str, dict] = {}
+    fetched = 0
+
+    for code in COMMON_ICD_CODES:
+        if fetched >= max_results:
+            break
+        try:
+            resp = requests.get(
+                base_url,
+                params={"mainSearchCriteria.v.cs": "2.16.840.1.113883.6.90",
+                        "mainSearchCriteria.v.c": code,
+                        "knowledgeResponseType": "application/json"},
+                timeout=15,
+            )
+            if not resp.ok:
+                continue
+            data = resp.json()
+            # MedlinePlus response: feed.entry[].summary._value + title._value
+            for entry in data.get("feed", {}).get("entry", []):
+                title   = entry.get("title", {}).get("_value", "").strip()
+                summary = entry.get("summary", {}).get("_value", "").strip()
+                if not title or not summary or len(summary) < 60:
+                    continue
+                # Strip HTML tags from summary
+                import re as _re
+                summary = _re.sub(r"<[^>]+>", " ", summary).strip()
+                summary = _re.sub(r"\s+", " ", summary)
+                if title.lower() not in (k.lower() for k in results):
+                    results[title] = {"icd_code": code, "summary": summary}
+                    fetched += 1
+        except Exception as e:
+            print(f"[MedlinePlus] code {code} failed: {e}")
+
+    print(f"[MedlinePlus] {len(results):,} condition summaries fetched.")
+    return results
+
+
+# ==============================================================================
+# STEP 4 — ICD-10 fuzzy matching
 # ==============================================================================
 
 def _build_icd10_reverse(icd10: dict[str, str]) -> dict[str, tuple[str, str]]:
@@ -265,10 +337,11 @@ def _match_icd10(
 # ==============================================================================
 
 def _build_paragraph(
-    disease_name : str,
-    icd_code     : str,
-    icd_desc     : str,
-    phenotypes   : list[tuple[str, str]],
+    disease_name    : str,
+    icd_code        : str,
+    icd_desc        : str,
+    phenotypes      : list[tuple[str, str]],
+    medlineplus_text: str = "",
 ) -> str:
     parts = [f"Disease: {disease_name}."]
 
@@ -292,6 +365,11 @@ def _build_paragraph(
     if icd_desc:
         parts.append(f"Description: {icd_desc}.")
 
+    # MedlinePlus gives plain-language clinical context that helps for common
+    # conditions that have no HPO phenotype data (e.g. hypertension, GERD)
+    if medlineplus_text:
+        parts.append(f"Clinical context: {medlineplus_text[:400]}.")
+
     return " ".join(parts)
 
 
@@ -299,24 +377,32 @@ def _build_paragraph(
 # STEP 5 — Embed and save
 # ==============================================================================
 
-def _embed_and_save(paragraphs: list[str], metadata: list[dict]) -> None:
+def _embed_and_save(paragraphs: list[str], metadata: list[dict],
+                    batch_size: int = 128) -> None:
     from sentence_transformers import SentenceTransformer
 
     print(f"\n[Embed] Loading {EMBEDDING_MODEL} ...")
     model = SentenceTransformer(EMBEDDING_MODEL)
 
-    print(f"[Embed] Encoding {len(paragraphs):,} paragraphs (batch=128) ...")
-    vectors = model.encode(
-        paragraphs,
-        batch_size=128,
-        normalize_embeddings=True,
-        show_progress_bar=True,
-    )
-    vectors = np.array(vectors, dtype="float32")
+    total = len(paragraphs)
+    print(f"[Embed] Encoding {total:,} paragraphs incrementally (batch={batch_size}) ...")
 
-    dim   = vectors.shape[1]
-    index = faiss.IndexFlatIP(dim)
-    index.add(vectors)
+    index = None
+    for i in range(0, total, batch_size):
+        batch   = paragraphs[i : i + batch_size]
+        vectors = model.encode(batch, normalize_embeddings=True,
+                               show_progress_bar=False)
+        vectors = np.array(vectors, dtype="float32")
+
+        if index is None:
+            index = faiss.IndexFlatIP(vectors.shape[1])
+
+        index.add(vectors)
+        del vectors   # free each batch immediately
+
+        done = min(i + batch_size, total)
+        if done % 2000 == 0 or done == total:
+            print(f"  {done:,}/{total:,} encoded")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     faiss.write_index(index, f"{OUTPUT_DIR}/disease_index.faiss")
@@ -340,11 +426,12 @@ def build_disease_index(
 ) -> None:
     """
     Full pipeline: download → parse → merge → embed → save.
-    Estimated time: ~5-8 minutes (HPO download ~2 min, ICD-10 ~1 min, FAISS ~2 min).
+    Sources: HPO + ICD-10-CM + MedlinePlus (common conditions).
+    Estimated time: ~8-12 minutes on Kaggle T4.
     """
     print("=" * 60)
     print("CureSense — Building disease knowledge base")
-    print("Sources : HPO + ICD-10-CM")
+    print("Sources : HPO + ICD-10-CM + MedlinePlus")
     print("=" * 60 + "\n")
 
     # ── 1. ICD-10-CM ─────────────────────────────────────────────────────────
@@ -356,7 +443,12 @@ def build_disease_index(
     hpo_terms    = _load_hpo_terms()
     hpo_diseases = _load_hpo_annotations(hpo_terms)
 
-    # ── 3. Master disease list ────────────────────────────────────────────────
+    # ── 3. MedlinePlus (enriches common conditions that HPO misses) ───────────
+    medlineplus = _load_medlineplus()
+    # Build lookup: {name_lower → summary_text}
+    mpl_lookup = {k.lower(): v["summary"] for k, v in medlineplus.items()}
+
+    # ── 4. Master disease list ────────────────────────────────────────────────
     all_diseases: dict[str, dict] = {}
 
     for disease_name, phenotypes in hpo_diseases.items():
@@ -372,10 +464,20 @@ def build_disease_index(
             all_diseases[desc] = {"phenotypes": [], "source": "icd10", "icd_code": code}
             existing_lower.add(desc.lower())
 
+    # Add MedlinePlus conditions not yet in the list
+    for title, info in medlineplus.items():
+        if title.lower() not in existing_lower:
+            all_diseases[title] = {
+                "phenotypes": [],
+                "source"    : "medlineplus",
+                "icd_code"  : info["icd_code"],
+            }
+            existing_lower.add(title.lower())
+
     disease_list = list(all_diseases.items())
     print(f"\n[Merge] {len(disease_list):,} total diseases to process.\n")
 
-    # ── 4. Build paragraphs ───────────────────────────────────────────────────
+    # ── 5. Build paragraphs ───────────────────────────────────────────────────
     paragraphs : list[str]  = []
     metadata   : list[dict] = []
     skipped = 0
@@ -392,17 +494,21 @@ def build_disease_index(
 
         has_symptoms = len(phenotypes) >= min_symptoms
         has_icd_desc = bool(icd_desc)
-        if not has_symptoms and not has_icd_desc:
+        mpl_text     = mpl_lookup.get(disease_name.lower(), "")
+        has_mpl      = bool(mpl_text)
+
+        if not has_symptoms and not has_icd_desc and not has_mpl:
             skipped += 1
             continue
 
-        paragraph = _build_paragraph(disease_name, icd_code, icd_desc, phenotypes)
+        paragraph = _build_paragraph(disease_name, icd_code, icd_desc, phenotypes, mpl_text)
         paragraphs.append(paragraph)
         metadata.append({
             "disease" : disease_name,
             "icd_code": icd_code,
             "icd_desc": icd_desc,
             "has_hpo" : len(phenotypes) > 0,
+            "has_mpl" : has_mpl,
             "symptoms": [s for s, _ in phenotypes[:15]],
         })
 
@@ -411,7 +517,7 @@ def build_disease_index(
 
     print(f"\n[Build] {len(paragraphs):,} disease paragraphs ready  ({skipped} skipped).")
 
-    # ── 5. Embed + save ───────────────────────────────────────────────────────
+    # ── 6. Embed + save ───────────────────────────────────────────────────────
     _embed_and_save(paragraphs, metadata)
 
 
