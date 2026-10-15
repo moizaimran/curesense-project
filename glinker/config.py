@@ -37,7 +37,7 @@ RAG_INDEX_DIR = '/kaggle/working/rag_index'
 LLM_CONFIG = {
     "model"                    : "gpt-5.6-luna",
     "reasoning_effort"         : "low",
-    "interview_turn_max_tokens": 500,
+    "interview_turn_max_tokens": 1000,   # reasoning tokens count toward this cap; 500 truncated replies
     "finalize_max_tokens"      : 1200,
     "diagnose_max_tokens"      : 2000,
     "interview_max_turns"      : 12,
