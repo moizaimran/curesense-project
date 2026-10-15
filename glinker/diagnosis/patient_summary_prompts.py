@@ -59,6 +59,10 @@ PATIENT_SUMMARY_PROMPT = (
     "If medicationNames is empty, output [].\n"
     "Put in \"medicationNotes\" as [{\"drug\": \"...\", \"note\": \"...\"}].\n"
     "\n"
+    "PATIENT PROFILE: \"patientProfile\" lists known allergies and medical conditions the patient "
+    "saved in their profile. Never suggest anything that conflicts with a known allergy or "
+    "condition in self-care guidance or medication notes.\n"
+    "\n"
     "Return only the JSON the schema requires — no extra text."
 )
 

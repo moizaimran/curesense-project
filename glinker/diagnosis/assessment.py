@@ -106,6 +106,7 @@ def generate_diagnosis_assessment(
     medication_info   : dict,
     retrieved_chunks  : list[dict],
     transcript_text   : str = "",
+    patient_profile   : dict | None = None,
 ) -> dict:
     """
     Call 1 of 3 in the refactored pipeline.
@@ -128,6 +129,7 @@ def generate_diagnosis_assessment(
         "retrievedChunks"     : _fmt_chunks(retrieved_chunks),
         "medicationInfo"      : _fmt_medications(trimmed_meds),
         "diagnosticCandidates": _fmt_candidates(ranked_diseases),
+        "patientProfile"      : patient_profile or {},
     })
 
     messages = [

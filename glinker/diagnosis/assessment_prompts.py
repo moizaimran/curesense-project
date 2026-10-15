@@ -56,6 +56,11 @@ ASSESSMENT_PROMPT = (
     "  message   — 1 plain-language sentence the patient can read telling them to seek "
     "immediate care (empty string when triggered is false)\n"
     "\n"
+    "PATIENT PROFILE: \"patientProfile\" lists known allergies and medical conditions the patient "
+    "saved in their profile. Treat them exactly like information the patient reported: weigh "
+    "pre-existing conditions when rating diagnoses, and flag any medication that conflicts with a "
+    "known allergy or condition in medicationFlags.\n"
+    "\n"
     "Return only the JSON the schema requires — no extra text."
 )
 

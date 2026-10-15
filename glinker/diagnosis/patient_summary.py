@@ -50,6 +50,7 @@ def generate_patient_summary(
     medication_info         : dict,
     transcript_text         : str = "",
     specialties             : list[str] | None = None,
+    patient_profile         : dict | None = None,
 ) -> dict:
     """
     Call 3 of 3 in the refactored pipeline.
@@ -86,6 +87,7 @@ def generate_patient_summary(
         "medicationFlags"       : assessment.get("medicationFlags", []),
         "medicationInfo"        : _fmt_medications(trimmed_meds),
         "allowedSpecialties"    : specialties or [],
+        "patientProfile"        : patient_profile or {},
     })
 
     # Lock referralSpecialty to the backend's list so it always matches a registrable doctor

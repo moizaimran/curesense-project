@@ -32,6 +32,7 @@ def generate_doctor_report(
     verified_entities: list[dict],
     retrieved_chunks : list[dict],
     transcript_text  : str = "",
+    patient_profile  : dict | None = None,
 ) -> dict:
     """
     Call 2 of 3 in the refactored pipeline.
@@ -48,6 +49,7 @@ def generate_doctor_report(
         "transcript"      : transcript_text,
         "verifiedEntities": verified_entities,
         "retrievedChunks" : _fmt_chunks(retrieved_chunks),
+        "patientProfile"  : patient_profile or {},
     })
 
     messages = [

@@ -13,7 +13,8 @@
 #              sessionName }   — sessionName is "" unless request_session_name
 #
 # POST /pipeline/finalize
-#   Body:  { full_transcript_text, profile_medications?, specialties? }
+#   Body:  { full_transcript_text, profile_medications?, profile_allergies?,
+#            profile_conditions?, specialties? }
 #   Returns: { verifiedEntities, rankedDiseases, ragQuery, diagnosticQuery,
 #              retrievedSources, medicationInfo,
 #              emergencyWarning, interpretedDiagnoses,
@@ -152,6 +153,11 @@ def pipeline_finalize():
     transcript_text    = data.get("full_transcript_text", "").strip()
     profile_medications = data.get("profile_medications", [])
     specialties         = data.get("specialties", [])   # allowed referral specialties (backend's list)
+    # Allergies and conditions saved in the patient's profile — treated like reported history
+    patient_profile = {
+        "knownAllergies"   : data.get("profile_allergies", []),
+        "medicalConditions": data.get("profile_conditions", []),
+    }
 
     if not transcript_text:
         return jsonify({"error": "full_transcript_text is required"}), 400
@@ -207,6 +213,7 @@ def pipeline_finalize():
         medication_info   = medication_info,
         retrieved_chunks  = retrieved_chunks,
         transcript_text   = transcript_text,
+        patient_profile   = patient_profile,
     )
 
     # ── 7. Calls 2 & 3 — Doctor Report + Patient Summary (concurrent) ─────────
@@ -218,12 +225,12 @@ def pipeline_finalize():
     with ThreadPoolExecutor(max_workers=2) as pool:
         fut_doctor  = pool.submit(
             generate_doctor_report,
-            assessment, report["entities"], retrieved_chunks, transcript_text,
+            assessment, report["entities"], retrieved_chunks, transcript_text, patient_profile,
         )
         fut_patient = pool.submit(
             generate_patient_summary,
             assessment, report["entities"], retrieved_chunks,
-            medication_info, transcript_text, specialties,
+            medication_info, transcript_text, specialties, patient_profile,
         )
         try:
             doctor_report = fut_doctor.result()

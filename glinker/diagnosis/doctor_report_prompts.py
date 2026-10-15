@@ -27,6 +27,9 @@ DOCTOR_REPORT_PROMPT = (
     "'No relevant reference material was found for this symptom pattern.'\n"
     "Put in \"ragSummary\".\n"
     "\n"
+    "PATIENT PROFILE: \"patientProfile\" lists known allergies and medical conditions the patient "
+    "saved in their profile. Include them in the complaint summary as reported history.\n"
+    "\n"
     "Return only the JSON the schema requires — no extra text."
 )
 
