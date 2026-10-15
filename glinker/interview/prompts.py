@@ -4,7 +4,7 @@
 import json
 
 INTERVIEW_PROMPT = (
-    "You have TWO jobs every turn, and you return both as one JSON object:\n"
+    "You have several jobs every turn, and you return them all as one JSON object:\n"
     "\n"
     "JOB 1 — CORRECT SPELLING AND TRANSLATE ROMAN URDU: Fix spelling, typos, and "
     "word-boundary errors in the patient's message. If any part of the message is "
@@ -119,6 +119,12 @@ INTERVIEW_PROMPT = (
     "exactly 2 items (see above). For \"scale\", \"number\", and \"text\" set \"options\" to [].\n"
     "When status is \"complete\", set questionType to \"text\" and options to [].\n"
     "\n"
+    "JOB 4 — SESSION NAME: set \"sessionName\" to an empty string \"\" unless a system note "
+    "in this conversation explicitly asks you to name the session. When asked, write a concise "
+    "2–4 word clinical title for the patient's main complaint, based on what they have said so far "
+    "(e.g. \"Lower Back Tightness\", \"Recurring Throbbing Headache\", \"Fever with Body Aches\"). "
+    "Never use generic titles such as \"Medical Consultation\" or \"Patient Interview\".\n"
+    "\n"
     "Never call a tool. Return only the JSON object the schema requires — no extra text."
 )
 
@@ -133,8 +139,9 @@ INTERVIEW_SCHEMA = {
             "correctedPatientText": {"type": "string"},
             "questionType"        : {"type": "string", "enum": ["yes_no", "mcq", "scale", "text", "number"]},
             "options"             : {"type": "array", "items": {"type": "string"}},
+            "sessionName"         : {"type": "string"},
         },
-        "required"            : ["status", "message", "correctedPatientText", "questionType", "options"],
+        "required"            : ["status", "message", "correctedPatientText", "questionType", "options", "sessionName"],
         "additionalProperties": False,
     },
 }
@@ -277,3 +284,18 @@ INTERVIEW_FEWSHOT = [
         }),
     },
 ]
+
+
+# Few-shot replies never name the session — naming happens only when api/app.py adds
+# SESSION_NAME_NOTE for the request. Keep the examples consistent with the schema.
+for _msg in INTERVIEW_FEWSHOT:
+    if _msg["role"] == "assistant":
+        _reply = json.loads(_msg["content"])
+        _reply.setdefault("sessionName", "")
+        _msg["content"] = json.dumps(_reply)
+
+SESSION_NAME_NOTE = (
+    "This request needs a session name: in addition to your normal reply, set \"sessionName\" "
+    "to a concise 2–4 word clinical title for the patient's main complaint, based on the patient's "
+    "messages so far."
+)

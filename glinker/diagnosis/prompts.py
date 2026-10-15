@@ -8,7 +8,7 @@ import json
 FINALIZE_PROMPT = (
     "You receive a completed patient intake transcript (already spelling-corrected) and "
     "a list of entities (category + keyword + ner_confidence 0-1) an NLP model extracted "
-    "from it. You do FOUR jobs in one pass and return all as JSON:\n"
+    "from it. You do THREE jobs in one pass and return all as JSON:\n"
     "\n"
     "JOB 1 — VERIFY ENTITIES. Valid categories: symptom, medical condition, body part, "
     "severity, duration, medication, dosage, frequency, allergy, trigger.\n"
@@ -56,12 +56,6 @@ FINALIZE_PROMPT = (
     "light sensitivity chronic episodic\"\n"
     "  Bad:  \"migraine ibuprofen 8/10 severe retro-orbital\"\n"
     "\n"
-    "JOB 4 — SESSION NAME. Generate a concise 2-5 word memorable clinical name for this "
-    "interview session that captures the main complaint clearly. Put in \"sessionName\".\n"
-    "  Good: \"Recurring Migraine with Nausea\", \"Acute Fever and Body Aches\", "
-    "\"Left Knee Pain with Stiffness\", \"Chest Tightness on Exertion\"\n"
-    "  Bad:  \"Headache\", \"Patient Interview Session\", \"Medical Consultation\"\n"
-    "\n"
     "Never call a tool. Return only the JSON object the schema requires — no extra text."
 )
 
@@ -86,9 +80,8 @@ FINALIZE_SCHEMA = {
             },
             "ragQuery"       : {"type": "string"},
             "diagnosticQuery": {"type": "string"},
-            "sessionName"    : {"type": "string"},
         },
-        "required"            : ["entities", "ragQuery", "diagnosticQuery", "sessionName"],
+        "required"            : ["entities", "ragQuery", "diagnosticQuery"],
         "additionalProperties": False,
     },
 }
@@ -147,7 +140,6 @@ FINALIZE_FEWSHOT = [
                 "throbbing headache right side nausea light sensitivity photophobia "
                 "moderate severe constant two days"
             ),
-            "sessionName": "Right-Sided Throbbing Headache",
         }),
     },
 ]

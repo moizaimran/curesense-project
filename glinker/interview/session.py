@@ -21,6 +21,7 @@ def run_interview_turn(history_messages: list[dict], patient_message: str) -> di
         "correctedPatientText": patient_message,
         "questionType"        : "text",
         "options"             : [],
+        "sessionName"         : "",
     }
     return call_llm(messages, INTERVIEW_SCHEMA, "interview_turn_max_tokens", fallback, "run_interview_turn")
 

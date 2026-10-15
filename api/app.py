@@ -7,14 +7,15 @@
 # Endpoints
 # ─────────
 # POST /interview/turn
-#   Body:  { turn_number, history, patient_text }
-#       OR { turn_number, history, patient_audio_url }
-#   Returns: { status, message, correctedPatientText }
+#   Body:  { turn_number, history, patient_text, request_session_name? }
+#       OR { turn_number, history, patient_audio_url, request_session_name? }
+#   Returns: { status, message, correctedPatientText, questionType, options,
+#              sessionName }   — sessionName is "" unless request_session_name
 #
 # POST /pipeline/finalize
 #   Body:  { full_transcript_text, profile_medications? }
 #   Returns: { verifiedEntities, rankedDiseases, ragQuery, diagnosticQuery,
-#              retrievedSources, medicationInfo, sessionName,
+#              retrievedSources, medicationInfo,
 #              emergencyWarning, interpretedDiagnoses,
 #              doctorReport, patientSummary }
 #
@@ -33,7 +34,7 @@ from flask import Flask, request, jsonify
 
 from glinker import config
 from glinker.interview.session              import run_interview_turn
-from glinker.interview.prompts              import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT
+from glinker.interview.prompts              import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT, SESSION_NAME_NOTE
 from glinker.diagnosis.finalize             import run_gliner, finalize_report
 from glinker.rag.retrieval                  import retrieve_context, get_medication_info
 from glinker.disease.disease_retrieval      import retrieve_diseases
@@ -140,11 +141,19 @@ def interview_turn():
             "correctedPatientText": patient_text,
             "questionType"        : "text",
             "options"             : [],
+            "sessionName"         : "",
         })
 
     # ── Normal turn — run interview logic with history supplied by Express ─────
+    # Express sets request_session_name while the session still has no title
+    # (first turn, or second if the first produced none) — no separate LLM call.
+    wants_name   = bool(data.get("request_session_name"))
     full_history = _build_full_history(live_history)
+    if wants_name:
+        full_history.append({"role": "system", "content": SESSION_NAME_NOTE})
     result = run_interview_turn(full_history, patient_text)
+    if not wants_name:
+        result["sessionName"] = ""
     result["rawPatientText"] = raw_patient_text
     return jsonify(result)
 
@@ -165,8 +174,6 @@ def pipeline_finalize():
     report           = finalize_report(transcript_text, gliner_entities)
     rag_query        = report.get("ragQuery", "")
     diagnostic_query = report.get("diagnosticQuery", "")
-    session_name     = report.get("sessionName", "")
-    print(f"[Session Name] {session_name!r}")
 
     # ── 3. RAG retrieval — clinician + patient corpus run concurrently ─────────
     # Both are in-process FAISS searches on separate index objects — no shared
@@ -253,7 +260,6 @@ def pipeline_finalize():
         "diagnosticQuery"     : diagnostic_query,
         "retrievedSources"    : retrieved_chunks,
         "medicationInfo"      : medication_info,
-        "sessionName"         : session_name,
         "emergencyWarning"    : assessment.get("emergencyWarning",
                                                {"triggered": False, "reason": "", "message": ""}),
         "interpretedDiagnoses": assessment.get("interpretedDiagnoses", []),
