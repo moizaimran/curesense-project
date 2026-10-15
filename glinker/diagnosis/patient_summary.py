@@ -6,8 +6,6 @@
 # generate_patient_summary() assembles the patient-facing report:
 #   - LLM writes: patientComplaintSummary, researchSummary, selfCareGuidance,
 #                 referralSpecialty, medicationNotes (one note per drug)
-#   - emergencyWarning — copied from assessment, not re-evaluated
-#   - diagnosisNotes   — patientNote extracted from assessment diagnoses, in code
 #
 # _fmt_chunks and _fmt_medications imported from assessment.py.
 # Move both to glinker/diagnosis/_helpers.py when all three calls are complete.
@@ -40,8 +38,6 @@ def _allowed_specialty(value, specialties):
     return value if not specialties or value in specialties else default
 
 
-_EMERGENCY_WARNING_DEFAULT = {"triggered": False, "reason": "", "message": ""}
-
 
 def generate_patient_summary(
     assessment              : dict,
@@ -62,20 +58,16 @@ def generate_patient_summary(
         "selfCareGuidance"       : [{"point": str}, ...],
         "referralSpecialty"      : str,
         "medicationNotes"        : [{"drug": str, "note": str}, ...],
-        "emergencyWarning"       : {"triggered": bool, "reason": str, "message": str},
-        "diagnosisNotes"         : [{"disease": str, "note": str}, ...],
       }
+
+    Condition explanations for the patient are the patientNote of each likely/possible
+    entry in the assessment's interpretedDiagnoses — not repeated here.
 
     medicationNotes: LLM writes one note per drug in medication_info.keys().
     Drugs with a flag in assessment["medicationFlags"] get their flag translated
     into patient language. Drugs without a flag get a calm "no concerns" note.
     medication_info.keys() is the authoritative drug list — it already merged
     session-extracted drugs and profile medications before the FDA lookup.
-
-    emergencyWarning: copied directly from assessment — not re-evaluated.
-
-    diagnosisNotes: patientNote extracted from top 5 assessment diagnoses in code.
-    Entries with empty patientNote (plausibility == "unlikely") are excluded.
     """
     trimmed_meds = trim_medication_info(medication_info)
 
@@ -114,14 +106,6 @@ def generate_patient_summary(
         print(f"[generate_patient_summary] LLM call failed: {e} — using fallback")
         llm_result = _PATIENT_SUMMARY_FALLBACK
 
-    # diagnosisNotes: extract patientNote from assessment in code.
-    # Empty patientNote means plausibility == "unlikely" — exclude those entries.
-    diagnosis_notes = [
-        {"disease": d["disease"], "note": d["patientNote"]}
-        for d in assessment.get("interpretedDiagnoses", [])
-        if d.get("patientNote")
-    ]
-
     # No shallow copy needed — we build a fresh dict from llm_result values,
     # never mutate llm_result in place.
     return {
@@ -142,9 +126,4 @@ def generate_patient_summary(
             "medicationNotes",
             _PATIENT_SUMMARY_FALLBACK["medicationNotes"],
         ),
-        "emergencyWarning"       : assessment.get(
-            "emergencyWarning",
-            _EMERGENCY_WARNING_DEFAULT,
-        ),
-        "diagnosisNotes"         : diagnosis_notes,
     }

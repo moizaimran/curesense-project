@@ -6,7 +6,6 @@
 # generate_doctor_report() assembles the clinician-facing report:
 #   - LLM writes patientComplaintSummary and ragSummary (genuinely new writing)
 #   - medicationFlags  — copied from assessment, no re-generation
-#   - topDiagnoses     — first 5 of assessment["interpretedDiagnoses"], no re-ranking
 #
 # _fmt_chunks is imported from assessment.py rather than duplicated.
 # When all three calls exist, move shared formatters to glinker/diagnosis/_helpers.py.
@@ -42,7 +41,6 @@ def generate_doctor_report(
         "patientComplaintSummary": str,
         "ragSummary"             : str,
         "medicationFlags"        : [...],   # from assessment — not re-generated
-        "topDiagnoses"           : [...],   # first 5 from assessment — not re-ranked
       }
     """
     payload = json.dumps({
@@ -82,5 +80,4 @@ def generate_doctor_report(
             _DOCTOR_REPORT_FALLBACK["ragSummary"],
         ),
         "medicationFlags": assessment.get("medicationFlags", []),
-        "topDiagnoses"   : assessment.get("interpretedDiagnoses", [])[:5],
     }

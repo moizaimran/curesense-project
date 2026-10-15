@@ -243,12 +243,8 @@ def pipeline_finalize():
             print(f"[Call3] generate_patient_summary failed: {e}")
 
     # ── 8. Assemble final response ─────────────────────────────────────────────
-    # emergencyWarning surfaces at top-level for easy frontend access.
-    # interpretedDiagnoses at top-level is the full list for storage/audit;
-    # doctorReport.topDiagnoses is the display-ready top-5 subset.
-    # patient_summary["emergencyWarning"] is removed from the nested dict to
-    # avoid duplication — the top-level copy is the authoritative one.
-    patient_summary.pop("emergencyWarning", None)
+    # emergencyWarning and interpretedDiagnoses are returned once, at top level;
+    # both doctor and patient views are built from them by the backend.
 
     return jsonify({
         "verifiedEntities"    : report["entities"],
