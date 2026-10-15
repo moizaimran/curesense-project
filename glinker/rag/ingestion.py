@@ -140,6 +140,10 @@ def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
     )
     if text_field is None:
         raise ValueError(f"Cannot find text field in epfl-llm/guidelines. Keys: {list(sample.keys())}")
+    # The organisation name (nice, cdc, who, wikidoc, …) lives in the 'source' column;
+    # 'id' is an opaque hash and must not be used for the audience filter or citations.
+    if "source" not in sample:
+        raise ValueError(f"epfl-llm/guidelines has no 'source' column. Keys: {list(sample.keys())}")
 
     all_chunks = []
     # A capped build samples randomly (fixed seed) so the subset spans many books/sources
@@ -148,9 +152,10 @@ def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
         text = entry.get(text_field, "").strip()
         if not text or len(text) < 50:
             continue
-        source = entry.get("id", entry.get("url", f"guideline_{i}"))
+        source = (entry.get("source") or "").strip().lower()
         meta = {
-            "source"  : source,
+            "source"  : source or "guideline",
+            "doc_id"  : entry.get("id", entry.get("url", f"guideline_{i}")),
             "doc_type": "guideline",
             "title"   : entry.get("title", entry.get("name", "")),
             "audience": _guideline_audience(source),
