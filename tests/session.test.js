@@ -516,6 +516,32 @@ describe("Session end states", () => {
     expect(await Report.countDocuments({ session_id: session._id })).toBe(0);
   });
 
+  test("finalize timeout is not retried (would rerun the whole report) → session failed", async () => {
+    const { patient, token } = await buildPatientUser("T");
+    const session = await Session.create({ patient_id: patient._id });
+
+    axios.post.mockResolvedValueOnce({
+      data: {
+        status: "complete", message: "Thank you — generating your report.",
+        correctedPatientText: "No allergies",
+        questionType: "text", options: [],
+      },
+    });
+    axios.post.mockRejectedValueOnce(Object.assign(new Error("timeout of 180000ms exceeded"), { code: "ECONNABORTED" }));
+    const callsBefore = axios.post.mock.calls.length;
+
+    const res = await request(app)
+      .post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ patient_text: "no allergies" });
+
+    expect(axios.post.mock.calls.length - callsBefore).toBe(2); // the turn + one finalize, no retry
+    expect(axios.post.mock.calls.at(-1)[2].timeout).toBe(180_000);
+    expect(res.status).toBe(500);
+    expect(res.body.session_status).toBe("failed");
+    expect((await Session.findById(session._id)).status).toBe("failed");
+  });
+
   test("abandonInactiveSessions marks only in-progress sessions idle for over 48 hours", async () => {
     const { abandonInactiveSessions } = require("../services/sessionService");
     const { patient } = await buildPatientUser("A");

@@ -11,11 +11,13 @@ const ABANDONED_AFTER_HOURS = 48;
 
 // One automatic retry on network-level failures (Ngrok hiccups).
 // Does NOT retry HTTP errors from Flask — those are logic errors, not transient.
+// Does NOT retry timeouts either — Flask may still be working, and a retry would run the whole job again.
 async function callAI(url, payload, timeout) {
   try {
     return await axios.post(url, payload, { timeout });
   } catch (err) {
     if (err.response) throw err;
+    if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT") throw err;
     await new Promise(r => setTimeout(r, 2000));
     return await axios.post(url, payload, { timeout });
   }
@@ -160,7 +162,7 @@ async function processTurn(sessionId, body, user) {
           profile_conditions:   profile.conditions,
           specialties:          SPECIALTIES,
         },
-        120_000
+        180_000   // first report after a Kaggle restart has taken ~120 s (model warm-up)
       );
       result = finalizeResp.data;
 
