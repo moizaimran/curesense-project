@@ -33,7 +33,6 @@ CureSense_AI_Modules/
 │
 ├── main.ipynb                  ← Run this on Kaggle (9 cells, see below)
 ├── colab_medgemma.ipynb        ← Run this on Google Colab for image analysis
-├── pipeline.py                 ← Legacy local test runner (not used in production)
 ├── requirements.txt            ← Python dependencies
 │
 ├── api/
@@ -66,18 +65,13 @@ CureSense_AI_Modules/
 │   │
 │   ├── disease/
 │   │   ├── build_disease_index.py (in scripts/) ← Builds disease FAISS index
-│   │   ├── disease_retrieval.py ← Query-time disease candidate retrieval
-│   │   └── ranker.py           ← Legacy TF-IDF ranker (replaced by FAISS)
+│   │   └── disease_retrieval.py ← Query-time disease candidate retrieval
 │   │
 │   └── images/
 │       └── pdf_analysis.py     ← PDF analysis via GPT (text path + vision path)
 │
-├── scripts/
-│   └── build_disease_index.py  ← One-time script to build the disease FAISS index
-│
-└── tests/
-    ├── simulated_patient.py    ← Simulates patient answers for testing
-    └── test_run.py             ← End-to-end test runner
+└── scripts/
+    └── build_disease_index.py  ← One-time script to build the disease FAISS index
 ```
 
 ---

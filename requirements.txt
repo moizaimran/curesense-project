@@ -10,7 +10,6 @@ tiktoken
 datasets
 sentence-transformers==2.7.0
 pandas
-scikit-learn
 numpy
 rapidfuzz
 Pillow>=10.4.0,<11.0
