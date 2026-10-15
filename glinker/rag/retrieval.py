@@ -188,33 +188,65 @@ _LLM_MED_SECTIONS = frozenset({
 })
 
 
+_DOSE_WORDS = {
+    "mg", "mcg", "g", "ml", "iu", "unit", "units", "tab", "tabs", "tablet", "tablets", "cap",
+    "caps", "capsule", "capsules", "syrup", "injection", "once", "twice", "thrice", "daily",
+    "weekly", "as", "needed", "prn", "od", "bd", "bid", "tds", "tid", "qid", "every", "at",
+    "night", "morning", "evening", "per", "day", "x",
+}
+
+
+def _strip_dose(name: str) -> str:
+    """'Losartan 50mg once daily' → 'losartan'. Fallback when no generic name is known."""
+    kept = []
+    for token in name.lower().replace("(", " ").replace(")", " ").split():
+        if token[0].isdigit() or token in _DOSE_WORDS:
+            break
+        kept.append(token)
+    return " ".join(kept)
+
+
 def get_medication_info(
-    drug_names: list[str],
-    profile_medications: list[str] = [],
+    drug_names   : list[str],
+    generic_names: dict[str, str] | None = None,
 ) -> dict[str, dict]:
     """
-    For each drug name, fetch the openFDA label directly (live API call).
-    Returns {drug_name: {drug, source, sections}} for drugs found, omits others.
+    Look up the official US drug label (openFDA) for each medication the patient takes.
 
-    drug_names          — medication keywords from this session's verified entities.
-    profile_medications — medications from the patient's stored profile, passed in
-                          by the caller (this pipeline never touches the database).
-    Both lists are merged and deduplicated (by lowercase) before API calls are made.
-    Original casing of the first occurrence is preserved as the dict key —
-    session names (drug_names) take priority since they are listed first.
+    drug_names    — names as the patient gave them: interview entities first, then the
+                    saved profile list (this pipeline never touches the database).
+    generic_names — {lowercased name → US generic name} from finalize_report; brand and
+                    local names (Panadol, Augmentin, paracetamol) only match openFDA by generic.
+
+    Returns {name as given: {drug, generic_name, label_found, source, sections}} for EVERY
+    medication — label_found False (and no sections) when no label exists, so later steps
+    still flag it from clinical knowledge and the report records the attempt. Two entries
+    resolving to the same generic (e.g. "Losartan" and "Losartan 50mg daily") are merged,
+    keeping the first name given.
     """
-    seen: dict[str, str] = {}   # lowercase → original_casing
-    for name in drug_names + profile_medications:
-        stripped = name.strip()
-        if stripped:
-            lower = stripped.lower()
-            if lower not in seen:
-                seen[lower] = stripped  # first occurrence wins (session before profile)
-    results = {}
-    for lower_key, original_name in seen.items():
-        info = fetch_openfda(lower_key)   # API call always uses lowercase
-        if info:
-            results[original_name] = info  # dict key preserves original casing
+    generic_names = {k.strip().lower(): v for k, v in (generic_names or {}).items()}
+    results: dict[str, dict] = {}
+    seen: set[str] = set()
+    for raw in drug_names:
+        name = raw.strip()
+        if not name:
+            continue
+        generic = (generic_names.get(name.lower()) or "").strip().lower()
+        if not generic or generic == "unknown":
+            generic = _strip_dose(name) if generic != "unknown" else ""
+        key = generic or name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        info = fetch_openfda(generic) if generic else None
+        results[name] = {
+            "drug"        : name,
+            "generic_name": generic or "unknown",
+            "label_found" : bool(info),
+            "source"      : info["source"] if info else "",
+            "sections"    : info["sections"] if info else {},
+        }
     return results
 
 

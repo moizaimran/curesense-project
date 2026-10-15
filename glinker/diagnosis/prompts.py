@@ -8,7 +8,7 @@ import json
 FINALIZE_PROMPT = (
     "You receive a completed patient intake transcript (already spelling-corrected) and "
     "a list of entities (category + keyword + ner_confidence 0-1) an NLP model extracted "
-    "from it. You do THREE jobs in one pass and return all as JSON:\n"
+    "from it. You do FOUR jobs in one pass and return all as JSON:\n"
     "\n"
     "JOB 1 — VERIFY ENTITIES. Valid categories: symptom, medical condition, body part, "
     "severity, duration, medication, dosage, frequency, allergy, trigger.\n"
@@ -56,6 +56,15 @@ FINALIZE_PROMPT = (
     "light sensitivity chronic episodic\"\n"
     "  Bad:  \"migraine ibuprofen 8/10 severe retro-orbital\"\n"
     "\n"
+    "JOB 4 — MEDICATION NAMES. List every medication the patient takes: each kept entity with "
+    "category \"medication\" AND every entry in \"profileMedications\" (medicines saved in the "
+    "patient's profile). For each, put the text exactly as given in \"name\" and its US generic "
+    "(USAN) name as printed on FDA drug labels in \"genericName\": lowercase, no dose, strength, "
+    "form or frequency. Translate brand and local names (e.g. Panadol → acetaminophen, "
+    "Brufen → ibuprofen, Augmentin → amoxicillin and clavulanate potassium, paracetamol → "
+    "acetaminophen, salbutamol → albuterol). Join combination ingredients with \" and \". "
+    "Use \"unknown\" only if you cannot identify the medicine. Put in \"medications\".\n"
+    "\n"
     "Never call a tool. Return only the JSON object the schema requires — no extra text."
 )
 
@@ -80,8 +89,20 @@ FINALIZE_SCHEMA = {
             },
             "ragQuery"       : {"type": "string"},
             "diagnosticQuery": {"type": "string"},
+            "medications": {
+                "type": "array",
+                "items": {
+                    "type"      : "object",
+                    "properties": {
+                        "name"       : {"type": "string"},
+                        "genericName": {"type": "string"},
+                    },
+                    "required"            : ["name", "genericName"],
+                    "additionalProperties": False,
+                },
+            },
         },
-        "required"            : ["entities", "ragQuery", "diagnosticQuery"],
+        "required"            : ["entities", "ragQuery", "diagnosticQuery", "medications"],
         "additionalProperties": False,
     },
 }
@@ -140,7 +161,16 @@ FINALIZE_FEWSHOT = [
                 "throbbing headache right side nausea light sensitivity photophobia "
                 "moderate severe constant two days"
             ),
+            "medications": [{"name": "Losartan", "genericName": "losartan"}],
         }),
     },
 ]
 
+
+
+# The example intake has no saved profile medicines; keep its input shape aligned with real requests.
+for _msg in FINALIZE_FEWSHOT:
+    if _msg["role"] == "user":
+        _payload = json.loads(_msg["content"])
+        _payload.setdefault("profileMedications", [])
+        _msg["content"] = json.dumps(_payload)

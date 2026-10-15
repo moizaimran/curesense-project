@@ -9,6 +9,7 @@
 #   - Assesses emergency status (LLM + code-based, merged)
 #
 # ==============================================================================
+import copy
 import json
 
 from glinker.utils import call_llm
@@ -42,11 +43,16 @@ def _fmt_medications(medication_info: dict) -> str:
         return "No medication label data provided."
     parts = []
     for drug, info in medication_info.items():
+        generic = info.get("generic_name", "unknown")
+        if not info.get("label_found", True):
+            parts.append(f"Drug: {drug} (generic: {generic}) — NO official drug label found; "
+                         f"assess from clinical knowledge.")
+            continue
         sections_text = "\n".join(
             f"  [{sec.replace('_', ' ').title()}]: {text}"
             for sec, text in info.get("sections", {}).items()
         )
-        parts.append(f"Drug: {drug} (Source: {info.get('source', 'openFDA')})\n{sections_text}")
+        parts.append(f"Drug: {drug} (generic: {generic}; Source: {info.get('source', 'openFDA')})\n{sections_text}")
     return "\n\n".join(parts)
 
 
@@ -142,13 +148,28 @@ def generate_diagnosis_assessment(
     # by reference on failure, and we mutate result["emergencyWarning"] below.
     # {**result} breaks the shared reference before any mutation, protecting
     # _ASSESSMENT_FALLBACK from being corrupted across subsequent failed calls.
+    # One flag per medication, named exactly as given, so each flag can be matched to
+    # its openFDA lookup below.
+    schema = ASSESSMENT_SCHEMA
+    if medication_info:
+        schema = copy.deepcopy(ASSESSMENT_SCHEMA)
+        flag_item = schema["schema"]["properties"]["medicationFlags"]["items"]
+        flag_item["properties"]["drug"] = {"type": "string", "enum": list(medication_info.keys())}
+
     result = {**call_llm(
         messages,
-        ASSESSMENT_SCHEMA,
+        schema,
         "diagnose_max_tokens",
         _ASSESSMENT_FALLBACK,
         "generate_diagnosis_assessment",
     )}
+
+    # verified is decided in code, never by the model: True only when the flag's drug
+    # had an official openFDA label in the input.
+    result["medicationFlags"] = [
+        {**f, "verified": bool(medication_info.get(f.get("drug"), {}).get("label_found"))}
+        for f in result.get("medicationFlags", [])
+    ]
 
     code_check = check_emergency_list(result.get("interpretedDiagnoses", []))
 

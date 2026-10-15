@@ -34,13 +34,12 @@ def run_gliner(text: str) -> list[dict]:
     return formatted
 
 
-def finalize_report(transcript_text: str, gliner_entities: list[dict]) -> dict:
+def finalize_report(transcript_text: str, gliner_entities: list[dict],
+                    profile_medications: list[str] | None = None) -> dict:
     """
-    One LLM call: verifies GLiNER entities, writes a dense ragQuery for FAISS
-    retrieval, and writes a symptom-only diagnosticQuery for TF-IDF ranking.
-
-    rank_diseases is NOT called here — it runs in app.py after this returns,
-    using the verified entities and diagnosticQuery produced below.
+    One LLM call: verifies GLiNER entities, writes a dense ragQuery for clinical
+    retrieval, a symptom-only diagnosticQuery for disease retrieval, and maps every
+    medication (interview + profile) to its US generic name for the openFDA lookup.
     """
     payload = json.dumps({
         "transcript": transcript_text,
@@ -48,6 +47,7 @@ def finalize_report(transcript_text: str, gliner_entities: list[dict]) -> dict:
             {"category": e["category"], "keyword": e["text"], "ner_confidence": e["confidence"]}
             for e in gliner_entities
         ],
+        "profileMedications": profile_medications or [],
     })
 
     messages = [{"role": "system", "content": FINALIZE_PROMPT}]
@@ -58,5 +58,6 @@ def finalize_report(transcript_text: str, gliner_entities: list[dict]) -> dict:
         "entities"       : [{"category": e["category"], "keyword": e["text"], "relates_to": ""} for e in gliner_entities],
         "ragQuery"       : "",
         "diagnosticQuery": "",
+        "medications"    : [],
     }
     return call_llm(messages, FINALIZE_SCHEMA, "finalize_max_tokens", fallback, "finalize_report")

@@ -166,7 +166,7 @@ def pipeline_finalize():
     gliner_entities = run_gliner(transcript_text)
 
     # ── 2. Finalize — entity verification + ragQuery + diagnosticQuery ─────────
-    report           = finalize_report(transcript_text, gliner_entities)
+    report           = finalize_report(transcript_text, gliner_entities, profile_medications)
     rag_query        = report.get("ragQuery", "")
     diagnostic_query = report.get("diagnosticQuery", "")
 
@@ -192,17 +192,18 @@ def pipeline_finalize():
     except Exception as e:
         print(f"[DiseaseRAG] retrieve_diseases failed: {e} — continuing without disease candidates.")
 
-    # ── 5. openFDA — live lookup per medication (non-critical) ────────────────
-    # profile_medications merges profile drugs with session-extracted ones inside
-    # get_medication_info; currently [] until Express passes the patient's profile.
+    # ── 5. openFDA — official label per medication (non-critical) ─────────────
+    # Interview medications first, then the saved profile list; finalize_report mapped
+    # each name to its US generic so brand/local names (Panadol, Augmentin) still match.
     med_names = [
         e["keyword"] for e in report["entities"]
         if e.get("category") == "medication"
-    ]
+    ] + list(profile_medications)
+    generic_names = {m["name"]: m["genericName"] for m in report.get("medications", [])}
     medication_info = {}
-    if med_names or profile_medications:
+    if med_names:
         try:
-            medication_info = get_medication_info(med_names, profile_medications)
+            medication_info = get_medication_info(med_names, generic_names)
         except Exception as e:
             print(f"[openFDA] get_medication_info failed: {e} — continuing without drug data.")
 
