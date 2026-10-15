@@ -103,7 +103,8 @@ def _chunks_from_textbooks(max_entries: int | None = None) -> list[dict]:
         raise ValueError(f"Cannot find text field in MedRAG/textbooks. Keys: {list(sample.keys())}")
 
     all_chunks = []
-    entries = ds if max_entries is None else ds.select(range(min(max_entries, len(ds))))
+    # A capped build samples randomly (fixed seed) so the subset spans many books/sources
+    entries = ds if max_entries is None else ds.shuffle(seed=42).select(range(min(max_entries, len(ds))))
     for i, entry in enumerate(entries):
         text = entry.get(text_field, "").strip()
         if not text or len(text) < 50:
@@ -141,7 +142,8 @@ def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
         raise ValueError(f"Cannot find text field in epfl-llm/guidelines. Keys: {list(sample.keys())}")
 
     all_chunks = []
-    entries = ds if max_entries is None else ds.select(range(min(max_entries, len(ds))))
+    # A capped build samples randomly (fixed seed) so the subset spans many books/sources
+    entries = ds if max_entries is None else ds.shuffle(seed=42).select(range(min(max_entries, len(ds))))
     for i, entry in enumerate(entries):
         text = entry.get(text_field, "").strip()
         if not text or len(text) < 50:
