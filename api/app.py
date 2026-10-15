@@ -13,7 +13,7 @@
 #              sessionName }   — sessionName is "" unless request_session_name
 #
 # POST /pipeline/finalize
-#   Body:  { full_transcript_text, profile_medications? }
+#   Body:  { full_transcript_text, profile_medications?, specialties? }
 #   Returns: { verifiedEntities, rankedDiseases, ragQuery, diagnosticQuery,
 #              retrievedSources, medicationInfo,
 #              emergencyWarning, interpretedDiagnoses,
@@ -150,7 +150,8 @@ def interview_turn():
 def pipeline_finalize():
     data = request.get_json(force=True)
     transcript_text    = data.get("full_transcript_text", "").strip()
-    profile_medications = data.get("profile_medications", [])   # [] until Express sends it
+    profile_medications = data.get("profile_medications", [])
+    specialties         = data.get("specialties", [])   # allowed referral specialties (backend's list)
 
     if not transcript_text:
         return jsonify({"error": "full_transcript_text is required"}), 400
@@ -222,7 +223,7 @@ def pipeline_finalize():
         fut_patient = pool.submit(
             generate_patient_summary,
             assessment, report["entities"], retrieved_chunks,
-            medication_info, transcript_text,
+            medication_info, transcript_text, specialties,
         )
         try:
             doctor_report = fut_doctor.result()
