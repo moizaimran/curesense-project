@@ -148,8 +148,8 @@ def generate_diagnosis_assessment(
     # by reference on failure, and we mutate result["emergencyWarning"] below.
     # {**result} breaks the shared reference before any mutation, protecting
     # _ASSESSMENT_FALLBACK from being corrupted across subsequent failed calls.
-    # One flag per medication, named exactly as given, so each flag can be matched to
-    # its openFDA lookup below.
+    # Flags may only name the given medications (exactly as given), so each flag can be
+    # matched to its openFDA lookup below. Any number of flags per medication, including none.
     schema = ASSESSMENT_SCHEMA
     if medication_info:
         schema = copy.deepcopy(ASSESSMENT_SCHEMA)
