@@ -8,7 +8,7 @@
 # ─────────
 # POST /interview/turn
 #   Body:  { turn_number, history, patient_text, request_session_name? }
-#       OR { turn_number, history, patient_audio_url, request_session_name? }
+#          (voice answers are transcribed first via POST /audio/transcribe)
 #   Returns: { status, message, correctedPatientText, questionType, options,
 #              sessionName }   — sessionName is "" unless request_session_name
 #
@@ -114,20 +114,10 @@ def interview_turn():
     if turn_number is None:
         return jsonify({"error": "turn_number is required"}), 400
 
-    # ── Resolve patient text (text or audio) ──────────────────────────────────
+    # Voice answers are transcribed beforehand via /audio/transcribe, so every turn is text
     patient_text = data.get("patient_text", "").strip()
-
-    if patient_text:
-        raw_patient_text = patient_text          # text turns: raw == what was sent in
-    else:
-        audio_url = data.get("patient_audio_url", "").strip()
-        if not audio_url:
-            return jsonify({"error": "patient_text or patient_audio_url is required"}), 400
-        try:
-            patient_text = _transcribe_audio(audio_url)
-            raw_patient_text = patient_text      # voice turns: raw == Whisper output, pre-LLM
-        except Exception as e:
-            return jsonify({"error": f"Audio transcription failed: {e}"}), 502
+    if not patient_text:
+        return jsonify({"error": "patient_text is required"}), 400
 
     # ── Safety cap — skip LLM call entirely, return clean closing message ──────
     if turn_number >= config.LLM_CONFIG["interview_max_turns"]:
@@ -137,7 +127,6 @@ def interview_turn():
                 "Thanks for sharing all of this — I have what I need for now. "
                 "The clinician will review your responses shortly."
             ),
-            "rawPatientText"      : raw_patient_text,
             "correctedPatientText": patient_text,
             "questionType"        : "text",
             "options"             : [],
@@ -154,7 +143,6 @@ def interview_turn():
     result = run_interview_turn(full_history, patient_text)
     if not wants_name:
         result["sessionName"] = ""
-    result["rawPatientText"] = raw_patient_text
     return jsonify(result)
 
 
