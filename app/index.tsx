@@ -1,12 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import * as AuthSession from "expo-auth-session/providers/google";
-import * as WebBrowser from "expo-web-browser";
+import { GoogleSignin, statusCodes } from "@react-native-google-signin/google-signin";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-WebBrowser.maybeCompleteAuthSession();
+GoogleSignin.configure({
+  iosClientId: "404929302395-ul8nq13macaht9u6bp8egheh0vb50ftg.apps.googleusercontent.com",
+  webClientId: "404929302395-sgjs2bp6dct6md3v70dnotlklmg3urrt.apps.googleusercontent.com",
+});
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -51,17 +53,27 @@ export default function HomeScreen() {
   const [gLoading, setGLoading]   = useState(false);
   const [showPass, setShowPass]   = useState(false);
 
-  const [request, response, promptAsync] = AuthSession.useAuthRequest({
-    iosClientId: "404929302395-ul8nq13macaht9u6bp8egheh0vb50ftg.apps.googleusercontent.com",
-    webClientId: "404929302395-sgjs2bp6dct6md3v70dnotlklmg3urrt.apps.googleusercontent.com",
-  });
-
-  useEffect(() => {
-    if (response?.type === "success") {
-      const idToken = response.authentication?.idToken;
-      if (idToken) handleGoogleToken(idToken);
+  async function handleGoogleSignIn() {
+    setGLoading(true);
+    setError("");
+    try {
+      await GoogleSignin.hasPlayServices();
+      const userInfo = await GoogleSignin.signIn();
+      const idToken  = userInfo.data?.idToken;
+      if (!idToken) { setError("Google sign-in failed. No token received."); return; }
+      await handleGoogleToken(idToken);
+    } catch (e: any) {
+      if (e.code === statusCodes.SIGN_IN_CANCELLED) {
+        // user closed the sheet — no error shown
+      } else if (e.code === statusCodes.IN_PROGRESS) {
+        // already in progress — ignore
+      } else {
+        setError("Google sign-in failed. Please try again.");
+      }
+    } finally {
+      setGLoading(false);
     }
-  }, [response]);
+  }
 
   async function handleGoogleToken(idToken: string) {
     setGLoading(true);
@@ -269,8 +281,8 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={[s.googleBtn, gLoading && s.disabled]}
               activeOpacity={0.82}
-              disabled={gLoading || !request}
-              onPress={() => promptAsync()}
+              disabled={gLoading}
+              onPress={handleGoogleSignIn}
             >
               {gLoading ? (
                 <ActivityIndicator color="#EAF1FF" />

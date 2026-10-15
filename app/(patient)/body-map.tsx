@@ -4,13 +4,13 @@ import { useState } from "react";
 import {
   Image,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 // ── Design tokens (matches landing page) ────────────────────────────────────
 const C = {

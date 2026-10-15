@@ -5,7 +5,9 @@ import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -116,6 +118,24 @@ const C = {
 
 const GENDER_OPTIONS = ["Male", "Female", "Other"];
 
+const MONTHS = [
+  { label: "January",   value: 1  },
+  { label: "February",  value: 2  },
+  { label: "March",     value: 3  },
+  { label: "April",     value: 4  },
+  { label: "May",       value: 5  },
+  { label: "June",      value: 6  },
+  { label: "July",      value: 7  },
+  { label: "August",    value: 8  },
+  { label: "September", value: 9  },
+  { label: "October",   value: 10 },
+  { label: "November",  value: 11 },
+  { label: "December",  value: 12 },
+];
+
+const DAYS  = Array.from({ length: 31 }, (_, i) => i + 1);
+const YEARS = Array.from({ length: 2021 - 1930 + 1 }, (_, i) => 2021 - i);
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Pakistani phone number:
@@ -143,7 +163,9 @@ export default function RegisterScreen() {
   // Basic info
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [dob, setDob] = useState("");
+  const [dobDay,   setDobDay]   = useState<number | null>(null);
+  const [dobMonth, setDobMonth] = useState<number | null>(null);
+  const [dobYear,  setDobYear]  = useState<number | null>(null);
   const [gender, setGender] = useState("");
   const [phone, setPhone] = useState("");
 
@@ -184,11 +206,10 @@ export default function RegisterScreen() {
     return "";
   }
 
-  function validateDob(v: string) {
-    if (!v.trim()) {
+  function validateDob(day: number | null, month: number | null, year: number | null) {
+    if (!day || !month || !year) {
       return "Date of birth is required.";
     }
-
     return "";
   }
 
@@ -271,12 +292,14 @@ export default function RegisterScreen() {
     }));
   }
 
-  function handleDobChange(v: string) {
-    setDob(v);
-
+  function handleDobPartChange(
+    day: number | null,
+    month: number | null,
+    year: number | null,
+  ) {
     setFieldErrors((prev) => ({
       ...prev,
-      dob: validateDob(v),
+      dob: validateDob(day, month, year),
     }));
   }
 
@@ -349,7 +372,7 @@ export default function RegisterScreen() {
     const errs: FieldErrors = {
       name: validateName(name),
       email: validateEmail(email),
-      dob: validateDob(dob),
+      dob: validateDob(dobDay, dobMonth, dobYear),
       gender: gender ? "" : "Please select a gender.",
       phone: validatePhone(phone),
       password: validatePassword(password),
@@ -395,7 +418,7 @@ export default function RegisterScreen() {
           name,
           email,
           password,
-          dob,
+          dob: `${dobYear}-${String(dobMonth!).padStart(2, "0")}-${String(dobDay!).padStart(2, "0")}`,
           gender,
           phone: phone || undefined,
 
@@ -539,13 +562,13 @@ export default function RegisterScreen() {
               errorText={fieldErrors.email}
             />
 
-            <Field
-              label="Date of Birth *"
-              value={dob}
-              onChangeText={handleDobChange}
-              placeholder="DD/MM/YYYY"
-              icon="calendar-outline"
-              keyboardType="numeric"
+            <DobPicker
+              day={dobDay}
+              month={dobMonth}
+              year={dobYear}
+              onDayChange={(d) => { setDobDay(d); handleDobPartChange(d, dobMonth, dobYear); }}
+              onMonthChange={(m) => { setDobMonth(m); handleDobPartChange(dobDay, m, dobYear); }}
+              onYearChange={(y) => { setDobYear(y); handleDobPartChange(dobDay, dobMonth, y); }}
               errorText={fieldErrors.dob}
             />
 
@@ -778,6 +801,247 @@ export default function RegisterScreen() {
     </LinearGradient>
   );
 }
+
+// ── DobPicker ─────────────────────────────────────────────────────────────────
+
+type DobColumn = "day" | "month" | "year";
+
+function DobPicker({
+  day, month, year,
+  onDayChange, onMonthChange, onYearChange,
+  errorText,
+}: {
+  day: number | null;
+  month: number | null;
+  year: number | null;
+  onDayChange: (v: number) => void;
+  onMonthChange: (v: number) => void;
+  onYearChange: (v: number) => void;
+  errorText?: string;
+}) {
+  const [open, setOpen] = useState<DobColumn | null>(null);
+
+  const monthLabel = month ? MONTHS[month - 1].label : null;
+
+  function renderSheet(column: DobColumn) {
+    if (open !== column) return null;
+
+    let items: { label: string; value: number }[] = [];
+    let current: number | null = null;
+    let onSelect: (v: number) => void = () => {};
+
+    if (column === "day") {
+      items = DAYS.map((d) => ({ label: String(d), value: d }));
+      current = day;
+      onSelect = onDayChange;
+    } else if (column === "month") {
+      items = MONTHS;
+      current = month;
+      onSelect = onMonthChange;
+    } else {
+      items = YEARS.map((y) => ({ label: String(y), value: y }));
+      current = year;
+      onSelect = onYearChange;
+    }
+
+    return (
+      <Modal
+        visible
+        transparent
+        animationType="slide"
+        onRequestClose={() => setOpen(null)}
+      >
+        <TouchableOpacity
+          style={sd.overlay}
+          activeOpacity={1}
+          onPress={() => setOpen(null)}
+        />
+        <View style={sd.sheet}>
+          <View style={sd.sheetHeader}>
+            <Text style={sd.sheetTitle}>
+              {column === "day" ? "Day" : column === "month" ? "Month" : "Year"}
+            </Text>
+            <TouchableOpacity onPress={() => setOpen(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close" size={20} color={C.soft} />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={items}
+            keyExtractor={(item) => String(item.value)}
+            style={sd.list}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) => {
+              const selected = item.value === current;
+              return (
+                <TouchableOpacity
+                  style={[sd.option, selected && sd.optionActive]}
+                  onPress={() => { onSelect(item.value); setOpen(null); }}
+                  activeOpacity={0.75}
+                >
+                  {selected && <Ionicons name="checkmark" size={15} color={C.blue} style={{ marginRight: 8 }} />}
+                  <Text style={[sd.optionText, selected && sd.optionTextActive]}>
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
+      </Modal>
+    );
+  }
+
+  return (
+    <View style={sd.wrap}>
+      <Text style={s.fieldLabel}>Date of Birth *</Text>
+      <View style={sd.row}>
+        {/* Day */}
+        <TouchableOpacity
+          style={[sd.btn, errorText ? sd.btnError : null]}
+          onPress={() => setOpen("day")}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="calendar-outline" size={15} color={day ? C.cyan : C.soft} style={{ marginRight: 6 }} />
+          <Text style={[sd.btnText, !day && sd.btnPlaceholder]}>
+            {day ? String(day) : "Day"}
+          </Text>
+          <Ionicons name="chevron-down" size={13} color={C.soft} />
+        </TouchableOpacity>
+
+        {/* Month */}
+        <TouchableOpacity
+          style={[sd.btnWide, errorText ? sd.btnError : null]}
+          onPress={() => setOpen("month")}
+          activeOpacity={0.8}
+        >
+          <Text style={[sd.btnText, !month && sd.btnPlaceholder]}>
+            {monthLabel ?? "Month"}
+          </Text>
+          <Ionicons name="chevron-down" size={13} color={C.soft} />
+        </TouchableOpacity>
+
+        {/* Year */}
+        <TouchableOpacity
+          style={[sd.btn, errorText ? sd.btnError : null]}
+          onPress={() => setOpen("year")}
+          activeOpacity={0.8}
+        >
+          <Text style={[sd.btnText, !year && sd.btnPlaceholder]}>
+            {year ? String(year) : "Year"}
+          </Text>
+          <Ionicons name="chevron-down" size={13} color={C.soft} />
+        </TouchableOpacity>
+      </View>
+
+      {errorText ? <Text style={s.fieldError}>{errorText}</Text> : null}
+
+      {renderSheet("day")}
+      {renderSheet("month")}
+      {renderSheet("year")}
+    </View>
+  );
+}
+
+const sd = StyleSheet.create({
+  wrap: { marginBottom: 15 },
+  row: { flexDirection: "row", gap: 8 },
+
+  btn: {
+    flex: 1,
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: C.inputBg,
+    borderWidth: 1,
+    borderColor: C.inputBorder,
+    borderRadius: 14,
+    paddingHorizontal: 11,
+  },
+
+  btnWide: {
+    flex: 1.6,
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: C.inputBg,
+    borderWidth: 1,
+    borderColor: C.inputBorder,
+    borderRadius: 14,
+    paddingHorizontal: 11,
+  },
+
+  btnError: {
+    borderColor: "rgba(248,113,113,0.75)",
+    backgroundColor: "rgba(248,113,113,0.045)",
+  },
+
+  btnText: { color: C.white, fontSize: 13.5, flex: 1 },
+  btnPlaceholder: { color: "rgba(255,255,255,0.28)" },
+
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+
+  sheet: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    maxHeight: "55%",
+    backgroundColor: "#0D1B3E",
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderTopWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    paddingBottom: 30,
+  },
+
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.07)",
+  },
+
+  sheetTitle: {
+    color: C.text,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+
+  list: { paddingHorizontal: 8 },
+
+  option: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 12,
+    marginVertical: 2,
+  },
+
+  optionActive: {
+    backgroundColor: "rgba(59,130,246,0.14)",
+  },
+
+  optionText: {
+    color: C.muted,
+    fontSize: 15,
+  },
+
+  optionTextActive: {
+    color: C.white,
+    fontWeight: "700",
+  },
+});
+
+// ── SectionTitle ──────────────────────────────────────────────────────────────
 
 function SectionTitle({ children, icon }: { children: string; icon: any }) {
   return (

@@ -5,7 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": ["mobile", "com.googleusercontent.apps.404929302395-ul8nq13macaht9u6bp8egheh0vb50ftg"],
+    "scheme": [
+      "mobile",
+      "com.googleusercontent.apps.404929302395-ul8nq13macaht9u6bp8egheh0vb50ftg"
+    ],
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
@@ -38,7 +41,13 @@
       ],
       "expo-secure-store",
       "expo-audio",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.404929302395-ul8nq13macaht9u6bp8egheh0vb50ftg"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
