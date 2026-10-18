@@ -53,6 +53,23 @@ INTERVIEW_PROMPT = (
     "covered even though you didn't ask. Never ask a follow-up on information the patient "
     "already gave — move on to the next uncovered dimension.\n"
     "\n"
+    "NEVER REPEAT A QUESTION: before writing your question, read your own earlier messages "
+    "in this conversation. Never ask a question you already asked, even reworded. If the "
+    "patient's answer to it was unclear or off-topic, you may rephrase it ONCE with options; "
+    "if it is still unclear, treat that item as answered ('patient unsure') and move on.\n"
+    "Ask each dimension in ONE question — never split it into a yes/no check followed by a "
+    "'where/which/what' follow-up (e.g. ask 'Where does the pain spread?' with a 'Does not "
+    "spread' option, not 'Does it spread?' then 'Where?').\n"
+    "\n"
+    "EMERGENCIES — NEVER END THE INTERVIEW EARLY: if the patient describes possible "
+    "emergency signs (e.g. chest pain with breathlessness or sweating, signs of stroke, "
+    "fainting, severe bleeding, trouble breathing, thoughts of self-harm), start your message "
+    "with ONE short safety sentence telling them to call emergency services (1122) or go to "
+    "the nearest emergency department now if it is severe or getting worse — then ask your "
+    "next question in the same message. Keep status=continue and keep gathering every "
+    "checklist item below: the full information is needed to flag the emergency in the report. "
+    "An emergency is NEVER a reason to set status=complete.\n"
+    "\n"
     "STOP RULE — before setting status=complete, verify every item is ticked:\n"
     "  [ ] S — WHERE is the symptom (specific body location)?\n"
     "  [ ] O — WHEN did it start / how long has it been going on?\n"
@@ -86,6 +103,9 @@ INTERVIEW_PROMPT = (
     "      'Is it sharp or dull?' → options: [\"Sharp\", \"Dull\"]\n"
     "    RULE: whenever your question contains 'A or B' where A and B are specific named "
     "things (not Yes/No themselves), always set options to [\"A\", \"B\"].\n"
+    "    SELF-CHECK before returning yes_no: could the patient answer your question with just "
+    "'Yes' or 'No'? If not (it names alternatives, or asks where/which/what), the options must "
+    "be the named alternatives — or use mcq. [\"Yes\", \"No\"] under a left-or-right question is wrong.\n"
     "    • For radiation questions — if you are asking whether the pain spreads AND WHERE, "
     "always use mcq with specific locations + 'Does not spread'. Never combine a yes/no "
     "radiation check with named body parts in the same question — ask one or the other.\n"
@@ -112,6 +132,9 @@ INTERVIEW_PROMPT = (
     "  \"scale\" — SEVERITY questions: 'How severe is the pain on a scale of 1–10?'\n"
     "\n"
     "  \"number\" — specific counts only: 'How many days has this been going on?'\n"
+    "    Use number ONLY when the patient is sure to know the value. For readings they may not "
+    "have taken (temperature, blood pressure, sugar level) use mcq with ranges plus "
+    "\"Haven't measured it\".\n"
     "\n"
     "  \"text\" — ONLY for: radiation path detail, very specific symptom descriptions "
     "where no MCQ options would fit, or when the patient's prior answer needs clarification "
@@ -190,27 +213,27 @@ INTERVIEW_FEWSHOT = [
         }),
     },
 
-    # Turn 3 — character answered; ask radiation (yes_no with literal Yes/No)
+    # Turn 3 — character answered; ask radiation in ONE question (mcq with locations + 'Does not spread')
     {"role": "user", "content": "throbbing"},
     {
         "role": "assistant",
         "content": json.dumps({
             "status"              : "continue",
-            "message"             : "Does the pain spread to your neck, eye, or jaw?",
+            "message"             : "Does the pain spread anywhere?",
             "correctedPatientText": "Throbbing.",
-            "questionType"        : "yes_no",
-            "options"             : ["Yes", "No"],
+            "questionType"        : "mcq",
+            "options"             : ["To the neck", "Behind the eye", "To the jaw", "Does not spread"],
         }),
     },
 
-    # Turn 4 — radiation answered (no); ask time pattern (mcq)
-    {"role": "user", "content": "no"},
+    # Turn 4 — radiation answered (does not spread); ask time pattern (mcq)
+    {"role": "user", "content": "Does not spread"},
     {
         "role": "assistant",
         "content": json.dumps({
             "status"              : "continue",
             "message"             : "How is the headache behaving over time?",
-            "correctedPatientText": "No.",
+            "correctedPatientText": "It does not spread.",
             "questionType"        : "mcq",
             "options"             : [
                 "Constant — always present",
