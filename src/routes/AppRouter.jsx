@@ -6,6 +6,7 @@ import Patients from '../pages/Patients'
 import Profile from '../pages/Profile'
 import DoctorLogin from "../pages/auth/DoctorLogin";
 import DoctorSignup from "../pages/auth/DoctorSignup";
+import DoctorVerifyEmail from "../pages/auth/DoctorVerifyEmail";
 import ForgotPassword from "../pages/auth/ForgotPassword";
 import CaseDiagnosis from "../pages/CaseDiagnosis";
 import Availability from "../pages/Availability";
@@ -44,6 +45,10 @@ const router = createBrowserRouter([
     {
         path: "/doctor/signup",
         element: <DoctorSignup />
+    },
+    {
+        path: "/doctor/verify-email",
+        element: <DoctorVerifyEmail />
     },
     {
     path:"/doctor/forgot-password",

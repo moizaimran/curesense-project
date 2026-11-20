@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useSelector } from "react-redux";
-import { ArrowLeft, CheckCircle, XCircle, Clock3 } from "lucide-react";
-import CertificateModal from "../../components/admin/Doctors/CertificateModel";
+import { ArrowLeft, CheckCircle, XCircle, Clock3, ShieldCheck, ShieldAlert, ShieldX, ShieldOff } from "lucide-react";
 import doctorPlaceholder from "../../assets/images/doctor-avatar.jpg";
 import { selectToken } from "../../features/auth/authSlice";
 import { api } from "../../utils/api";
@@ -12,6 +11,115 @@ function InfoItem({ title, value }) {
         <div>
             <p className="text-sm text-gray-500">{title}</p>
             <p className="mt-1 text-lg font-semibold text-slate-800">{value || "—"}</p>
+        </div>
+    );
+}
+
+const PMDC_DECISION = {
+    auto_approved: { label: "Auto Approved", cls: "bg-green-100 text-green-700 border-green-200", Icon: ShieldCheck },
+    flagged:       { label: "Needs Review",  cls: "bg-yellow-100 text-yellow-700 border-yellow-200", Icon: ShieldAlert },
+    rejected:      { label: "Mismatch",      cls: "bg-red-100 text-red-700 border-red-200",       Icon: ShieldX     },
+    pending:       { label: "Checking…",     cls: "bg-gray-100 text-gray-500 border-gray-200",    Icon: ShieldOff   },
+};
+
+function confidenceCls(val) {
+    if (val == null) return "text-gray-400";
+    if (val >= 0.85) return "text-green-600";
+    if (val >= 0.60) return "text-yellow-600";
+    return "text-red-600";
+}
+
+function BreakdownRow({ label, value }) {
+    if (value == null) return null;
+    const isPercent = typeof value === "number";
+    const display   = isPercent ? `${Math.round(value * 100)}%` : (value ? "Yes ✓" : "No ✗");
+    const cls       = isPercent
+        ? (value >= 0.85 ? "text-green-600" : value >= 0.60 ? "text-yellow-600" : "text-red-500")
+        : (value ? "text-green-600" : "text-red-500");
+    return (
+        <div className="flex justify-between items-center py-2 border-b border-gray-100 last:border-0">
+            <span className="text-sm text-gray-500">{label}</span>
+            <span className={`text-sm font-semibold ${cls}`}>{display}</span>
+        </div>
+    );
+}
+
+function PmdcVerificationCard({ verification, doctor }) {
+    if (!verification) return null;
+    const decision = verification.decision || "pending";
+    const { label, cls, Icon } = PMDC_DECISION[decision] || PMDC_DECISION.pending;
+    const pct = verification.confidence != null ? Math.round(verification.confidence * 100) : null;
+
+    return (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+            <div className="flex justify-between items-start mb-6">
+                <div>
+                    <h3 className="text-xl font-bold text-slate-800">PMDC Automated Verification</h3>
+                    <p className="text-gray-500 text-sm mt-1">
+                        Live check against <span className="font-medium text-blue-700">pmdc.pk</span>
+                        {verification.checked_at && (
+                            <> · {new Date(verification.checked_at).toLocaleString()}</>
+                        )}
+                    </p>
+                </div>
+                <span className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border ${cls}`}>
+                    <Icon size={15} /> {label}
+                </span>
+            </div>
+
+            {/* Confidence bar */}
+            {pct != null && (
+                <div className="mb-6">
+                    <div className="flex justify-between mb-2">
+                        <span className="text-sm text-gray-500">Overall Confidence</span>
+                        <span className={`text-sm font-bold ${confidenceCls(verification.confidence)}`}>{pct}%</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-2.5">
+                        <div
+                            className={`h-2.5 rounded-full ${pct >= 85 ? "bg-green-500" : pct >= 60 ? "bg-yellow-400" : "bg-red-500"}`}
+                            style={{ width: `${pct}%` }}
+                        />
+                    </div>
+                </div>
+            )}
+
+            <div className="grid grid-cols-3 gap-6">
+                {/* Doctor submitted (from CNIC scan) */}
+                <div>
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Submitted by Doctor</p>
+                    <div className="space-y-2">
+                        <InfoItem title="Name (as per CNIC)"        value={doctor?.name_as_per_cnic}        />
+                        <InfoItem title="Father Name (as per CNIC)" value={doctor?.father_name_as_per_cnic} />
+                    </div>
+                </div>
+
+                {/* PMDC record */}
+                <div>
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">PMDC Record</p>
+                    <div className="space-y-2">
+                        <InfoItem title="Name on PMDC"        value={verification.pmdc_name}        />
+                        <InfoItem title="Father Name on PMDC" value={verification.pmdc_father_name} />
+                        <InfoItem title="License Status"      value={verification.pmdc_status}      />
+                    </div>
+                </div>
+
+                {/* Score breakdown */}
+                <div>
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Score Breakdown</p>
+                    <div>
+                        <BreakdownRow label="Name vs CNIC"        value={verification.breakdown?.name_vs_cnic} />
+                        <BreakdownRow label="Father Name vs CNIC" value={verification.breakdown?.father_name_vs_cnic} />
+                        <BreakdownRow label="License Active"      value={verification.breakdown?.license_active} />
+                        <BreakdownRow label="Specialty Match"     value={verification.breakdown?.specialty_match} />
+                    </div>
+                </div>
+            </div>
+
+            {!verification.pmdc_found && (
+                <div className="mt-4 p-3 rounded-xl bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm">
+                    PMDC registration number was not found in the PMDC database. Manual review required.
+                </div>
+            )}
         </div>
     );
 }
@@ -31,7 +139,7 @@ export default function DoctorDetails() {
     const [loading,          setLoading]          = useState(true);
     const [error,            setError]            = useState(null);
     const [actionLoading,    setActionLoading]    = useState(false);
-    const [showCertificate,  setShowCertificate]  = useState(false);
+    const [showCnic,         setShowCnic]         = useState(false);
     const [showApproveModal, setShowApproveModal] = useState(false);
     const [showRejectModal,  setShowRejectModal]  = useState(false);
     const [rejectReason,     setRejectReason]     = useState("");
@@ -175,21 +283,35 @@ export default function DoctorDetails() {
                 </div>
             </div>
 
-            <hr />
+            {/* PMDC Automated Verification */}
+            <PmdcVerificationCard verification={doctor.pmdc_verification} doctor={doctor} />
 
-            {/* PMDC Certificate */}
+            {/* CNIC Image */}
             <div>
-                <h3 className="text-xl font-bold text-slate-800 mb-5">PMDC Certificate</h3>
-                <div className="border border-dashed border-gray-300 rounded-2xl p-6 flex justify-between items-center bg-slate-50">
-                    <div>
-                        <p className="font-semibold text-slate-800">PMDC Registration Certificate</p>
-                        <p className="text-sm text-gray-500 mt-1">Uploaded by doctor during registration</p>
+                <h3 className="text-xl font-bold text-slate-800 mb-5">CNIC Image</h3>
+                {doctor.cnic_image_url ? (
+                    <div className="border border-gray-200 rounded-2xl overflow-hidden bg-slate-50">
+                        <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+                            <div>
+                                <p className="font-semibold text-slate-800">National Identity Card</p>
+                                <p className="text-sm text-gray-500 mt-0.5">Uploaded during registration — stored securely</p>
+                            </div>
+                            <button type="button" onClick={() => setShowCnic(true)}
+                                className="bg-[#264296] hover:bg-[#1f3578] text-white px-5 py-2.5 rounded-xl font-medium text-sm">
+                                View Full Size
+                            </button>
+                        </div>
+                        <div className="p-4">
+                            <img src={doctor.cnic_image_url} alt="Doctor CNIC"
+                                className="w-full max-h-56 object-contain rounded-xl cursor-pointer"
+                                onClick={() => setShowCnic(true)} />
+                        </div>
                     </div>
-                    <button type="button" onClick={() => setShowCertificate(true)}
-                        className="bg-[#264296] hover:bg-[#1f3578] text-white px-5 py-3 rounded-xl font-medium">
-                        View Certificate
-                    </button>
-                </div>
+                ) : (
+                    <div className="border border-dashed border-gray-300 rounded-2xl p-6 bg-slate-50 text-center text-gray-400 text-sm">
+                        No CNIC image uploaded
+                    </div>
+                )}
             </div>
 
             <hr />
@@ -211,9 +333,26 @@ export default function DoctorDetails() {
                 </div>
             )}
 
-            {/* Certificate modal */}
-            <CertificateModal isOpen={showCertificate} onClose={() => setShowCertificate(false)}
-                certificate={doctor.pmdc_certificate_url} />
+            {/* CNIC image modal */}
+            {showCnic && doctor.cnic_image_url && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+                    onClick={() => setShowCnic(false)}>
+                    <div className="relative max-w-3xl w-full mx-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="bg-white rounded-2xl overflow-hidden shadow-2xl">
+                            <div className="flex justify-between items-center px-6 py-4 border-b">
+                                <h2 className="text-lg font-bold text-slate-800">CNIC — {doctor.name_as_per_cnic}</h2>
+                                <button onClick={() => setShowCnic(false)}
+                                    className="p-2 rounded-lg hover:bg-gray-100 transition text-gray-500 font-bold text-xl leading-none">
+                                    ×
+                                </button>
+                            </div>
+                            <div className="p-4 bg-slate-50">
+                                <img src={doctor.cnic_image_url} alt="CNIC" className="w-full rounded-xl" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Approve modal */}
             {showApproveModal && (

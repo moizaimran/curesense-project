@@ -1,7 +1,27 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
-import { Eye, Search, CheckCircle, XCircle, Clock3, Users, UserCheck, UserX } from "lucide-react";
+import { Eye, Search, CheckCircle, XCircle, Clock3, Users, UserCheck, UserX, ShieldCheck, ShieldAlert, ShieldX, ShieldOff } from "lucide-react";
+
+const PMDC_BADGE = {
+    auto_approved: { label: "PMDC: Auto Approved", cls: "bg-green-100 text-green-700",   Icon: ShieldCheck },
+    flagged:       { label: "PMDC: Needs Review",  cls: "bg-yellow-100 text-yellow-700",  Icon: ShieldAlert },
+    rejected:      { label: "PMDC: Mismatch",      cls: "bg-red-100 text-red-700",        Icon: ShieldX     },
+    pending:       { label: "PMDC: Checking…",     cls: "bg-gray-100 text-gray-500",      Icon: ShieldOff   },
+};
+
+function PmdcBadge({ verification }) {
+    const decision = verification?.decision || "pending";
+    const { label, cls, Icon } = PMDC_BADGE[decision] || PMDC_BADGE.pending;
+    const pct = verification?.confidence != null
+        ? ` (${Math.round(verification.confidence * 100)}%)`
+        : "";
+    return (
+        <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold ${cls}`}>
+            <Icon size={13} />{label}{pct}
+        </span>
+    );
+}
 import DoctorStatCard from "../../components/admin/Doctors/DoctorStatCard";
 import doctorPlaceholder from "../../assets/images/doctor-avatar.jpg";
 import { selectToken } from "../../features/auth/authSlice";
@@ -128,8 +148,9 @@ export default function ManageDoctors() {
                                     <p className="text-sm text-blue-700 mt-1">PMDC: {doc.pmdc_number}</p>
                                 </div>
                             </div>
-                            <div className="flex flex-col items-end gap-4">
+                            <div className="flex flex-col items-end gap-3">
                                 <span className={`px-4 py-2 rounded-full text-sm font-semibold ${badge.cls}`}>{badge.label}</span>
+                                <PmdcBadge verification={doc.pmdc_verification} />
                                 <button onClick={() => navigate(`/admin/doctors/${doc._id}`)}
                                     className="flex items-center gap-2 bg-[#264296] hover:bg-[#1f3578] text-white px-5 py-3 rounded-xl transition">
                                     <Eye size={18} /> View Details

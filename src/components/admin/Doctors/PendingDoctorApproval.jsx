@@ -1,9 +1,29 @@
 import { useEffect, useState } from "react";
-import { UserCircle, Eye } from "lucide-react";
+import { UserCircle, Eye, ShieldCheck, ShieldAlert, ShieldX, ShieldOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
 import { selectToken } from "../../../features/auth/authSlice";
 import { api } from "../../../utils/api";
+
+const PMDC_BADGE = {
+    auto_approved: { label: "PMDC: Auto Approved", cls: "bg-green-100 text-green-700",  Icon: ShieldCheck },
+    flagged:       { label: "PMDC: Needs Review",  cls: "bg-yellow-100 text-yellow-700", Icon: ShieldAlert },
+    rejected:      { label: "PMDC: Mismatch",      cls: "bg-red-100 text-red-700",       Icon: ShieldX     },
+    pending:       { label: "PMDC: Checking…",     cls: "bg-gray-100 text-gray-500",     Icon: ShieldOff   },
+};
+
+function PmdcBadge({ verification }) {
+    const decision = verification?.decision || "pending";
+    const { label, cls, Icon } = PMDC_BADGE[decision] || PMDC_BADGE.pending;
+    const pct = verification?.confidence != null
+        ? ` (${Math.round(verification.confidence * 100)}%)`
+        : "";
+    return (
+        <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold ${cls}`}>
+            <Icon size={13} />{label}{pct}
+        </span>
+    );
+}
 
 export default function PendingDoctorApprovals() {
     const navigate = useNavigate();
@@ -66,10 +86,11 @@ export default function PendingDoctorApprovals() {
                                     </p>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-3">
+                            <div className="flex flex-col items-end gap-2">
                                 <span className="px-4 py-2 rounded-full text-sm font-semibold bg-yellow-100 text-yellow-700">
                                     Pending
                                 </span>
+                                <PmdcBadge verification={doctor.pmdc_verification} />
                                 <button
                                     onClick={() => navigate(`/admin/doctors/${doctor._id}`)}
                                     className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl"

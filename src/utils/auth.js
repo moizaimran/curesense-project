@@ -20,7 +20,7 @@ const FIREBASE_ERRORS = {
   "auth/user-not-found":         "Incorrect email or password.",
   "auth/invalid-email":          "Please enter a valid email address.",
   "auth/user-disabled":
-    "Your account is not active yet. Doctor accounts can sign in once an administrator has verified the PMDC registration; if your registration was not approved, please contact support.",
+    "This account has been disabled. Please contact support.",
   "auth/too-many-requests":      "Too many sign-in attempts. Please wait a few minutes and try again.",
   "auth/network-request-failed": "Network error — check your connection and try again.",
   "auth/popup-closed-by-user":   "Google sign-in was cancelled.",
@@ -87,6 +87,22 @@ async function finishPortalSignIn(credential, expectedRole) {
     await signOut(firebaseAuth).catch(() => {});
     throw new Error(ROLE_ERRORS[expectedRole]);
   }
+
+  // Doctor accounts require admin approval before they can use the portal.
+  if (expectedRole === "doctor" && user.doctor_profile?.status === "pending") {
+    await signOut(firebaseAuth).catch(() => {});
+    const err = new Error("Your account is pending admin verification of your PMDC registration. You will receive an email once approved.");
+    err.code = "PENDING_APPROVAL";
+    throw err;
+  }
+
+  if (expectedRole === "doctor" && user.doctor_profile?.status === "rejected") {
+    await signOut(firebaseAuth).catch(() => {});
+    const err = new Error("Your account application was not approved. Please contact support for more information.");
+    err.code = "ACCOUNT_REJECTED";
+    throw err;
+  }
+
   return { token, user };
 }
 

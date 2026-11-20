@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import AuthLayout from "../../components/auth/AuthLayout";
@@ -7,6 +7,7 @@ import PasswordInput from "../../components/auth/PasswordInput";
 import GoogleSignInButton from "../../components/auth/GoogleSignInButton";
 import { loginStart, loginSuccess, loginFailure, selectAuthLoading, selectAuthError } from "../../features/auth/authSlice";
 import { signInToPortal } from "../../utils/auth";
+import { api } from "../../utils/api";
 
 const DoctorLogin = () => {
     const navigate  = useNavigate();
@@ -16,8 +17,24 @@ const DoctorLogin = () => {
 
     const location = useLocation();
 
-    const [email,    setEmail]    = useState("");
-    const [password, setPassword] = useState("");
+    const [email,           setEmail]           = useState("");
+    const [password,        setPassword]        = useState("");
+    const [showRegistered,  setShowRegistered]  = useState(!!location.state?.registered);
+    const [showVerified,    setShowVerified]    = useState(
+        new URLSearchParams(location.search).get("verified") === "true"
+    );
+
+    useEffect(() => {
+        if (!showRegistered) return;
+        const t = setTimeout(() => setShowRegistered(false), 8000);
+        return () => clearTimeout(t);
+    }, [showRegistered]);
+
+    useEffect(() => {
+        if (!showVerified) return;
+        const t = setTimeout(() => setShowVerified(false), 8000);
+        return () => clearTimeout(t);
+    }, [showVerified]);
 
     const handleLogin = async (e) => {
         e.preventDefault();
@@ -28,6 +45,13 @@ const DoctorLogin = () => {
             dispatch(loginSuccess(session));
             navigate("/");
         } catch (err) {
+            // Email not yet verified — resend the link silently and redirect to the verify page
+            if (err.code === "EMAIL_NOT_VERIFIED" || err.status === 403) {
+                dispatch(loginFailure(null));
+                api.post("/api/doctors/resend-verification", { email }).catch(() => {});
+                navigate("/doctor/verify-email", { state: { email } });
+                return;
+            }
             dispatch(loginFailure(err.message));
         }
     };
@@ -40,9 +64,20 @@ const DoctorLogin = () => {
                     <p className="text-gray-500 mt-2">Sign in to access your CureSense dashboard</p>
                 </div>
 
-                {location.state?.registered && (
-                    <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-xl text-green-700 text-sm">
-                        Account created! Your profile is pending admin verification — you'll be able to log in once approved.
+                {showRegistered && (
+                    <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-xl text-green-700 text-sm flex justify-between items-start gap-2">
+                        <span>
+                            Account created! A verification link has been sent to your email — please check your inbox (and spam folder) and click it to verify your address.
+                            Your profile is also pending admin verification; you&apos;ll be able to log in once approved.
+                        </span>
+                        <button onClick={() => setShowRegistered(false)} className="text-green-500 hover:text-green-700 font-bold shrink-0 leading-none">×</button>
+                    </div>
+                )}
+
+                {showVerified && (
+                    <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm flex justify-between items-start gap-2">
+                        <span>Email verified successfully! You can sign in once an admin approves your account.</span>
+                        <button onClick={() => setShowVerified(false)} className="text-blue-500 hover:text-blue-700 font-bold shrink-0 leading-none">×</button>
                     </div>
                 )}
 
