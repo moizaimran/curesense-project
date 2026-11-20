@@ -106,12 +106,14 @@ async function createDoctorWithStatus(status) {
     provider_uid: uid,
   });
   const profile = await DoctorProfile.create({
-    user_id:     user._id,
-    pmdc_number: `PMDC-${status.toUpperCase()}-001`,
-    specialty:   "Cardiology",
-    gender:      "male",
-    location:    { city: "Lahore" },
-    contact:     { phone: "0300-0000001", email: user.email },
+    user_id:                 user._id,
+    pmdc_number:             `PMDC-${status.toUpperCase()}-001`,
+    name_as_per_cnic:        "Test Doctor",
+    father_name_as_per_cnic: "Test Father",
+    specialty:               "Cardiology",
+    gender:                  "male",
+    location:                { city: "Lahore" },
+    contact:                 { phone: "0300-0000001", email: user.email },
     status,
   });
   return { user, profile, token: makeToken(user) };

@@ -37,6 +37,11 @@ const DoctorProfileSchema = new mongoose.Schema(
       uppercase: true,
     },
 
+    // Full name as it appears on the doctor's CNIC — used for PMDC fuzzy matching
+    name_as_per_cnic:        { type: String, required: true, trim: true },
+    // Father's name as on CNIC — second data point for PMDC identity verification
+    father_name_as_per_cnic: { type: String, required: true, trim: true },
+
     specialty:     { type: String, required: true, trim: true },
     sub_specialty: { type: String, default: "",    trim: true },
 
@@ -66,7 +71,26 @@ const DoctorProfileSchema = new mongoose.Schema(
     // URL of the PMDC certificate uploaded during registration
     pmdc_certificate_url: { type: String, default: "" },
 
-    // ── Verification state ───────────────────────────────────────────────────
+    // URL of CNIC image uploaded during registration (stored in Cloudinary)
+    cnic_image_url: { type: String, default: "" },
+
+    // ── PMDC automated verification result (populated after registration) ────
+    pmdc_verification: {
+      pmdc_found:       { type: Boolean, default: null },
+      pmdc_name:        { type: String,  default: "" },
+      pmdc_father_name: { type: String,  default: "" },
+      pmdc_status:      { type: String,  default: "" },
+      confidence:       { type: Number,  default: null },
+      decision: {
+        type:    String,
+        enum:    ["auto_approved", "flagged", "rejected", "pending"],
+        default: "pending",
+      },
+      breakdown:  { type: mongoose.Schema.Types.Mixed, default: {} },
+      checked_at: { type: Date, default: null },
+    },
+
+    // ── Admin verification state ──────────────────────────────────────────────
     // pending  → awaiting admin review (default on signup)
     // verified → admin approved PMDC; appears in patient search
     // rejected → admin rejected; doctor cannot be booked

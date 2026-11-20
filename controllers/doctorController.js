@@ -61,6 +61,53 @@ const getDashboardSummary = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
+const { extractCnicFields } = require("../services/textractService");
+const { verifyDoctor }      = require("../services/pmdcService");
+const cloudinary            = require("../config/cloudinary");
+
+const extractCnic = asyncHandler(async (req, res) => {
+  const { cnic_image_base64 } = req.body;
+  if (!cnic_image_base64) {
+    return res.status(400).json({ error: "cnic_image_base64 is required" });
+  }
+
+  // Extract fields and upload to Cloudinary in parallel
+  const [extracted, uploaded] = await Promise.all([
+    extractCnicFields(cnic_image_base64),
+    cloudinary.uploader.upload(`data:image/jpeg;base64,${cnic_image_base64}`, {
+      folder:        "curesense/cnic",
+      resource_type: "image",
+    }),
+  ]);
+
+  res.json({ ...extracted, cnic_image_url: uploaded.secure_url });
+});
+
+// POST /api/doctors/verify-pmdc
+// Body: { pmdc_number, name_from_cnic, father_name_from_cnic, typed_name, specialty }
+// name_from_cnic / father_name_from_cnic come from /verify-cnic (Textract)
+const verifyPmdc = asyncHandler(async (req, res) => {
+  const { pmdc_number, name_from_cnic, father_name_from_cnic, typed_name, specialty } = req.body;
+  if (!pmdc_number)
+    return res.status(400).json({ error: "pmdc_number is required" });
+  if (!name_from_cnic || !father_name_from_cnic)
+    return res.status(400).json({ error: "name_from_cnic and father_name_from_cnic are required (run /verify-cnic first)" });
+
+  const result = await verifyDoctor({
+    pmdcNumber:        pmdc_number,
+    nameFromCnic:      name_from_cnic,
+    fatherNameFromCnic: father_name_from_cnic,
+    typedName:         typed_name || "",
+    specialty:         specialty  || "",
+  });
+  res.json(result);
+});
+
+const resendVerification = asyncHandler(async (req, res) => {
+  await doctorService.resendDoctorVerificationEmail(req.body.email);
+  res.json({ message: "Verification email sent" });
+});
+
 module.exports = {
   register,
   searchDoctors,
@@ -74,4 +121,7 @@ module.exports = {
   adminListDoctors,
   adminVerifyDoctor,
   getDashboardSummary,
+  extractCnic,
+  verifyPmdc,
+  resendVerification,
 };

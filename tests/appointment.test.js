@@ -54,13 +54,15 @@ async function buildConfirmedScenario() {
     role: "doctor", provider_uid: docUid.toString(),
   });
   const doctorProfile = await DoctorProfile.create({
-    user_id:     doctorUser._id,
-    pmdc_number: "PMDC-TEST-001",
-    specialty:   "Cardiology",
-    gender:      "male",
-    location:    { city: "Lahore" },
-    contact:     { phone: "0300-1111111", email: "doctor@test.com" },
-    status:      "verified",
+    user_id:                 doctorUser._id,
+    pmdc_number:             "PMDC-TEST-001",
+    name_as_per_cnic:        "Dr Test",
+    father_name_as_per_cnic: "Test Father",
+    specialty:               "Cardiology",
+    gender:                  "male",
+    location:                { city: "Lahore" },
+    contact:                 { phone: "0300-1111111", email: "doctor@test.com" },
+    status:                  "verified",
   });
   await DoctorAvailability.create({ doctor_id: doctorProfile._id });
 
@@ -373,13 +375,15 @@ async function buildPendingScenario() {
     role: "doctor", provider_uid: penDocUid.toString(),
   });
   const doctorProfile = await DoctorProfile.create({
-    user_id:     doctorUser._id,
-    pmdc_number: "PMDC-GATE-001",
-    specialty:   "Neurology",
-    gender:      "male",
-    location:    { city: "Karachi" },
-    contact:     { phone: "0300-2222222", email: "drgate@test.com" },
-    status:      "verified",
+    user_id:                 doctorUser._id,
+    pmdc_number:             "PMDC-GATE-001",
+    name_as_per_cnic:        "Dr Gate",
+    father_name_as_per_cnic: "Test Father",
+    specialty:               "Neurology",
+    gender:                  "male",
+    location:                { city: "Karachi" },
+    contact:                 { phone: "0300-2222222", email: "drgate@test.com" },
+    status:                  "verified",
   });
 
   const penAdminUid = new mongoose.Types.ObjectId();
@@ -543,13 +547,15 @@ async function buildBookingFixture() {
   const bkDocUid = new mongoose.Types.ObjectId();
   const du = await User.create({ _id: bkDocUid, name: "Dr Avail", email: "dravail@test.com", role: "doctor", provider_uid: bkDocUid.toString() });
   const dp = await DoctorProfile.create({
-    user_id:     du._id,
-    pmdc_number: "PMDC-AV-001",
-    specialty:   "Dermatology",
-    gender:      "male",
-    location:    { city: "Karachi" },
-    contact:     { phone: "0300-9999999", email: "dravail@test.com" },
-    status:      "verified",
+    user_id:                 du._id,
+    pmdc_number:             "PMDC-AV-001",
+    name_as_per_cnic:        "Dr Avail",
+    father_name_as_per_cnic: "Test Father",
+    specialty:               "Dermatology",
+    gender:                  "male",
+    location:                { city: "Karachi" },
+    contact:                 { phone: "0300-9999999", email: "dravail@test.com" },
+    status:                  "verified",
   });
 
   // Monday 09:00–17:00 recurring

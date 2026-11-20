@@ -20,6 +20,9 @@ const {
   adminListDoctors,
   adminVerifyDoctor,
   getDashboardSummary,
+  extractCnic,
+  verifyPmdc,
+  resendVerification,
 } = require("../controllers/doctorController");
 const { protect, authorize }         = require("../middleware/auth");
 const { authLimiter }                = require("../middleware/rateLimiter");
@@ -30,6 +33,13 @@ const { validateObjectId, validateDateQuery } = require("../middleware/validate"
 router.post("/register", authLimiter, register);
 router.get("/",          searchDoctors);
 router.get("/specialties", getSpecialties);   // public; must stay above "/:id"
+
+// ── CNIC extraction via GPT-4o Vision (doctor during registration) ───────────
+router.post("/verify-cnic",           authLimiter, extractCnic);
+// ── Resend email verification link ───────────────────────────────────────────
+router.post("/resend-verification",   authLimiter, resendVerification);
+// ── PMDC lookup + fuzzy match (call after /verify-cnic) ──────────────────────
+router.post("/verify-pmdc",  authLimiter, verifyPmdc);
 
 // ── Doctor-only (own profile / availability) — must come before /:id ─────────
 router.get("/me/profile",        protect, authorize("doctor"), getMyProfile);

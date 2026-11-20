@@ -64,6 +64,7 @@ async function buildDoctorUser(status = "verified", suffix = "") {
   });
   const profile = await DoctorProfile.create({
     user_id: user._id, pmdc_number: `PMDC-${suffix}`, specialty: "General",
+    name_as_per_cnic: `Dr ${suffix}`, father_name_as_per_cnic: "Test Father",
     gender: "male", location: { city: "Lahore" }, contact: { phone: "0300-111", email },
     status,
   });

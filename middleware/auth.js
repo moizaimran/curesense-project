@@ -19,7 +19,10 @@ const protect = asyncHandler(async (req, res, next) => {
     const decoded = await admin.auth().verifyIdToken(token);
 
     if (!decoded.email_verified) {
-      return res.status(403).json({ error: "Email not verified. Please click the link in your inbox." });
+      return res.status(403).json({
+        error: "Email not verified. Please click the link in your inbox.",
+        code:  "EMAIL_NOT_VERIFIED",
+      });
     }
 
     const user = await User.findOne({ provider_uid: decoded.uid });

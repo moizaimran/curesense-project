@@ -86,6 +86,7 @@ async function createDoctorWithAssignment(patient) {
   });
   const profile = await DoctorProfile.create({
     user_id: user._id, pmdc_number: "PMDC-IMG-001", specialty: "Radiology",
+    name_as_per_cnic: "Img Doctor", father_name_as_per_cnic: "Test Father",
     gender: "male", location: { city: "Karachi" }, contact: { phone: "0311-999", email },
     status: "verified",
   });
@@ -351,6 +352,7 @@ describe("GET /api/images/patient/:patientId — listPatientImages", () => {
     });
     const profile = await DoctorProfile.create({
       user_id: unrelatedDoctor._id, pmdc_number: "PMDC-99", specialty: "X",
+      name_as_per_cnic: "Dr2", father_name_as_per_cnic: "Test Father",
       gender: "male", location: { city: "X" }, contact: { phone: "0311", email: "dr2@test.com" },
     });
 

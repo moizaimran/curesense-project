@@ -3,6 +3,8 @@ const { AppError }       = require("../utils/errors");
 const { isStrongPassword, validateEmail, escapeRegex } = require("../utils/validation");
 const { normalizeCalendarDate, todayCalendarDate } = require("../utils/date");
 const { isValidSpecialty } = require("../constants/specialties");
+const { verifyDoctor }   = require("./pmdcService");
+const { sendVerificationLinkEmail, sendDoctorRegistrationEmail, sendDoctorApprovalEmail, sendDoctorRejectionEmail } = require("./emailService");
 
 const INVALID_SPECIALTY = "specialty must be one of the listed specialties (GET /api/doctors/specialties)";
 const User               = require("../models/User");
@@ -16,10 +18,13 @@ async function registerDoctor(body) {
     firstName, lastName, email, phone, password, confirmPassword,
     pmdc_number, specialty, sub_specialty, gender,
     hospital_clinic, experience_years, city, address, education,
+    name_as_per_cnic, father_name_as_per_cnic, cnic_image_url,
   } = body;
 
   if (!firstName || !lastName || !email || !phone || !password || !pmdc_number || !specialty || !gender || !city)
     throw new AppError("firstName, lastName, email, phone, password, pmdc_number, specialty, gender and city are required", 400);
+  if (!name_as_per_cnic || !father_name_as_per_cnic)
+    throw new AppError("name_as_per_cnic and father_name_as_per_cnic (as on your CNIC) are required", 400);
   if (!validateEmail(email))
     throw new AppError("Invalid email format", 400);
   if (!isStrongPassword(password))
@@ -35,14 +40,22 @@ async function registerDoctor(body) {
   if (await DoctorProfile.findOne({ pmdc_number: pmdc_number.toUpperCase() }))
     throw new AppError("PMDC number already registered", 409);
 
-  // Create Firebase account with disabled:true — matches pending status, blocks sign-in until admin approves
+  // Create Firebase account with disabled:false so Firebase's email-verification link handler works.
+  // Unapproved doctors are gated at the app layer: signInToPortal checks doctor_profile.status.
   let fbUser;
   try {
-    fbUser = await admin.auth().createUser({ email, password, emailVerified: false, disabled: true });
+    fbUser = await admin.auth().createUser({ email, password, emailVerified: false, disabled: false });
   } catch (fbErr) {
     if (fbErr.code === "auth/email-already-exists") throw new AppError("Email already registered", 409);
     throw fbErr;
   }
+
+  // Send email verification link immediately after Firebase account creation (fire-and-forget).
+  // continueUrl redirects the doctor back to the login page after they click the link.
+  const verifyRedirectUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/doctor/login?verified=true`;
+  admin.auth().generateEmailVerificationLink(email, { url: verifyRedirectUrl })
+    .then((link) => sendVerificationLinkEmail(email, link))
+    .catch((err) => console.error("[registerDoctor] verification email failed:", err.message));
 
   const name = `${firstName.trim()} ${lastName.trim()}`;
   let user;
@@ -56,16 +69,19 @@ async function registerDoctor(body) {
   let profile;
   try {
     profile = await DoctorProfile.create({
-      user_id:          user._id,
+      user_id:                user._id,
       pmdc_number,
+      name_as_per_cnic:        name_as_per_cnic.trim(),
+      father_name_as_per_cnic: father_name_as_per_cnic.trim(),
       specialty,
-      sub_specialty:    sub_specialty || "",
+      sub_specialty:          sub_specialty || "",
       gender,
-      location:         { city, address: address || "" },
-      contact:          { phone, email },
-      education:        Array.isArray(education) ? education : [],
-      experience_years: experience_years ? Number(experience_years) : 0,
-      hospital_clinic:  hospital_clinic || "",
+      location:               { city, address: address || "" },
+      contact:                { phone, email },
+      education:              Array.isArray(education) ? education : [],
+      experience_years:       experience_years ? Number(experience_years) : 0,
+      hospital_clinic:        hospital_clinic || "",
+      cnic_image_url:         cnic_image_url  || "",
     });
   } catch (err) {
     await User.findByIdAndDelete(user._id);
@@ -74,6 +90,34 @@ async function registerDoctor(body) {
   }
 
   await DoctorAvailability.create({ doctor_id: profile._id });
+
+  // Fire-and-forget — PMDC check runs in background after registration responds.
+  // Registration never fails because of PMDC being slow or unreachable.
+  verifyDoctor({
+    pmdcNumber:         pmdc_number,
+    nameFromCnic:       name_as_per_cnic,
+    fatherNameFromCnic: father_name_as_per_cnic,
+    typedName:          `${firstName.trim()} ${lastName.trim()}`,
+    specialty,
+  }).then((result) =>
+    DoctorProfile.findByIdAndUpdate(profile._id, {
+      pmdc_verification: {
+        pmdc_found:       result.pmdc_found,
+        pmdc_name:        result.pmdc_name        || "",
+        pmdc_father_name: result.pmdc_father_name || "",
+        pmdc_status:      result.pmdc_status      || "",
+        confidence:       result.confidence,
+        decision:         result.decision,
+        breakdown:        result.breakdown,
+        checked_at:       new Date(),
+      },
+    })
+  ).catch((err) => console.error("[registerDoctor] PMDC check failed:", err.message));
+
+  // Send registration confirmation email (fire-and-forget)
+  sendDoctorRegistrationEmail(email, name).catch((err) =>
+    console.error("[registerDoctor] registration email failed:", err.message)
+  );
 
   return {
     user: {
@@ -351,23 +395,34 @@ async function adminVerifyDoctor(id, { decision, rejection_reason }, verifiedByI
   if (!profile) throw new AppError("Doctor profile not found", 404);
   if (profile.status !== "pending") throw new AppError(`Doctor is already ${profile.status}`, 409);
 
+  const doctorUser = await User.findById(profile.user_id).select("provider_uid email name");
+
   if (decision === "approve") {
-    // Enable Firebase account first — if Firebase fails, we don't falsely mark approved in MongoDB.
-    // Admin review of the PMDC registration and contact email is the doctor's verification step,
-    // so approval also marks the email verified (protect() rejects unverified tokens).
-    const doctorUser = await User.findById(profile.user_id).select("provider_uid email");
-    if (doctorUser?.provider_uid) {
-      await admin.auth().updateUser(doctorUser.provider_uid, { disabled: false, emailVerified: true });
-    }
+    // Firebase account is already enabled from registration — nothing to change there.
+    // We do NOT auto-mark emailVerified; the doctor must still click the verification link.
     await User.findByIdAndUpdate(profile.user_id, { is_verified: true });
     profile.status      = "verified";
     profile.verified_by = verifiedById;
     profile.verified_at = new Date();
+
+    // Notify doctor their account is approved
+    if (doctorUser?.email) {
+      sendDoctorApprovalEmail(doctorUser.email, doctorUser.name || "Doctor").catch((err) =>
+        console.error("[adminVerifyDoctor] approval email failed:", err.message)
+      );
+    }
   } else {
     if (!rejection_reason?.trim()) throw new AppError("rejection_reason is required when rejecting", 400);
     // Leave Firebase account disabled on rejection — do not delete it
     profile.status           = "rejected";
     profile.rejection_reason = rejection_reason.trim();
+
+    // Notify doctor their account was rejected with reason
+    if (doctorUser?.email) {
+      sendDoctorRejectionEmail(doctorUser.email, doctorUser.name || "Doctor", rejection_reason.trim()).catch((err) =>
+        console.error("[adminVerifyDoctor] rejection email failed:", err.message)
+      );
+    }
   }
 
   await profile.save();
@@ -399,6 +454,20 @@ async function getDashboardSummary(profileId, requestingUser) {
   return { total_patients: totalPatients, ongoing, pending_new: pendingNew, completed };
 }
 
+// ── POST /api/doctors/resend-verification ────────────────────────────────────
+
+async function resendDoctorVerificationEmail(email) {
+  if (!email) throw new AppError("email is required", 400);
+
+  // Confirm a doctor account exists with this email before sending
+  const user = await User.findOne({ email: email.toLowerCase(), role: "doctor" });
+  if (!user) throw new AppError("No doctor account found with this email", 404);
+
+  const continueUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/doctor/login?verified=true`;
+  const link = await admin.auth().generateEmailVerificationLink(email.toLowerCase(), { url: continueUrl });
+  await sendVerificationLinkEmail(email.toLowerCase(), link);
+}
+
 module.exports = {
   registerDoctor,
   searchDoctors,
@@ -411,4 +480,5 @@ module.exports = {
   adminListDoctors,
   adminVerifyDoctor,
   getDashboardSummary,
+  resendDoctorVerificationEmail,
 };

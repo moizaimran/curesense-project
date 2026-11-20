@@ -34,16 +34,18 @@ const makeToken = (userId) =>
   jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "1d" });
 
 const VALID_DOCTOR_BODY = {
-  firstName:       "Amina",
-  lastName:        "Khan",
-  email:           "amina.khan@example.com",
-  phone:           "0300-1234567",
-  password:        "password1",
-  confirmPassword: "password1",
-  pmdc_number:     "PMDC-DOC-001",
-  specialty:       "Cardiologist",
-  gender:          "female",
-  city:            "Karachi",
+  firstName:               "Amina",
+  lastName:                "Khan",
+  name_as_per_cnic:        "Amina Khan",
+  father_name_as_per_cnic: "Hassan Khan",
+  email:                   "amina.khan@example.com",
+  phone:                   "0300-1234567",
+  password:                "password1",
+  confirmPassword:         "password1",
+  pmdc_number:             "PMDC-DOC-001",
+  specialty:               "Cardiologist",
+  gender:                  "female",
+  city:                    "Karachi",
 };
 
 async function createAdminUser() {
@@ -62,12 +64,14 @@ async function createDoctorDirect(status = "pending", suffix = "") {
     _id: uid, name: "Dr Direct", email, role: "doctor", provider_uid: uid.toString(),
   });
   const profile = await DoctorProfile.create({
-    user_id:     user._id,
-    pmdc_number: `PMDC-DIRECT-${suffix || "1"}`,
-    specialty:   "Orthopedics",
-    gender:      "male",
-    location:    { city: "Lahore" },
-    contact:     { phone: "0311-1111111", email },
+    user_id:                 user._id,
+    pmdc_number:             `PMDC-DIRECT-${suffix || "1"}`,
+    name_as_per_cnic:        "Dr Direct",
+    father_name_as_per_cnic: "Test Father",
+    specialty:               "Orthopedics",
+    gender:                  "male",
+    location:                { city: "Lahore" },
+    contact:                 { phone: "0311-1111111", email },
     status,
   });
   await DoctorAvailability.create({ doctor_id: profile._id });
@@ -224,7 +228,7 @@ describe("PATCH /api/doctors/admin/:id/verify", () => {
     expect(updated.verified_at).not.toBeNull();
   });
 
-  test("approval enables the Firebase account, marks its email verified and sets User.is_verified", async () => {
+  test("approval sets User.is_verified in MongoDB; Firebase account is already enabled from registration", async () => {
     const { getAuth } = require("firebase-admin/auth");
     const { token: adminToken } = await createAdminUser();
     const { user, profile } = await createDoctorDirect("pending", "7");
@@ -236,7 +240,8 @@ describe("PATCH /api/doctors/admin/:id/verify", () => {
       .send({ decision: "approve" });
 
     expect(res.status).toBe(200);
-    expect(getAuth().updateUser).toHaveBeenCalledWith(user.provider_uid, { disabled: false, emailVerified: true });
+    // Firebase account was created enabled — admin approval only updates MongoDB, no Firebase call needed.
+    expect(getAuth().updateUser).not.toHaveBeenCalled();
     expect((await User.findById(user._id)).is_verified).toBe(true);
   });
 
