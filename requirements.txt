@@ -1,9 +1,10 @@
 flask
 flask-cors
+gunicorn
 pyngrok
 openai-whisper
 gliner
-openai
+boto3
 faiss-cpu
 rank_bm25
 tiktoken
