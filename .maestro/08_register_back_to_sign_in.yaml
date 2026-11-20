@@ -1,0 +1,21 @@
+appId: com.curesense.patient
+# The "Sign In" link on the registration form returns to the new sign-in start screen (app/index.tsx)
+---
+- launchApp
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*Open debugger to view warnings.*"
+    commands:
+      - tapOn:
+          point: "92%,93%"
+- tapOn: ".*Create one.*"
+- assertVisible: ".*Create your account.*"
+- scrollUntilVisible:
+    element: ".*Sign In.*"
+- tapOn: ".*Sign In.*"
+- assertVisible: "Sign in"
+- assertVisible: ".*Continue with Google.*"
+- assertVisible: ".*Create one.*"
+- assertNotVisible: ".*Welcome Back.*"
+- takeScreenshot: 08_register_back_to_sign_in

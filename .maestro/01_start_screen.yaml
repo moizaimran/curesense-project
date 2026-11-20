@@ -1,0 +1,19 @@
+appId: com.curesense.patient
+# The app opens on the sign-in screen (app/index.tsx)
+---
+- launchApp
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*Open debugger to view warnings.*"
+    commands:
+      - tapOn:
+          point: "92%,93%"
+- assertVisible: ".*CureSense.*"
+- assertVisible: "Sign in"
+- assertVisible: ".*Enter your details to continue.*"
+- assertVisible: ".*Sign In.*"
+- assertVisible: ".*Continue with Google.*"
+- assertVisible: ".*Forgot password?.*"
+- assertVisible: ".*Create one.*"
+- takeScreenshot: 01_start_screen

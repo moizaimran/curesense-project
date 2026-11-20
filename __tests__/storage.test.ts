@@ -11,6 +11,11 @@ jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn().mockResolvedValue(undefined),
 }));
 
+// storage.ts imports the Firebase client for getAuthToken; Jest cannot parse the firebase ESM bundle
+jest.mock('@/utils/firebaseClient', () => ({
+  firebaseAuth: { currentUser: null },
+}));
+
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';

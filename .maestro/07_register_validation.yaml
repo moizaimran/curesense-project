@@ -1,0 +1,20 @@
+appId: com.curesense.patient
+# Submitting an empty registration form shows field errors and creates no account
+---
+- launchApp
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*Open debugger to view warnings.*"
+    commands:
+      - tapOn:
+          point: "92%,93%"
+- tapOn: ".*Create one.*"
+- assertVisible: ".*Create your account.*"
+- scrollUntilVisible:
+    element: ".*Create Account.*"
+- tapOn: ".*Create Account.*"
+- scrollUntilVisible:
+    element: ".*Full name is required..*"
+    direction: UP
+- takeScreenshot: 07_register_validation

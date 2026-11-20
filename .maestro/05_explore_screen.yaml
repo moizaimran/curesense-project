@@ -1,0 +1,18 @@
+appId: com.curesense.patient
+# "Explore CureSense" opens the product overview without signing in
+---
+- launchApp
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*Open debugger to view warnings.*"
+    commands:
+      - tapOn:
+          point: "92%,93%"
+- scrollUntilVisible:
+    element: ".*Explore CureSense.*"
+- tapOn: ".*Explore CureSense.*"
+- assertVisible: ".*AI-POWERED HEALTHCARE.*"
+- scrollUntilVisible:
+    element: ".*What is CureSense\\?.*"
+- takeScreenshot: 05_explore_screen

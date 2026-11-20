@@ -1,0 +1,16 @@
+appId: com.curesense.patient
+# "Create one" opens the registration form
+---
+- launchApp
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*Open debugger to view warnings.*"
+    commands:
+      - tapOn:
+          point: "92%,93%"
+- tapOn: ".*Create one.*"
+- assertVisible: ".*Create your account.*"
+- assertVisible: ".*Full Name \\*.*"
+- assertVisible: ".*Email \\*.*"
+- takeScreenshot: 02_start_to_register

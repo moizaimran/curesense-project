@@ -76,7 +76,7 @@ export default function ProfileScreen() {
       const patient_id = await Storage.getItemAsync("patient_id");
 
       if (!token) {
-        router.replace("/(auth)/login" as any);
+        router.replace("/" as any);
         return;
       }
 
