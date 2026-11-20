@@ -63,7 +63,7 @@ describe("QueryPanel — sending a message", () => {
 
     mountPanel(existingMessages);
 
-    const textarea = screen.getByPlaceholderText(/type a message/i);
+    const textarea = screen.getByPlaceholderText(/write your query/i);
     await user.type(textarea, "See you at 9 AM");
     // buttons[0] = close X, buttons[1] = send; both have only icon children (no text)
     await user.click(screen.getAllByRole("button")[1]);
@@ -92,7 +92,7 @@ describe("QueryPanel — sending a message", () => {
     api.post.mockResolvedValueOnce({ query: newMsg });
 
     mountPanel([]);
-    const textarea = screen.getByPlaceholderText(/type a message/i);
+    const textarea = screen.getByPlaceholderText(/write your query/i);
     await user.type(textarea, "Hello{Enter}");
 
     await waitFor(() => expect(api.post).toHaveBeenCalled());

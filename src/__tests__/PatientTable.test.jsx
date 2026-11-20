@@ -1,22 +1,30 @@
-import { describe, test, expect, vi } from "vitest";
+import { describe, test, expect, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PatientTable from "../components/Patients/PatientTable";
 import { renderWithProviders } from "../test-utils";
 
-// Minimal patient fixtures — shape must match what PatientTable renders
-const patients = [
-  { id: 1, name: "Alice Smith",   age: 30, gender: "Female", diagnosis: "Hypertension", severity: "High",   status: "Pending",  hasImage: true,  uploaded: "2026-01-01" },
-  { id: 2, name: "Bob Jones",     age: 45, gender: "Male",   diagnosis: "Diabetes",     severity: "Medium", status: "Reviewed", hasImage: false, uploaded: "2026-01-02" },
-  { id: 3, name: "Carol Winters", age: 60, gender: "Female", diagnosis: "Asthma",       severity: "Low",    status: "Pending",  hasImage: true,  uploaded: "2026-01-03" },
-  { id: 4, name: "Dave Kim",      age: 25, gender: "Male",   diagnosis: "Flu",          severity: "Low",    status: "Reviewed", hasImage: false, uploaded: "2026-01-04" },
-  { id: 5, name: "Eve Ali",       age: 55, gender: "Female", diagnosis: "Migraine",     severity: "High",   status: "Pending",  hasImage: true,  uploaded: "2026-01-05" },
-  { id: 6, name: "Frank Hassan",  age: 40, gender: "Male",   diagnosis: "Back pain",    severity: "Medium", status: "Reviewed", hasImage: false, uploaded: "2026-01-06" },
+// PatientTable loads the doctor's appointments from the API (it no longer reads fake Redux data)
+vi.mock("../utils/api", () => ({ api: { get: vi.fn() } }));
+import { api } from "../utils/api";
+
+const TOKEN = "fake-token";
+
+// Appointment fixtures — shape matches GET /api/appointments/doctor (patient_id is populated)
+const slot = { date: "2026-10-20T00:00:00Z", start_time: "09:00", end_time: "09:30" };
+const appointments = [
+  { _id: "a1", status: "confirmed", requested_slot: slot, patient_id: { name: "Alice Smith",   gender: "female", dob: "1996-01-01" } },
+  { _id: "a2", status: "completed", requested_slot: slot, patient_id: { name: "Bob Jones",     gender: "male",   dob: "1981-01-01" } },
+  { _id: "a3", status: "cancelled", requested_slot: slot, patient_id: { name: "Carol Winters", gender: "female", dob: "1966-01-01" } },
+  { _id: "a4", status: "no_show",   requested_slot: slot, patient_id: { name: "Dave Kim",      gender: "male",   dob: "2001-01-01" } },
+  { _id: "a5", status: "confirmed", requested_slot: null, patient_id: { name: "Eve Ali",       gender: "female", dob: null } },
+  { _id: "a6", status: "completed", requested_slot: slot, patient_id: { name: "Frank Hassan",  gender: "male",   dob: "1986-01-01" } },
 ];
 
-const preloadedState = { patients: { patients } };
+const preloadedState = { auth: { token: TOKEN, user: { role: "doctor" } } };
 
-function mountTable(props = {}) {
+function mountTable(props = {}, data = appointments) {
+  api.get.mockResolvedValue(data);
   const defaults = { search: "", statusFilter: "All", currentPage: 1, setCurrentPage: vi.fn() };
   return renderWithProviders(
     <PatientTable {...defaults} {...props} />,
@@ -24,125 +32,136 @@ function mountTable(props = {}) {
   );
 }
 
-describe("PatientTable — filtering and rendering", () => {
-  test("renders all patients on page 1 (first 5 of 6)", () => {
+beforeEach(() => vi.clearAllMocks());
+
+describe("PatientTable — loading data", () => {
+  test("fetches the doctor's appointments with the auth token", async () => {
     mountTable();
-    // Page 1 shows the first patientsPerPage (5) patients
-    expect(screen.getByText("Alice Smith")).toBeInTheDocument();
-    expect(screen.getByText("Bob Jones")).toBeInTheDocument();
+    await screen.findByText("Alice Smith");
+    expect(api.get).toHaveBeenCalledWith("/api/appointments/doctor", TOKEN);
+  });
+
+  test("statusFilter 'Ongoing' asks the API for confirmed appointments", async () => {
+    mountTable({ statusFilter: "Ongoing" });
+    await screen.findByText("Alice Smith");
+    expect(api.get).toHaveBeenCalledWith("/api/appointments/doctor?status=confirmed", TOKEN);
+  });
+
+  test("statusFilter 'Completed' asks the API for completed appointments", async () => {
+    mountTable({ statusFilter: "Completed" });
+    await screen.findByText("Alice Smith");
+    expect(api.get).toHaveBeenCalledWith("/api/appointments/doctor?status=completed", TOKEN);
+  });
+
+  test("shows the API error message when loading fails", async () => {
+    api.get.mockRejectedValueOnce(new Error("Server unavailable"));
+    renderWithProviders(
+      <PatientTable search="" statusFilter="All" currentPage={1} setCurrentPage={vi.fn()} />,
+      { initialState: preloadedState }
+    );
+    expect(await screen.findByText("Server unavailable")).toBeInTheDocument();
+  });
+
+  test("shows an empty state when the doctor has no patients", async () => {
+    mountTable({}, []);
+    expect(await screen.findByText("No patients found.")).toBeInTheDocument();
+  });
+});
+
+describe("PatientTable — filtering and rendering", () => {
+  test("renders the first 5 of 6 patients on page 1", async () => {
+    mountTable();
+    expect(await screen.findByText("Alice Smith")).toBeInTheDocument();
+    expect(screen.getByText("Eve Ali")).toBeInTheDocument();
     expect(screen.queryByText("Frank Hassan")).not.toBeInTheDocument();
   });
 
-  test("search by name narrows the list", () => {
+  test("search by name narrows the list", async () => {
     mountTable({ search: "Alice" });
-    expect(screen.getByText("Alice Smith")).toBeInTheDocument();
+    expect(await screen.findByText("Alice Smith")).toBeInTheDocument();
     expect(screen.queryByText("Bob Jones")).not.toBeInTheDocument();
   });
 
-  test("search is case-insensitive", () => {
+  test("search is case-insensitive", async () => {
     mountTable({ search: "alice" });
-    expect(screen.getByText("Alice Smith")).toBeInTheDocument();
+    expect(await screen.findByText("Alice Smith")).toBeInTheDocument();
   });
 
-  test("statusFilter 'Pending' shows only Pending patients", () => {
-    mountTable({ statusFilter: "Pending" });
-    expect(screen.getByText("Alice Smith")).toBeInTheDocument();
-    expect(screen.queryByText("Bob Jones")).not.toBeInTheDocument();
-  });
-
-  test("statusFilter 'Reviewed' shows only Reviewed patients", () => {
-    mountTable({ statusFilter: "Reviewed" });
-    expect(screen.getByText("Bob Jones")).toBeInTheDocument();
-    expect(screen.queryByText("Alice Smith")).not.toBeInTheDocument();
-  });
-
-  test("statusFilter 'All' shows every patient (up to page size)", () => {
-    mountTable({ statusFilter: "All" });
-    expect(screen.getByText("Alice Smith")).toBeInTheDocument();
-    expect(screen.getByText("Bob Jones")).toBeInTheDocument();
-  });
-
-  test("severity badge 'High' gets red styling", () => {
+  test("status 'confirmed' shows a blue 'Ongoing' badge", async () => {
     mountTable({ search: "Alice" });
-    const badge = screen.getByText("High");
-    expect(badge.className).toMatch(/red/);
+    expect((await screen.findByText("Ongoing")).className).toMatch(/blue/);
   });
 
-  test("severity badge 'Medium' gets orange styling", () => {
+  test("status 'completed' shows a green 'Completed' badge", async () => {
     mountTable({ search: "Bob" });
-    const badge = screen.getByText("Medium");
-    expect(badge.className).toMatch(/orange/);
+    expect((await screen.findByText("Completed")).className).toMatch(/green/);
   });
 
-  test("severity badge 'Low' gets green styling", () => {
+  test("status 'cancelled' shows a red 'Cancelled' badge", async () => {
     mountTable({ search: "Carol" });
-    const badge = screen.getByText("Low");
-    expect(badge.className).toMatch(/green/);
+    expect((await screen.findByText("Cancelled")).className).toMatch(/red/);
   });
 
-  test("patient with hasImage shows 'Available'", () => {
+  test("slot is shown as date · start–end", async () => {
     mountTable({ search: "Alice" });
-    expect(screen.getByText(/Available/)).toBeInTheDocument();
+    expect(await screen.findByText(/09:00–09:30/)).toBeInTheDocument();
   });
 
-  test("patient without hasImage shows em-dash placeholder", () => {
-    mountTable({ search: "Bob" });
-    expect(screen.getByText("—")).toBeInTheDocument();
+  test("missing date of birth and slot show an em-dash", async () => {
+    mountTable({ search: "Eve" });
+    await screen.findByText("Eve Ali");
+    expect(screen.getAllByText("—")).toHaveLength(2);
   });
 });
 
 describe("PatientTable — pagination", () => {
-  test("Previous button disabled on page 1", () => {
+  test("Previous button disabled on page 1", async () => {
     mountTable({ currentPage: 1 });
-    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Previous" })).toBeDisabled();
   });
 
-  test("Next button disabled on last page", () => {
+  test("Next button disabled on last page", async () => {
     // 6 patients / 5 per page = 2 pages; page 2 is last
     mountTable({ currentPage: 2 });
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Next" })).toBeDisabled();
   });
 
-  test("clicking Next calls setCurrentPage with page + 1", async () => {
+  test("clicking Next moves to page + 1", async () => {
     const user = userEvent.setup();
     const setCurrentPage = vi.fn();
     mountTable({ currentPage: 1, setCurrentPage });
-    await user.click(screen.getByRole("button", { name: "Next" }));
-    expect(setCurrentPage).toHaveBeenCalledWith(2);
+    await user.click(await screen.findByRole("button", { name: "Next" }));
+    // setCurrentPage receives an updater function
+    const updater = setCurrentPage.mock.calls[0][0];
+    expect(updater(1)).toBe(2);
   });
 
-  test("clicking Previous calls setCurrentPage with page - 1", async () => {
+  test("clicking Previous moves to page - 1", async () => {
     const user = userEvent.setup();
     const setCurrentPage = vi.fn();
     mountTable({ currentPage: 2, setCurrentPage });
-    await user.click(screen.getByRole("button", { name: "Previous" }));
-    expect(setCurrentPage).toHaveBeenCalledWith(1);
+    await user.click(await screen.findByRole("button", { name: "Previous" }));
+    const updater = setCurrentPage.mock.calls[0][0];
+    expect(updater(2)).toBe(1);
   });
 
-  test("page number buttons are rendered", () => {
+  test("page number buttons are rendered and the current one is blue", async () => {
     mountTable({ currentPage: 1 });
-    expect(screen.getByRole("button", { name: "1" })).toBeInTheDocument();
+    expect((await screen.findByRole("button", { name: "1" })).className).toMatch(/bg-blue-600/);
     expect(screen.getByRole("button", { name: "2" })).toBeInTheDocument();
-  });
-
-  test("current page button has blue background class", () => {
-    mountTable({ currentPage: 1 });
-    expect(screen.getByRole("button", { name: "1" }).className).toMatch(/bg-blue-600/);
   });
 
   test("clicking a page number calls setCurrentPage", async () => {
     const user = userEvent.setup();
     const setCurrentPage = vi.fn();
     mountTable({ currentPage: 1, setCurrentPage });
-    await user.click(screen.getByRole("button", { name: "2" }));
+    await user.click(await screen.findByRole("button", { name: "2" }));
     expect(setCurrentPage).toHaveBeenCalledWith(2);
   });
 
-  test("single-page result hides both navigation buttons (no Next/Prev needed)", () => {
-    // With only one patient and 5 per page, there's only 1 page
+  test("single-page result disables both Previous and Next", async () => {
     mountTable({ search: "Alice", currentPage: 1 });
-    // Both buttons exist but Prev is disabled, Next is disabled
-    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
   });
 });

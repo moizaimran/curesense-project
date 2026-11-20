@@ -52,6 +52,10 @@ export async function mockPortalLogin(page: Page, user: PortalUser) {
   const uid = `fb-${user.id}`;
   const idToken = fakeIdToken(uid, user.email);
 
+  // Requests a test does not mock must never reach a locally running backend: it would reject the fake
+  // token with 401 and the app would sign out. Registered first, so every later mock takes precedence.
+  await page.route('http://localhost:5000/**', route => route.abort());
+
   await page.route(IDENTITY_TOOLKIT, async route => {
     if (await preflightOk(route)) return;
     const url = route.request().url();
