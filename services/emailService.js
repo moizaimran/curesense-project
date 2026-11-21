@@ -72,6 +72,10 @@ function _linkEmailHtml(link, type) {
 async function sendVerificationLinkEmail(toEmail, link) {
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
     logger.warn("SMTP_USER or SMTP_PASS not set — skipping email send");
+    // Dev fallback: print the link so it can be opened manually (never in production).
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`\n[DEV] Email verification link for ${toEmail}:\n${link}\n`);
+    }
     return;
   }
   await transporter.sendMail({

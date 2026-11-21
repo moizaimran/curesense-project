@@ -133,14 +133,68 @@ async function registerDoctor(body) {
 
 // ── GET /api/doctors ──────────────────────────────────────────────────────────
 
+// Day-of-week (0 = Sunday) for a YYYY-MM-DD string, timezone-independent.
+function dayOfWeek(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+// DoctorProfile ids that are working on `dateStr`: either a weekly slot on
+// that weekday with no day-off exception, or an extra-session exception.
+async function doctorIdsAvailableOn(dateStr) {
+  const dow = dayOfWeek(dateStr);
+  const rows = await DoctorAvailability.find({
+    $or: [
+      { "weekly_schedule.day_of_week": dow },
+      { exceptions: { $elemMatch: { date: dateStr, available: true } } },
+    ],
+  }).select("doctor_id weekly_schedule exceptions").lean();
+
+  return rows
+    .filter((r) => {
+      const exc = (r.exceptions || []).find((e) => e.date === dateStr);
+      if (exc) return exc.available;
+      return (r.weekly_schedule || []).some((w) => w.day_of_week === dow);
+    })
+    .map((r) => r.doctor_id);
+}
+
+const DOCTOR_SORTS = {
+  experience: { experience_years: -1 },
+  newest:     { created_at: -1 },
+  rating:     { "rating.average": -1, "rating.count": -1 },
+};
+
 async function searchDoctors(query) {
   const {
-    specialty, sub_specialty, gender, city, hospital_clinic,
-    min_experience, max_experience, education_degree,
+    q, specialty, sub_specialty, gender, city, hospital_clinic,
+    min_experience, max_experience, education_degree, available_on, min_rating,
+    sort = "experience",
     page = 1, limit = 20,
   } = query;
 
   const filter = { status: "verified" };
+
+  // Free-text search across doctor name, specialty and hospital
+  if (q) {
+    const rx = { $regex: escapeRegex(q), $options: "i" };
+    const users = await User.find({ name: rx, role: "doctor" }).select("_id").lean();
+    filter.$or = [
+      { user_id: { $in: users.map((u) => u._id) } },
+      { specialty: rx },
+      { hospital_clinic: rx },
+    ];
+  }
+
+  const availableDate = normalizeCalendarDate(available_on);
+  if (available_on && !availableDate) throw new AppError("available_on must be YYYY-MM-DD", 400);
+  if (availableDate) filter._id = { $in: await doctorIdsAvailableOn(availableDate) };
+
+  if (min_rating) {
+    const r = Number(min_rating);
+    if (!(r >= 1 && r <= 5)) throw new AppError("min_rating must be between 1 and 5", 400);
+    filter["rating.average"] = { $gte: r };
+  }
   if (specialty)       filter.specialty              = { $regex: escapeRegex(specialty),       $options: "i" };
   if (sub_specialty)   filter.sub_specialty          = { $regex: escapeRegex(sub_specialty),   $options: "i" };
   if (gender)          filter.gender                 = gender;
@@ -158,7 +212,7 @@ async function searchDoctors(query) {
   const docs  = await DoctorProfile.find(filter)
     .select("-pmdc_certificate_url -rejection_reason -verified_by")
     .populate("user_id", "name")
-    .sort({ experience_years: -1 })
+    .sort(DOCTOR_SORTS[sort] || DOCTOR_SORTS.experience)
     .skip(skip)
     .limit(Number(limit));
 
@@ -381,7 +435,11 @@ async function adminListDoctors({ status, page = 1, limit = 50 } = {}) {
   const filter = status ? { status } : {};
   const skip   = (Number(page) - 1) * Number(limit);
   const total  = await DoctorProfile.countDocuments(filter);
-  const docs   = await DoctorProfile.find(filter).sort({ created_at: -1 }).skip(skip).limit(Number(limit));
+  const docs   = await DoctorProfile.find(filter)
+    .populate("user_id", "name")
+    .sort({ created_at: -1 })
+    .skip(skip)
+    .limit(Number(limit));
   return { total, page: Number(page), results: docs };
 }
 

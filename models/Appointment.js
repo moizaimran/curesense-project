@@ -197,6 +197,13 @@ const AppointmentSchema = new mongoose.Schema(
       default: null,
     },
 
+    // When the doctor marked the case completed ("patient treated").
+    // Older completed cases have null here; stats fall back to the slot date.
+    completed_at: {
+      type: Date,
+      default: null,
+    },
+
     rejection_reason: {
       type: String,
       default: "",

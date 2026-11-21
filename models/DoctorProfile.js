@@ -102,6 +102,13 @@ const DoctorProfileSchema = new mongoose.Schema(
     rejection_reason: { type: String, default: "" },
     verified_by:      { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     verified_at:      { type: Date, default: null },
+
+    // ── Rating summary (kept in sync by services/reviewService.js) ────────────
+    // Average 1–5 stars from patients; count = number of reviews.
+    rating: {
+      average: { type: Number, default: 0, min: 0, max: 5 },
+      count:   { type: Number, default: 0, min: 0 },
+    },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );
@@ -109,5 +116,6 @@ const DoctorProfileSchema = new mongoose.Schema(
 // Fast lookup by specialty for patient search
 DoctorProfileSchema.index({ specialty: 1, status: 1 });
 DoctorProfileSchema.index({ "location.city": 1 });
+DoctorProfileSchema.index({ "rating.average": -1 });
 
 module.exports = mongoose.model("DoctorProfile", DoctorProfileSchema);

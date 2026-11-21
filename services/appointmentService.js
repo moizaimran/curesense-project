@@ -6,6 +6,9 @@ const DoctorAvailability      = require("../models/DoctorAvailability");
 const PatientDoctorAssignment = require("../models/PatientDoctorAssignment");
 const Appointment             = require("../models/Appointment");
 const Report                  = require("../models/Report");
+const Patient                 = require("../models/Patient");
+const User                    = require("../models/User");
+const { escapeRegex }         = require("../utils/validation");
 const cloudinary              = require("../config/cloudinary");
 
 const QUERY_MAX_CHARS    = 2000;
@@ -200,19 +203,76 @@ async function getDoctorAppointments(userId, query) {
   if (status) filter.status = status;
 
   return Appointment.find(filter)
-    .populate("patient_id", "name dob gender contact")
+    .populate("patient_id", "name dob gender contact rating")
     .sort({ "requested_slot.date": -1 });
 }
 
 // ── GET /api/admin/appointments ───────────────────────────────────────────────
 
-async function adminGetAppointments({ status = "pending_admin_review", page = 1, limit = 50 } = {}) {
+const APPOINTMENT_STATUSES = Appointment.schema.path("status").enumValues;
+
+async function adminGetAppointments({
+  status = "pending_admin_review", search, specialty, doctor_id,
+  date_from, date_to, page = 1, limit = 50,
+} = {}) {
+  const filter = {};
+
+  // status: a single value, a comma-separated list, or "all"
+  if (status && status !== "all") {
+    const list = String(status).split(",").map((s) => s.trim()).filter(Boolean);
+    const bad  = list.filter((s) => !APPOINTMENT_STATUSES.includes(s));
+    if (bad.length) throw new AppError(`Invalid status: ${bad.join(", ")}`, 400);
+    filter.status = list.length === 1 ? list[0] : { $in: list };
+  }
+
+  // Requested-slot date range (slot dates are YYYY-MM-DD strings, so string compare works)
+  const from = normalizeCalendarDate(date_from);
+  const to   = normalizeCalendarDate(date_to);
+  if (from || to) {
+    filter["requested_slot.date"] = {};
+    if (from) filter["requested_slot.date"].$gte = from;
+    if (to)   filter["requested_slot.date"].$lte = to;
+  }
+
+  if (doctor_id) {
+    if (!require("mongoose").isValidObjectId(doctor_id)) throw new AppError("doctor_id is not a valid id", 400);
+    filter.doctor_id = doctor_id;
+  }
+
+  // Specialty narrows the doctor set
+  let doctorIds = null;
+  if (specialty) {
+    const docs = await DoctorProfile.find({ specialty: { $regex: escapeRegex(specialty), $options: "i" } }).select("_id").lean();
+    doctorIds = docs.map((d) => d._id);
+  }
+
+  // Free-text search on patient name / email or doctor name
+  if (search) {
+    const rx = { $regex: escapeRegex(search), $options: "i" };
+    const [patients, users] = await Promise.all([
+      Patient.find({ $or: [{ name: rx }, { "contact.email": rx }] }).select("_id").lean(),
+      User.find({ name: rx, role: "doctor" }).select("_id").lean(),
+    ]);
+    const nameDocs = await DoctorProfile.find({ user_id: { $in: users.map((u) => u._id) } }).select("_id").lean();
+    filter.$or = [
+      { patient_id: { $in: patients.map((p) => p._id) } },
+      { doctor_id:  { $in: nameDocs.map((d) => d._id) } },
+    ];
+  }
+
+  if (doctorIds) {
+    filter.doctor_id = filter.doctor_id
+      ? { $in: doctorIds.filter((id) => String(id) === String(filter.doctor_id)) }
+      : { $in: doctorIds };
+  }
+
   const skip  = (Number(page) - 1) * Number(limit);
-  const total = await Appointment.countDocuments({ status });
-  const docs  = await Appointment.find({ status })
-    .populate("patient_id", "name dob gender contact")
+  const total = await Appointment.countDocuments(filter);
+  const docs  = await Appointment.find(filter)
+    .populate("patient_id", "name dob gender contact rating")
     .populate({ path: "doctor_id", select: "specialty hospital_clinic pmdc_number location contact user_id", populate: { path: "user_id", select: "name" } })
-    .sort({ created_at: 1 })
+    // Pending queue: oldest request first. Everything else: latest slot first.
+    .sort(filter.status === "pending_admin_review" ? { created_at: 1 } : { "requested_slot.date": -1, created_at: -1 })
     .skip(skip)
     .limit(Number(limit));
   return { total, page: Number(page), results: docs };
@@ -412,7 +472,7 @@ async function completeAppointment(appointmentId, userId) {
     throw new AppError(`Cannot complete an appointment with status '${appointment.status}'`, 409);
 
   const updated = await Appointment.findByIdAndUpdate(
-    appointment._id, { $set: { status: "completed" } }, { new: true }
+    appointment._id, { $set: { status: "completed", completed_at: new Date() } }, { new: true }
   );
   return { appointment: updated };
 }

@@ -60,13 +60,56 @@ async function getPatientReports(patientId, user) {
   return reports.map((r) => viewFor(user, r.toObject()));
 }
 
-async function listPatients({ page = 1, limit = 20, search } = {}) {
+// Date `years` years before now — patients born on/before this are at least `years` old.
+function yearsAgo(years) {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - years);
+  return d;
+}
+
+function parseDate(value, name) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) throw new AppError(`${name} must be a valid date`, 400);
+  return d;
+}
+
+async function listPatients({
+  page = 1, limit = 20, search, gender, min_age, max_age,
+  profile_complete, registered_from, registered_to,
+} = {}) {
   const filter = {};
   if (search) {
+    const rx = { $regex: escapeRegex(search), $options: "i" };
     filter.$or = [
-      { name:            { $regex: escapeRegex(search), $options: "i" } },
-      { "contact.email": { $regex: escapeRegex(search), $options: "i" } },
+      { name:            rx },
+      { "contact.email": rx },
+      { "contact.phone": rx },
     ];
+  }
+
+  if (gender) filter.gender = { $regex: `^${escapeRegex(gender)}$`, $options: "i" };
+
+  if (min_age || max_age) {
+    filter.dob = {};
+    // older than min_age  → born on/before (now - min_age)
+    if (min_age) filter.dob.$lte = yearsAgo(Number(min_age));
+    // younger than max_age+1 → born after (now - (max_age + 1))
+    if (max_age) filter.dob.$gt = yearsAgo(Number(max_age) + 1);
+  }
+
+  if (profile_complete === "true")  filter.profile_complete = true;
+  if (profile_complete === "false") filter.profile_complete = { $ne: true };
+
+  const from = parseDate(registered_from, "registered_from");
+  const to   = parseDate(registered_to, "registered_to");
+  if (from || to) {
+    filter.created_at = {};
+    if (from) filter.created_at.$gte = from;
+    if (to) {
+      to.setHours(23, 59, 59, 999); // include the whole end day
+      filter.created_at.$lte = to;
+    }
   }
   const skip    = (Number(page) - 1) * Number(limit);
   const total   = await Patient.countDocuments(filter);

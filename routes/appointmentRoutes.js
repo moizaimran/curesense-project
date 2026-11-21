@@ -19,6 +19,7 @@ const {
   completeAppointment,
   cancelAppointment,
 } = require("../controllers/appointmentController");
+const { submitReview, getAppointmentReviews } = require("../controllers/reviewController");
 const { protect, authorize }   = require("../middleware/auth");
 const { writeLimiter }         = require("../middleware/rateLimiter");
 const { validateObjectId }     = require("../middleware/validate");
@@ -54,6 +55,9 @@ router.post("/:id/feedback",      protect, authorize("doctor"),                 
 router.post("/:id/test-uploads",       protect, authorize("patient"), writeLimiter, validateObjectId("id"), uploadTestResult);
 router.patch("/:id/test-uploads/read", protect, authorize("doctor"),                validateObjectId("id"), markTestUploadsRead);
 
+// Post-case rating & feedback (patient ↔ doctor), only once completed
+router.post("/:id/review",  protect, authorize("patient", "doctor"),          writeLimiter, validateObjectId("id"), submitReview);
+router.get("/:id/reviews",  protect, authorize("patient", "doctor", "admin"),               validateObjectId("id"), getAppointmentReviews);
 router.post("/:id/complete",      protect, authorize("doctor"),                          validateObjectId("id"), completeAppointment);
 router.post("/:id/cancel",        protect, authorize("patient"),                         validateObjectId("id"), cancelAppointment);
 

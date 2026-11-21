@@ -24,6 +24,8 @@ const {
   verifyPmdc,
   resendVerification,
 } = require("../controllers/doctorController");
+const { getDoctorReviews }           = require("../controllers/reviewController");
+const { doctorPatientsTreated }      = require("../controllers/statsController");
 const { protect, authorize }         = require("../middleware/auth");
 const { authLimiter }                = require("../middleware/rateLimiter");
 const { validateObjectId, validateDateQuery } = require("../middleware/validate");
@@ -56,6 +58,9 @@ router.patch("/admin/:id/verify", protect, authorize("admin"), validateObjectId(
 // a more specific path.
 router.get("/:id/availability/dates", protect,                              validateObjectId("id"), getDoctorAvailableDates);
 router.get("/:id/availability",       protect,                              validateObjectId("id"), validateDateQuery("date"), getDoctorAvailability);
+// Public list of patient reviews for a verified doctor
+router.get("/:id/reviews",            validateObjectId("id"), getDoctorReviews);
+router.get("/:id/stats/treated",      protect, authorize("doctor", "admin"), validateObjectId("id"), doctorPatientsTreated);
 router.get("/:id/dashboard-summary",  protect, authorize("doctor", "admin"), validateObjectId("id"), getDashboardSummary);
 router.get("/:id",                    protect,                              validateObjectId("id"), getDoctorById);
 
