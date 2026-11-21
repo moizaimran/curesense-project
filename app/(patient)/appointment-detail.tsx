@@ -22,6 +22,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { API_URL } from "@/constants/api";
+import RateDoctorCard from "@/components/RateDoctorCard";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -929,6 +930,12 @@ export default function AppointmentDetailScreen() {
                 This appointment has been cancelled.
               </Text>
             </View>
+          )}
+
+          {/* Rate your doctor — once the case is completed */}
+
+          {isCompleted && (
+            <RateDoctorCard appointmentId={appt._id} doctorName={doctor?.user_id?.name} />
           )}
 
           {/* Query / message thread */}

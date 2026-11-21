@@ -30,6 +30,7 @@ interface DoctorProfile {
   education: { degree: string; institution: string; year: number }[];
   experience_years: number;
   hospital_clinic: string;
+  rating?: { average: number; count: number };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -80,6 +81,15 @@ function DoctorCard({
 
       {/* Meta row */}
       <View style={s.metaRow}>
+        <MetaChip
+          icon={doc.rating?.count ? "star" : "star-outline"}
+          label={
+            doc.rating?.count
+              ? `${doc.rating.average.toFixed(1)} (${doc.rating.count})`
+              : "New"
+          }
+          color="#FBBF24"
+        />
         {doc.experience_years > 0 && (
           <MetaChip
             icon="time-outline"
@@ -151,6 +161,72 @@ function MetaChip({
   );
 }
 
+// ── Filter options ─────────────────────────────────────────────────────────────
+
+type Option<T extends string> = { value: T; label: string };
+
+const EXPERIENCE_OPTIONS: Option<"" | "5" | "10" | "15">[] = [
+  { value: "", label: "Any experience" },
+  { value: "5", label: "5+ yrs" },
+  { value: "10", label: "10+ yrs" },
+  { value: "15", label: "15+ yrs" },
+];
+
+const AVAILABILITY_OPTIONS: Option<"" | "today" | "tomorrow">[] = [
+  { value: "", label: "Any day" },
+  { value: "today", label: "Available today" },
+  { value: "tomorrow", label: "Available tomorrow" },
+];
+
+const RATING_OPTIONS: Option<"" | "3" | "4" | "4.5">[] = [
+  { value: "", label: "Any rating" },
+  { value: "4.5", label: "4.5★ & up" },
+  { value: "4", label: "4★ & up" },
+  { value: "3", label: "3★ & up" },
+];
+
+const SORT_OPTIONS: Option<"experience" | "rating" | "newest">[] = [
+  { value: "experience", label: "Most experienced" },
+  { value: "rating", label: "Highest rated" },
+  { value: "newest", label: "Newest on CureSense" },
+];
+
+// Local calendar date (YYYY-MM-DD) `offset` days from today.
+function localDate(offset: number) {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function PillRow<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: Option<T>[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <View style={s.genderRow}>
+      {options.map((o) => (
+        <TouchableOpacity
+          key={o.value || "any"}
+          style={[s.genderPill, value === o.value && s.genderPillActive]}
+          onPress={() => onChange(o.value)}
+          activeOpacity={0.75}
+        >
+          <Text style={[s.genderPillText, value === o.value && s.genderPillTextActive]}>
+            {o.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
 // ── Screen ─────────────────────────────────────────────────────────────────────
 
 export default function FindDoctorScreen() {
@@ -169,7 +245,16 @@ export default function FindDoctorScreen() {
   const [search, setSearch] = useState(specialty ?? "");
   const [cityFilter, setCityFilter] = useState("");
   const [genderFilter, setGenderFilter] = useState<"" | "male" | "female">("");
+  const [minExperience, setMinExperience] = useState<"" | "5" | "10" | "15">("");
+  const [availability, setAvailability] = useState<"" | "today" | "tomorrow">("");
+  const [minRating, setMinRating] = useState<"" | "3" | "4" | "4.5">("");
+  const [sort, setSort] = useState<"experience" | "rating" | "newest">("experience");
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [page, setPage] = useState(1);
+
+  // Count of active "more filters" — shown on the toggle button
+  const extraFilterCount =
+    (minExperience ? 1 : 0) + (availability ? 1 : 0) + (minRating ? 1 : 0) + (sort !== "experience" ? 1 : 0);
   const [total, setTotal] = useState(0);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -185,7 +270,7 @@ export default function FindDoctorScreen() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [search, cityFilter, genderFilter]);
+  }, [search, cityFilter, genderFilter, minExperience, availability, minRating, sort]);
 
   async function fetchDoctors(targetPage: number, reset = false) {
     // Stamp this request; any earlier in-flight request that completes later
@@ -201,9 +286,14 @@ export default function FindDoctorScreen() {
         page: String(targetPage),
         limit: "20",
       });
-      if (search.trim()) params.set("specialty", search.trim());
+      // `q` matches doctor name, specialty or hospital
+      if (search.trim()) params.set("q", search.trim());
       if (cityFilter.trim()) params.set("city", cityFilter.trim());
       if (genderFilter) params.set("gender", genderFilter);
+      if (minExperience) params.set("min_experience", minExperience);
+      if (availability) params.set("available_on", localDate(availability === "today" ? 0 : 1));
+      if (minRating) params.set("min_rating", minRating);
+      params.set("sort", sort);
 
       const res = await fetch(`${API_URL}/api/doctors?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -294,7 +384,7 @@ export default function FindDoctorScreen() {
             style={s.searchInput}
             value={search}
             onChangeText={setSearch}
-            placeholder="Search specialty…"
+            placeholder="Search doctor, specialty or hospital…"
             placeholderTextColor="rgba(255,255,255,0.30)"
             returnKeyType="search"
             autoCorrect={false}
@@ -358,7 +448,48 @@ export default function FindDoctorScreen() {
               </Text>
             </TouchableOpacity>
           ))}
+          <TouchableOpacity
+            style={[s.genderPill, s.moreFiltersPill, (showMoreFilters || extraFilterCount > 0) && s.genderPillActive]}
+            onPress={() => setShowMoreFilters((v) => !v)}
+            activeOpacity={0.75}
+            accessibilityLabel="More filters"
+          >
+            <Ionicons
+              name="options-outline"
+              size={13}
+              color={showMoreFilters || extraFilterCount > 0 ? "#93C5FD" : "rgba(255,255,255,0.5)"}
+            />
+            <Text style={[s.genderPillText, (showMoreFilters || extraFilterCount > 0) && s.genderPillTextActive]}>
+              Filters{extraFilterCount ? ` (${extraFilterCount})` : ""}
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        {showMoreFilters && (
+          <View style={s.moreFilters}>
+            <Text style={s.filterLabel}>Experience</Text>
+            <PillRow options={EXPERIENCE_OPTIONS} value={minExperience} onChange={setMinExperience} />
+            <Text style={s.filterLabel}>Availability</Text>
+            <PillRow options={AVAILABILITY_OPTIONS} value={availability} onChange={setAvailability} />
+            <Text style={s.filterLabel}>Rating</Text>
+            <PillRow options={RATING_OPTIONS} value={minRating} onChange={setMinRating} />
+            <Text style={s.filterLabel}>Sort by</Text>
+            <PillRow options={SORT_OPTIONS} value={sort} onChange={setSort} />
+            {extraFilterCount > 0 && (
+              <TouchableOpacity
+                onPress={() => {
+                  setMinExperience("");
+                  setAvailability("");
+                  setMinRating("");
+                  setSort("experience");
+                }}
+                style={{ marginTop: 10 }}
+              >
+                <Text style={s.clearFiltersText}>Clear filters</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </View>
 
       {/* Result count */}
@@ -471,6 +602,7 @@ const s = StyleSheet.create({
   genderRow: {
     flexDirection: "row",
     gap: 8,
+    flexWrap: "wrap",
     marginTop: 10,
   },
   genderPill: {
@@ -491,6 +623,17 @@ const s = StyleSheet.create({
     fontWeight: "600",
   },
   genderPillTextActive: { color: "#93C5FD" },
+  moreFiltersPill: { flexDirection: "row", alignItems: "center", gap: 4 },
+  moreFilters: { marginTop: 4 },
+  filterLabel: {
+    color: "rgba(255,255,255,0.40)",
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: 12,
+  },
+  clearFiltersText: { color: "#F87171", fontSize: 12, fontWeight: "700" },
 
   resultCount: { paddingHorizontal: 16, paddingVertical: 8 },
   resultCountText: {
