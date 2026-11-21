@@ -7,6 +7,7 @@ import { useSelector } from "react-redux";
 
 import { selectToken } from "../../features/auth/authSlice";
 import { api } from "../../utils/api";
+import { RatingBadge } from "../common/StarRating";
 
 function calcAge(dob) {
     if (!dob) return "—";
@@ -33,10 +34,28 @@ function StatusBadge({ status }) {
     );
 }
 
-// statusFilter values: "All" | "Ongoing" | "Completed"
-const STATUS_MAP = { Ongoing: "confirmed", Completed: "completed" };
+// filters.status label → backend appointment status
+const STATUS_MAP = {
+    Ongoing:   "confirmed",
+    Completed: "completed",
+    Cancelled: "cancelled",
+    "No Show": "no_show",
+};
 
-export default function PatientTable({ search, statusFilter, currentPage, setCurrentPage }) {
+// "newest" keeps the API order (already latest slot first)
+const SORTS = {
+    newest: null,
+    oldest: (a, b) => (a.requested_slot?.date || "").localeCompare(b.requested_slot?.date || ""),
+    name:   (a, b) => (a.patient_id?.name || "").localeCompare(b.patient_id?.name || ""),
+};
+
+function needsAttention(appt) {
+    return !!(appt.has_unread_patient_query || appt.has_new_test_upload);
+}
+
+const DEFAULT_FILTERS = { status: "All", gender: "", dateFrom: "", dateTo: "", needsAttention: false, sort: "newest" };
+
+export default function PatientTable({ search = "", filters = DEFAULT_FILTERS, currentPage, setCurrentPage }) {
     const navigate = useNavigate();
     const token    = useSelector(selectToken);
 
@@ -44,21 +63,31 @@ export default function PatientTable({ search, statusFilter, currentPage, setCur
     const [loading,      setLoading]      = useState(true);
     const [error,        setError]        = useState(null);
 
+    // Load all of the doctor's cases once; every filter below is applied client-side.
     useEffect(() => {
         if (!token) return;
         setLoading(true);
-        const status = STATUS_MAP[statusFilter];
-        const url    = status ? `/api/appointments/doctor?status=${status}` : "/api/appointments/doctor";
-        api.get(url, token)
+        api.get("/api/appointments/doctor", token)
             .then(data => setAppointments(Array.isArray(data) ? data : []))
             .catch(err  => setError(err.message))
             .finally(() => setLoading(false));
-    }, [token, statusFilter]);
+    }, [token]);
 
-    // Client-side search by patient name
-    const filtered = appointments.filter(a =>
-        !search || (a.patient_id?.name || "").toLowerCase().includes(search.toLowerCase())
-    );
+    const q      = search.trim().toLowerCase();
+    const status = STATUS_MAP[filters.status];
+    const sortFn = SORTS[filters.sort];
+    const matches = appointments
+        .filter(a => {
+            const p    = a.patient_id || {};
+            const date = a.requested_slot?.date || "";
+            return (!q || [p.name, p.contact?.email, p.contact?.phone].join(" ").toLowerCase().includes(q))
+                && (!status          || a.status === status)
+                && (!filters.gender  || (p.gender || "").toLowerCase() === filters.gender)
+                && (!filters.dateFrom || date >= filters.dateFrom)
+                && (!filters.dateTo   || date <= filters.dateTo)
+                && (!filters.needsAttention || needsAttention(a));
+        });
+    const filtered = sortFn ? [...matches].sort(sortFn) : matches;
 
     const perPage   = 5;
     const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
@@ -70,7 +99,9 @@ export default function PatientTable({ search, statusFilter, currentPage, setCur
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h2 className="text-2xl font-bold text-slate-800">My Patients</h2>
-                    <p className="text-gray-500 mt-1">Appointments with your assigned patients.</p>
+                    <p className="text-gray-500 mt-1">
+                        {loading ? "Appointments with your assigned patients." : `${filtered.length} of ${appointments.length} cases`}
+                    </p>
                 </div>
             </div>
 
@@ -107,7 +138,17 @@ export default function PatientTable({ search, statusFilter, currentPage, setCur
                                                     <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-lg">
                                                         👤
                                                     </div>
-                                                    <p className="font-semibold text-slate-800">{p?.name || "—"}</p>
+                                                    <div>
+                                                        <p className="font-semibold text-slate-800">{p?.name || "—"}</p>
+                                                        {p?.rating?.count > 0 && (
+                                                            <RatingBadge rating={p.rating} className="mt-0.5" />
+                                                        )}
+                                                        {needsAttention(appt) && (
+                                                            <span className="text-xs font-semibold text-orange-600">
+                                                                {appt.has_unread_patient_query ? "New query" : "New test upload"}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </td>
                                             <td className="py-5 text-gray-600">{calcAge(p?.dob)}</td>

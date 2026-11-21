@@ -550,6 +550,7 @@ import QueryPanel from "../components/CaseDiagnosis/QueryPanel";
 import FeedbackModal from "../components/CaseDiagnosis/FeedbackModal";
 import HistoryModal from "../components/CaseDiagnosis/HistoryModal";
 import TranscriptModal from "../components/CaseDiagnosis/TranscriptModal";
+import CaseReviews from "../components/CaseDiagnosis/CaseReviews";
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1378,6 +1379,19 @@ export default function CaseDiagnosis() {
                 )}
 
             </div>
+
+
+            {/* ────────────────────────────────────────────────────────────────
+                Ratings & Feedback — only once the case is completed
+            ──────────────────────────────────────────────────────────────── */}
+
+            {appt.status === "completed" && (
+                <CaseReviews
+                    appointmentId={appointmentId}
+                    patientName={appt.patient_id?.name}
+                    token={token}
+                />
+            )}
 
 
             {/* ────────────────────────────────────────────────────────────────

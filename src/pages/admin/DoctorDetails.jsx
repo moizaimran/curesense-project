@@ -5,6 +5,7 @@ import { ArrowLeft, CheckCircle, XCircle, Clock3, ShieldCheck, ShieldAlert, Shie
 import doctorPlaceholder from "../../assets/images/doctor-avatar.jpg";
 import { selectToken } from "../../features/auth/authSlice";
 import { api } from "../../utils/api";
+import DoctorReviews from "../../components/admin/Doctors/DoctorReviews";
 
 function InfoItem({ title, value }) {
     return (
@@ -285,6 +286,9 @@ export default function DoctorDetails() {
 
             {/* PMDC Automated Verification */}
             <PmdcVerificationCard verification={doctor.pmdc_verification} doctor={doctor} />
+
+            {/* Patient reviews — only approved doctors can be booked/reviewed */}
+            {doctor.status === "verified" && <DoctorReviews doctorId={doctor._id} />}
 
             {/* CNIC Image */}
             <div>

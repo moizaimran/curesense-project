@@ -26,6 +26,7 @@ import DoctorStatCard from "../../components/admin/Doctors/DoctorStatCard";
 import doctorPlaceholder from "../../assets/images/doctor-avatar.jpg";
 import { selectToken } from "../../features/auth/authSlice";
 import { api } from "../../utils/api";
+import { RatingBadge } from "../../components/common/StarRating";
 
 // Map backend status values to display labels + badge colours
 const STATUS_DISPLAY = {
@@ -33,6 +34,25 @@ const STATUS_DISPLAY = {
     verified: { label: "Approved", cls: "bg-green-100 text-green-700"  },
     rejected: { label: "Rejected", cls: "bg-red-100 text-red-700"      },
 };
+
+const SORTS = {
+    newest:     (a, b) => new Date(b.created_at) - new Date(a.created_at),
+    oldest:     (a, b) => new Date(a.created_at) - new Date(b.created_at),
+    experience: (a, b) => (b.experience_years || 0) - (a.experience_years || 0),
+    name:       (a, b) => doctorName(a).localeCompare(doctorName(b)),
+    rating:     (a, b) => (b.rating?.average || 0) - (a.rating?.average || 0)
+                       || (b.rating?.count || 0) - (a.rating?.count || 0),
+};
+
+function doctorName(doc) {
+    return doc.user_id?.name || doc.name_as_per_cnic || doc.contact?.email || "—";
+}
+
+function uniqueSorted(values) {
+    return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+const selectCls = "px-4 py-3 rounded-xl border border-gray-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#264296] text-sm";
 
 export default function ManageDoctors() {
     const navigate = useNavigate();
@@ -43,6 +63,12 @@ export default function ManageDoctors() {
     const [error,        setError]        = useState(null);
     const [search,       setSearch]       = useState("");
     const [statusFilter, setStatusFilter] = useState("All");
+    const [specialty,    setSpecialty]    = useState("All");
+    const [city,         setCity]         = useState("All");
+    const [gender,       setGender]       = useState("All");
+    const [pmdcFilter,   setPmdcFilter]   = useState("All");
+    const [minRating,    setMinRating]    = useState("All");
+    const [sortBy,       setSortBy]       = useState("newest");
     const [currentPage,  setCurrentPage]  = useState(1);
     const doctorsPerPage = 5;
 
@@ -61,14 +87,36 @@ export default function ManageDoctors() {
         fetchDoctors();
     }, [token]);
 
-    const filteredDoctors = doctors.filter((doc) => {
-        const name = (doc.contact?.email || "") + " " + (doc.specialty || "") + " " + (doc.hospital_clinic || "");
-        const matchesSearch = name.toLowerCase().includes(search.toLowerCase())
-            || (doc.specialty || "").toLowerCase().includes(search.toLowerCase())
-            || (doc.hospital_clinic || "").toLowerCase().includes(search.toLowerCase());
-        const matchesStatus = statusFilter === "All" || doc.status === statusFilter.toLowerCase();
-        return matchesSearch && matchesStatus;
-    });
+    const specialties = uniqueSorted(doctors.map(d => d.specialty));
+    const cities      = uniqueSorted(doctors.map(d => d.location?.city));
+
+    const q = search.trim().toLowerCase();
+    const filteredDoctors = doctors
+        .filter((doc) => {
+            const haystack = [
+                doctorName(doc), doc.contact?.email, doc.pmdc_number,
+                doc.specialty, doc.hospital_clinic, doc.location?.city,
+            ].join(" ").toLowerCase();
+            return (!q || haystack.includes(q))
+                && (statusFilter === "All" || doc.status === statusFilter)
+                && (specialty    === "All" || doc.specialty === specialty)
+                && (city         === "All" || doc.location?.city === city)
+                && (gender       === "All" || doc.gender === gender)
+                && (pmdcFilter   === "All" || (doc.pmdc_verification?.decision || "pending") === pmdcFilter)
+                && (minRating    === "All"
+                    || (minRating === "none"
+                        ? !doc.rating?.count
+                        : doc.rating?.count > 0 && doc.rating.average >= Number(minRating)));
+        })
+        .sort(SORTS[sortBy]);
+
+    // Any filter change sends the user back to page 1
+    const onFilter = (setter) => (e) => { setter(e.target.value); setCurrentPage(1); };
+
+    function resetFilters() {
+        setSearch(""); setStatusFilter("All"); setSpecialty("All"); setCity("All");
+        setGender("All"); setPmdcFilter("All"); setMinRating("All"); setSortBy("newest"); setCurrentPage(1);
+    }
 
     const totalPages      = Math.ceil(filteredDoctors.length / doctorsPerPage);
     const indexOfLast     = currentPage * doctorsPerPage;
@@ -102,27 +150,59 @@ export default function ManageDoctors() {
 
             {/* Search + Filter */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-8">
-                <div className="flex flex-col lg:flex-row gap-5 justify-between items-center">
-                    <div className="relative w-full lg:w-112.5">
+                <div className="flex flex-col lg:flex-row gap-4 justify-between items-center">
+                    <div className="relative w-full lg:flex-1">
                         <Search size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input type="text" placeholder="Search by specialty or hospital…" value={search}
-                            onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+                        <input type="text" placeholder="Search by name, email, PMDC no., specialty, hospital or city…" value={search}
+                            onChange={onFilter(setSearch)}
                             className="w-full pl-12 pr-5 py-3 rounded-xl border border-gray-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#264296] transition" />
                     </div>
-                    <div className="flex gap-4 w-full lg:w-auto">
-                        <select value={statusFilter}
-                            onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
-                            className="px-5 py-3 rounded-xl border border-gray-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#264296]">
-                            <option value="All">All Status</option>
-                            <option value="pending">Pending</option>
-                            <option value="verified">Approved</option>
-                            <option value="rejected">Rejected</option>
-                        </select>
-                        <button onClick={() => { setSearch(""); setStatusFilter("All"); setCurrentPage(1); }}
-                            className="px-5 py-3 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 font-medium transition">
-                            Reset
-                        </button>
-                    </div>
+                    <select value={sortBy} onChange={onFilter(setSortBy)} className={selectCls} aria-label="Sort doctors">
+                        <option value="newest">Newest first</option>
+                        <option value="oldest">Oldest first</option>
+                        <option value="experience">Most experienced</option>
+                        <option value="name">Name (A–Z)</option>
+                        <option value="rating">Highest rated</option>
+                    </select>
+                    <button onClick={resetFilters}
+                        className="px-5 py-3 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 font-medium transition">
+                        Reset
+                    </button>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mt-4">
+                    <select value={statusFilter} onChange={onFilter(setStatusFilter)} className={selectCls} aria-label="Status">
+                        <option value="All">All Status</option>
+                        <option value="pending">Pending</option>
+                        <option value="verified">Approved</option>
+                        <option value="rejected">Rejected</option>
+                    </select>
+                    <select value={specialty} onChange={onFilter(setSpecialty)} className={selectCls} aria-label="Specialty">
+                        <option value="All">All Specialties</option>
+                        {specialties.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <select value={city} onChange={onFilter(setCity)} className={selectCls} aria-label="City">
+                        <option value="All">All Cities</option>
+                        {cities.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <select value={gender} onChange={onFilter(setGender)} className={selectCls} aria-label="Gender">
+                        <option value="All">Any Gender</option>
+                        <option value="male">Male</option>
+                        <option value="female">Female</option>
+                    </select>
+                    <select value={pmdcFilter} onChange={onFilter(setPmdcFilter)} className={selectCls} aria-label="PMDC check">
+                        <option value="All">Any PMDC Result</option>
+                        <option value="auto_approved">PMDC: Auto Approved</option>
+                        <option value="flagged">PMDC: Needs Review</option>
+                        <option value="rejected">PMDC: Mismatch</option>
+                        <option value="pending">PMDC: Checking</option>
+                    </select>
+                    <select value={minRating} onChange={onFilter(setMinRating)} className={selectCls} aria-label="Rating">
+                        <option value="All">Any Rating</option>
+                        <option value="4.5">4.5★ &amp; up</option>
+                        <option value="4">4★ &amp; up</option>
+                        <option value="3">3★ &amp; up</option>
+                        <option value="none">No ratings yet</option>
+                    </select>
                 </div>
                 <div className="flex justify-between items-center mt-5">
                     <p className="text-gray-500">
@@ -142,10 +222,12 @@ export default function ManageDoctors() {
                             <div className="flex items-center gap-5">
                                 <img src={doctorPlaceholder} alt="Doctor" className="w-20 h-20 rounded-full object-cover border-4 border-blue-100" />
                                 <div>
-                                    <h2 className="text-xl font-bold text-slate-800">{doc.contact?.email || "—"}</h2>
+                                    <h2 className="text-xl font-bold text-slate-800">{doctorName(doc)}</h2>
+                                    <p className="text-gray-400 text-sm">{doc.contact?.email}</p>
                                     <p className="text-gray-500 mt-1">{doc.specialty}</p>
-                                    <p className="text-gray-500">{doc.hospital_clinic}</p>
+                                    <p className="text-gray-500">{[doc.hospital_clinic, doc.location?.city].filter(Boolean).join(" · ")}</p>
                                     <p className="text-sm text-blue-700 mt-1">PMDC: {doc.pmdc_number}</p>
+                                    <RatingBadge rating={doc.rating} className="mt-1" />
                                 </div>
                             </div>
                             <div className="flex flex-col items-end gap-3">

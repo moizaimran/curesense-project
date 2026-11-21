@@ -23,11 +23,14 @@ const appointments = [
 
 const preloadedState = { auth: { token: TOKEN, user: { role: "doctor" } } };
 
+const NO_FILTERS = { status: "All", gender: "", dateFrom: "", dateTo: "", needsAttention: false, sort: "newest" };
+
 function mountTable(props = {}, data = appointments) {
   api.get.mockResolvedValue(data);
-  const defaults = { search: "", statusFilter: "All", currentPage: 1, setCurrentPage: vi.fn() };
+  const { filters, ...rest } = props;
+  const defaults = { search: "", currentPage: 1, setCurrentPage: vi.fn() };
   return renderWithProviders(
-    <PatientTable {...defaults} {...props} />,
+    <PatientTable {...defaults} filters={{ ...NO_FILTERS, ...filters }} {...rest} />,
     { initialState: preloadedState }
   );
 }
@@ -41,22 +44,17 @@ describe("PatientTable — loading data", () => {
     expect(api.get).toHaveBeenCalledWith("/api/appointments/doctor", TOKEN);
   });
 
-  test("statusFilter 'Ongoing' asks the API for confirmed appointments", async () => {
-    mountTable({ statusFilter: "Ongoing" });
-    await screen.findByText("Alice Smith");
-    expect(api.get).toHaveBeenCalledWith("/api/appointments/doctor?status=confirmed", TOKEN);
-  });
-
-  test("statusFilter 'Completed' asks the API for completed appointments", async () => {
-    mountTable({ statusFilter: "Completed" });
-    await screen.findByText("Alice Smith");
-    expect(api.get).toHaveBeenCalledWith("/api/appointments/doctor?status=completed", TOKEN);
+  test("status filter is applied client-side — API is called without a status", async () => {
+    mountTable({ filters: { status: "Completed" } });
+    await screen.findByText("Bob Jones");
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(api.get).toHaveBeenCalledWith("/api/appointments/doctor", TOKEN);
   });
 
   test("shows the API error message when loading fails", async () => {
     api.get.mockRejectedValueOnce(new Error("Server unavailable"));
     renderWithProviders(
-      <PatientTable search="" statusFilter="All" currentPage={1} setCurrentPage={vi.fn()} />,
+      <PatientTable search="" currentPage={1} setCurrentPage={vi.fn()} />,
       { initialState: preloadedState }
     );
     expect(await screen.findByText("Server unavailable")).toBeInTheDocument();
@@ -111,6 +109,63 @@ describe("PatientTable — filtering and rendering", () => {
     mountTable({ search: "Eve" });
     await screen.findByText("Eve Ali");
     expect(screen.getAllByText("—")).toHaveLength(2);
+  });
+});
+
+describe("PatientTable — case filters", () => {
+  test("status 'Ongoing' shows only confirmed cases", async () => {
+    mountTable({ filters: { status: "Ongoing" } });
+    expect(await screen.findByText("Alice Smith")).toBeInTheDocument();
+    expect(screen.getByText("Eve Ali")).toBeInTheDocument();
+    expect(screen.queryByText("Bob Jones")).not.toBeInTheDocument();
+  });
+
+  test("status 'No Show' shows only no-show cases", async () => {
+    mountTable({ filters: { status: "No Show" } });
+    expect(await screen.findByText("Dave Kim")).toBeInTheDocument();
+    expect(screen.queryByText("Alice Smith")).not.toBeInTheDocument();
+  });
+
+  test("gender filter", async () => {
+    mountTable({ filters: { gender: "male" } });
+    expect(await screen.findByText("Bob Jones")).toBeInTheDocument();
+    expect(screen.queryByText("Alice Smith")).not.toBeInTheDocument();
+  });
+
+  test("slot date range", async () => {
+    const data = [
+      { _id: "d1", status: "confirmed", requested_slot: { date: "2026-01-05", start_time: "09:00", end_time: "09:30" }, patient_id: { name: "January Pt" } },
+      { _id: "d2", status: "confirmed", requested_slot: { date: "2026-03-05", start_time: "09:00", end_time: "09:30" }, patient_id: { name: "March Pt" } },
+    ];
+    mountTable({ filters: { dateFrom: "2026-02-01", dateTo: "2026-03-31" } }, data);
+    expect(await screen.findByText("March Pt")).toBeInTheDocument();
+    expect(screen.queryByText("January Pt")).not.toBeInTheDocument();
+  });
+
+  test("needs attention shows cases with unread queries or new uploads, with a label", async () => {
+    const data = [
+      { ...appointments[0], has_unread_patient_query: true },
+      { ...appointments[1], has_new_test_upload: true },
+      appointments[2],
+    ];
+    mountTable({ filters: { needsAttention: true } }, data);
+    expect(await screen.findByText("New query")).toBeInTheDocument();
+    expect(screen.getByText("New test upload")).toBeInTheDocument();
+    expect(screen.queryByText("Carol Winters")).not.toBeInTheDocument();
+  });
+
+  test("sort by patient name", async () => {
+    mountTable({ filters: { sort: "name" } }, [appointments[3], appointments[0]]);
+    await screen.findByText("Alice Smith");
+    const names = screen.getAllByText(/Alice Smith|Dave Kim/).map(el => el.textContent);
+    expect(names).toEqual(["Alice Smith", "Dave Kim"]);
+  });
+
+  test("search also matches patient email", async () => {
+    const data = [{ ...appointments[0], patient_id: { ...appointments[0].patient_id, contact: { email: "alice@mail.com" } } }, appointments[1]];
+    mountTable({ search: "alice@mail" }, data);
+    expect(await screen.findByText("Alice Smith")).toBeInTheDocument();
+    expect(screen.queryByText("Bob Jones")).not.toBeInTheDocument();
   });
 });
 

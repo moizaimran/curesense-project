@@ -14,6 +14,29 @@ function fmtDate(d) {
     return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+const STATUS_TABS = [
+    { value: "pending_admin_review", label: "Pending Review" },
+    { value: "confirmed",            label: "Confirmed" },
+    { value: "completed",            label: "Completed" },
+    { value: "rejected",             label: "Rejected" },
+    { value: "cancelled",            label: "Cancelled" },
+    { value: "no_show",              label: "No Show" },
+    { value: "all",                  label: "All" },
+];
+
+const STATUS_BADGE = {
+    pending_admin_review: "bg-yellow-100 text-yellow-800",
+    confirmed:            "bg-blue-100 text-blue-700",
+    completed:            "bg-green-100 text-green-700",
+    rejected:             "bg-red-100 text-red-700",
+    cancelled:            "bg-gray-100 text-gray-600",
+    no_show:              "bg-gray-100 text-gray-600",
+};
+
+const EMPTY_FILTERS = { specialty: "", date_from: "", date_to: "" };
+
+const fieldCls = "w-full px-4 py-2.5 rounded-xl border border-gray-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#264296] text-sm";
+
 export default function AppointmentReview() {
     const token = useSelector(selectToken);
 
@@ -22,33 +45,64 @@ export default function AppointmentReview() {
     const [loading,      setLoading]      = useState(true);
     const [error,        setError]        = useState(null);
 
+    const [status,       setStatus]       = useState("pending_admin_review");
+    const [search,       setSearch]       = useState("");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [filters,      setFilters]      = useState(EMPTY_FILTERS);
+    const [specialties,  setSpecialties]  = useState([]);
+
     // per-card state for the inline rejection form
     const [rejecting,  setRejecting]  = useState({});
     // per-card lock while approve call is in flight
     const [approving,  setApproving]  = useState({});
 
     useEffect(() => {
+        api.get("/api/doctors/specialties")
+            .then(data => setSpecialties(data.specialties ?? []))
+            .catch(() => {});
+    }, []);
+
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedSearch(search.trim()), 350);
+        return () => clearTimeout(t);
+    }, [search]);
+
+    useEffect(() => {
         if (!token) return;
         setLoading(true);
-        api.get("/api/appointments/admin?status=pending_admin_review&limit=50", token)
+        setError(null);
+        const params = new URLSearchParams({ status, limit: 50 });
+        if (debouncedSearch) params.set("search", debouncedSearch);
+        Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
+
+        api.get(`/api/appointments/admin?${params}`, token)
             .then(data => {
                 setAppointments(data.results ?? []);
                 setTotal(data.total ?? 0);
             })
             .catch(err => setError(err.message))
             .finally(() => setLoading(false));
-    }, [token]);
+    }, [token, status, debouncedSearch, filters]);
 
-    function removeFromList(id) {
-        setAppointments(prev => prev.filter(a => a._id !== id));
-        setTotal(prev => Math.max(0, prev - 1));
+    const setFilter = (key) => (e) => setFilters(f => ({ ...f, [key]: e.target.value }));
+    const hasFilters = search || Object.values(filters).some(Boolean);
+    const tabLabel = STATUS_TABS.find(t => t.value === status)?.label ?? status;
+
+    // After approve/reject: drop it from the pending tab, or update its badge elsewhere
+    function applyDecision(id, newStatus) {
+        if (status === "pending_admin_review") {
+            setAppointments(prev => prev.filter(a => a._id !== id));
+            setTotal(prev => Math.max(0, prev - 1));
+        } else {
+            setAppointments(prev => prev.map(a => a._id === id ? { ...a, status: newStatus } : a));
+        }
     }
 
     async function handleApprove(appt) {
         setApproving(prev => ({ ...prev, [appt._id]: true }));
         try {
             await api.patch(`/api/appointments/admin/${appt._id}/review`, { decision: "approve" }, token);
-            removeFromList(appt._id);
+            applyDecision(appt._id, "confirmed");
         } catch (err) {
             alert(`Approval failed: ${err.message}`);
         } finally {
@@ -77,7 +131,8 @@ export default function AppointmentReview() {
         setRejecting(prev => ({ ...prev, [appt._id]: { ...prev[appt._id], submitting: true, err: "" } }));
         try {
             await api.patch(`/api/appointments/admin/${appt._id}/review`, { decision: "reject", rejection_reason: rj.reason.trim() }, token);
-            removeFromList(appt._id);
+            applyDecision(appt._id, "rejected");
+            closeReject(appt._id);
         } catch (err) {
             setRejecting(prev => ({ ...prev, [appt._id]: { ...prev[appt._id], submitting: false, err: err.message } }));
         }
@@ -91,13 +146,73 @@ export default function AppointmentReview() {
                     <h1 className="text-3xl font-bold text-slate-800">Appointment Review</h1>
                     {!loading && (
                         <span className="bg-yellow-100 text-yellow-800 text-sm font-semibold px-3 py-1 rounded-full">
-                            {total} pending
+                            {total} {tabLabel.toLowerCase()}
                         </span>
                     )}
                 </div>
                 <p className="text-gray-500 mt-1">
                     Review and approve or reject first-time patient–doctor appointments before the doctor gains access.
                 </p>
+            </div>
+
+            {/* Status tabs */}
+            <div className="flex flex-wrap gap-2">
+                {STATUS_TABS.map(t => (
+                    <button
+                        key={t.value}
+                        type="button"
+                        onClick={() => setStatus(t.value)}
+                        className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                            status === t.value
+                                ? "bg-[#264296] text-white"
+                                : "bg-white border border-gray-200 text-slate-600 hover:bg-slate-50"
+                        }`}
+                    >
+                        {t.label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Search + filters */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 items-end">
+                    <label className="text-xs font-semibold text-gray-500 lg:col-span-2">
+                        Search
+                        <input
+                            type="text"
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            placeholder="Patient name / email or doctor name…"
+                            className={`${fieldCls} mt-1`}
+                        />
+                    </label>
+                    <label className="text-xs font-semibold text-gray-500">
+                        Specialty
+                        <select value={filters.specialty} onChange={setFilter("specialty")} className={`${fieldCls} mt-1`}>
+                            <option value="">All specialties</option>
+                            {specialties.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                    </label>
+                    <label className="text-xs font-semibold text-gray-500">
+                        Slot from
+                        <input type="date" value={filters.date_from} max={filters.date_to || undefined}
+                            onChange={setFilter("date_from")} className={`${fieldCls} mt-1`} />
+                    </label>
+                    <label className="text-xs font-semibold text-gray-500">
+                        Slot to
+                        <input type="date" value={filters.date_to} min={filters.date_from || undefined}
+                            onChange={setFilter("date_to")} className={`${fieldCls} mt-1`} />
+                    </label>
+                </div>
+                {hasFilters && (
+                    <button
+                        type="button"
+                        onClick={() => { setSearch(""); setFilters(EMPTY_FILTERS); }}
+                        className="mt-3 text-sm font-medium text-red-600 hover:text-red-700"
+                    >
+                        Clear filters
+                    </button>
+                )}
             </div>
 
             {loading && (
@@ -111,7 +226,13 @@ export default function AppointmentReview() {
             {!loading && !error && appointments.length === 0 && (
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 py-24 flex flex-col items-center gap-4">
                     <CalendarCheck size={44} className="text-gray-300" />
-                    <p className="text-gray-400 font-medium">No appointments pending review.</p>
+                    <p className="text-gray-400 font-medium">
+                        {hasFilters
+                            ? "No appointments match your filters."
+                            : status === "pending_admin_review"
+                                ? "No appointments pending review."
+                                : `No ${tabLabel.toLowerCase()} appointments.`}
+                    </p>
                 </div>
             )}
 
@@ -181,7 +302,14 @@ export default function AppointmentReview() {
                                         <p className="text-xs text-gray-400 mt-1">Submitted {fmtDate(appt.created_at)}</p>
                                     </div>
 
-                                    {/* Action buttons */}
+                                    {/* Action buttons — only pending appointments can be reviewed */}
+                                    {appt.status !== "pending_admin_review" ? (
+                                        <div className="shrink-0 lg:pt-6">
+                                            <span className={`px-3 py-1.5 rounded-full text-sm font-semibold ${STATUS_BADGE[appt.status] || "bg-gray-100 text-gray-600"}`}>
+                                                {STATUS_TABS.find(t => t.value === appt.status)?.label ?? appt.status}
+                                            </span>
+                                        </div>
+                                    ) : (
                                     <div className="flex items-center gap-3 shrink-0 lg:pt-6">
                                         <button
                                             type="button"
@@ -203,6 +331,7 @@ export default function AppointmentReview() {
                                             {rj.open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                                         </button>
                                     </div>
+                                    )}
                                 </div>
 
                                 {/* Inline rejection form */}

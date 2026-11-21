@@ -4,6 +4,7 @@ import { useSelector } from "react-redux";
 import { Users, Brain, TriangleAlert, FileCheck, UserRound, ChevronRight } from "lucide-react";
 import WelcomeSection from "../components/Dashboard/WelcomeSection";
 import SummaryCard from "../components/Dashboard/SummaryCard";
+import PatientsTreatedChart from "../components/Dashboard/PatientsTreatedChart";
 import { selectToken, selectUser } from "../features/auth/authSlice";
 import { api } from "../utils/api";
 import React, { useEffect, useState, useRef } from "react";
@@ -325,6 +326,11 @@ export default function Dashboard() {
                     onClick={() => switchTab("completed")}
                 />
             </div>
+
+            {/* ── Patients treated chart (own data only) ─────────────────────── */}
+            {!activeTab && profileId && (
+                <PatientsTreatedChart doctorId={profileId} token={token} />
+            )}
 
             {/* ── Overview Preview Lists ─────────────────────────────────────── */}
             {!activeTab && (

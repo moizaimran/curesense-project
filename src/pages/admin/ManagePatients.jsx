@@ -16,6 +16,13 @@ function fmtDate(iso) {
     return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
 }
 
+const EMPTY_FILTERS = {
+    gender: "", min_age: "", max_age: "", profile_complete: "",
+    registered_from: "", registered_to: "",
+};
+
+const fieldCls = "w-full px-4 py-3 rounded-xl border border-gray-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#264296] text-sm";
+
 export default function ManagePatients() {
     const navigate = useNavigate();
     const token    = useSelector(selectToken);
@@ -26,6 +33,7 @@ export default function ManagePatients() {
     const [error,        setError]        = useState(null);
     const [search,       setSearch]       = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [filters,      setFilters]      = useState(EMPTY_FILTERS);
     const [currentPage,  setCurrentPage]  = useState(1);
     const patientsPerPage = 10;
 
@@ -37,16 +45,19 @@ export default function ManagePatients() {
 
     useEffect(() => {
         setCurrentPage(1);
-    }, [debouncedSearch]);
+    }, [debouncedSearch, filters]);
+
+    const setFilter = (key) => (e) => setFilters(f => ({ ...f, [key]: e.target.value }));
+    const hasFilters = search || Object.values(filters).some(Boolean);
 
     useEffect(() => {
         if (!token) return;
         setLoading(true);
-        const params = new URLSearchParams({
-            page:  currentPage,
-            limit: patientsPerPage,
-            ...(debouncedSearch ? { search: debouncedSearch } : {}),
-        });
+        setError(null);
+        const params = new URLSearchParams({ page: currentPage, limit: patientsPerPage });
+        if (debouncedSearch) params.set("search", debouncedSearch);
+        Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
+
         api.get(`/api/patients?${params}`, token)
             .then(data => {
                 setPatients(data.results || []);
@@ -54,7 +65,7 @@ export default function ManagePatients() {
             })
             .catch(err => setError(err.message))
             .finally(() => setLoading(false));
-    }, [token, currentPage, debouncedSearch]);
+    }, [token, currentPage, debouncedSearch, filters]);
 
     const totalPages = Math.ceil(total / patientsPerPage);
 
@@ -65,19 +76,66 @@ export default function ManagePatients() {
                 <p className="text-gray-500 mt-2">View all registered patients.</p>
             </div>
 
-            <div className="flex justify-between items-center mb-8">
-                <div className="w-[420px]">
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-8">
+                <div className="flex flex-col lg:flex-row gap-4 items-center">
                     <input
                         type="text"
-                        placeholder="Search by name or email…"
+                        placeholder="Search by name, email or phone…"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        className="w-full px-5 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#264296]"
+                        className="w-full lg:flex-1 px-5 py-3 rounded-xl border border-gray-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#264296]"
                     />
+                    <button
+                        onClick={() => { setSearch(""); setFilters(EMPTY_FILTERS); }}
+                        disabled={!hasFilters}
+                        className="px-5 py-3 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50 font-medium transition"
+                    >
+                        Reset
+                    </button>
                 </div>
-                <span className="text-sm text-gray-500 font-medium">
-                    {total} patient{total !== 1 ? "s" : ""} registered
-                </span>
+
+                <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mt-4">
+                    <label className="text-xs font-semibold text-gray-500">
+                        Gender
+                        <select value={filters.gender} onChange={setFilter("gender")} className={`${fieldCls} mt-1`}>
+                            <option value="">Any</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                        </select>
+                    </label>
+                    <label className="text-xs font-semibold text-gray-500">
+                        Min age
+                        <input type="number" min="0" max="120" placeholder="e.g. 18" value={filters.min_age}
+                            onChange={setFilter("min_age")} className={`${fieldCls} mt-1`} />
+                    </label>
+                    <label className="text-xs font-semibold text-gray-500">
+                        Max age
+                        <input type="number" min="0" max="120" placeholder="e.g. 60" value={filters.max_age}
+                            onChange={setFilter("max_age")} className={`${fieldCls} mt-1`} />
+                    </label>
+                    <label className="text-xs font-semibold text-gray-500">
+                        Profile
+                        <select value={filters.profile_complete} onChange={setFilter("profile_complete")} className={`${fieldCls} mt-1`}>
+                            <option value="">Any</option>
+                            <option value="true">Complete</option>
+                            <option value="false">Incomplete</option>
+                        </select>
+                    </label>
+                    <label className="text-xs font-semibold text-gray-500">
+                        Registered from
+                        <input type="date" value={filters.registered_from} max={filters.registered_to || undefined}
+                            onChange={setFilter("registered_from")} className={`${fieldCls} mt-1`} />
+                    </label>
+                    <label className="text-xs font-semibold text-gray-500">
+                        Registered to
+                        <input type="date" value={filters.registered_to} min={filters.registered_from || undefined}
+                            onChange={setFilter("registered_to")} className={`${fieldCls} mt-1`} />
+                    </label>
+                </div>
+
+                <p className="text-sm text-gray-500 font-medium mt-4">
+                    {total} patient{total !== 1 ? "s" : ""} {hasFilters ? "match your filters" : "registered"}
+                </p>
             </div>
 
             {error && (
