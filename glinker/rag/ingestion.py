@@ -135,7 +135,10 @@ def _chunks_from_statpearls(max_entries: int | None = None) -> list[dict]:
     """
     from datasets import load_dataset
     print("Loading MedRAG/statpearls ...")
-    ds = load_dataset("MedRAG/statpearls", split="train")
+    ds_dict = load_dataset("MedRAG/statpearls")
+    split_name = list(ds_dict.keys())[0]
+    print(f"  Using split: '{split_name}'")
+    ds = ds_dict[split_name]
     print(f"  {len(ds):,} entries found")
 
     sample     = ds[0]
