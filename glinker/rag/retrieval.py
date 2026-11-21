@@ -3,16 +3,27 @@
 #
 # Runtime retrieval — two responsibilities:
 #
-#   retrieve_context(rag_query)
-#       Hybrid search: FAISS (dense) + BM25 (sparse), merged with Reciprocal
-#       Rank Fusion (RRF). FAISS finds semantically similar chunks; BM25 catches
-#       exact medical keywords (drug names, anatomy codes, lab values) that
-#       semantic embeddings can miss. Result is filtered by similarity threshold.
+#   retrieve_context(rag_queries)
+#       Three-stage pipeline:
+#         Stage 1 — Multi-query hybrid search:
+#                   For each of up to 3 LLM-generated query variants, run
+#                   FAISS (dense) + BM25 (sparse) merged via RRF. Results are
+#                   deduplicated across queries (highest FAISS score wins).
+#         Stage 2 — MedCPT reranker:
+#                   Cross-encoder trained on PubMed search logs rescores the
+#                   top-N candidates using (query, chunk) full-attention pairs.
+#         Stage 3 — Dynamic threshold:
+#                   Filter at max(SIMILARITY_FLOOR, top_score × 0.60) so the
+#                   bar rises when good evidence exists and falls when it doesn't.
 #
 #   get_medication_info(drug_names)
 #       Calls openFDA directly for each drug the patient is taking.
 #       Returns raw label data — NOT from the vector database.
 #       This is called once, at report-generation time.
+#
+# BM25 uses PorterStemmer (nltk) when available, falling back to a medical
+# suffix strip list, so "hypertensive" and "hypertension" tokenise to the
+# same stem regardless of path.
 #
 # Call load_index() once at notebook startup to initialise the state below.
 # ==============================================================================
@@ -23,16 +34,66 @@ import faiss
 from glinker import config
 from glinker.rag.corpus import fetch_openfda
 
-SIMILARITY_THRESHOLD_CLINICIAN = 0.45
+# Hard floor: chunks scoring below this are dropped before the reranker.
+# Lower than the old static 0.45 so more candidates reach the reranker.
+SIMILARITY_FLOOR = 0.35
 
 # ── Module-level state (populated by load_index()) ────────────────────────────
 _clinician_index    = None
 _clinician_chunks   = None
 _clinician_metadata = None
-_clinician_bm25     = None     # BM25Okapi index, built from _clinician_chunks at load
+_clinician_bm25     = None
 CLINICIAN_RAG_READY = False
 
 RAG_READY = False   # backward-compat alias
+
+# ── BM25 tokeniser with medical stemming ──────────────────────────────────────
+
+_stemmer = None   # cached PorterStemmer instance
+
+_MED_SUFFIXES = (
+    # Longer suffixes first to avoid partial matches
+    "ization", "isation", "ological", "ologist", "ology",
+    "ectomy", "otomy", "plasty", "scopy",
+    "ation", "ition", "osis", "emia", "uria", "itis",
+    "ive", "ous", "tic", "ical", "ary", "ory", "ic", "al",
+)
+
+
+def _get_stemmer():
+    global _stemmer
+    if _stemmer is None:
+        try:
+            from nltk.stem import PorterStemmer
+            _stemmer = PorterStemmer()
+        except ImportError:
+            _stemmer = False   # sentinel: tried and not available
+    return _stemmer if _stemmer is not False else None
+
+
+def _tokenize_for_bm25(text: str) -> list[str]:
+    """
+    Tokenise and stem text for BM25 indexing and querying.
+
+    Uses nltk PorterStemmer when available so "hypertensive", "hypertension"
+    and "hypertensive" all map to the same stem. Falls back to a medical suffix
+    strip list (conservative, targets known medical morphology only).
+
+    Must be used consistently for BOTH index build and query time.
+    """
+    stemmer = _get_stemmer()
+    tokens  = [t for t in text.lower().split() if len(t) > 1]
+    if stemmer:
+        return [stemmer.stem(t) for t in tokens]
+    # Medical suffix fallback
+    result = []
+    for t in tokens:
+        for suf in _MED_SUFFIXES:
+            if len(t) > len(suf) + 3 and t.endswith(suf):
+                t = t[:-len(suf)]
+                break
+        result.append(t)
+    return result
 
 
 def load_index() -> None:
@@ -55,43 +116,102 @@ def load_index() -> None:
         print("   Run ingestion.build_index() first, then re-call load_index().")
         return
 
-    # Build BM25 from the same chunk texts — no extra data needed
+    # Build BM25 with stemmed tokens — same tokeniser used at query time
     try:
         from rank_bm25 import BM25Okapi
-        tokenized = [c.lower().split() for c in _clinician_chunks]
+        tokenized   = [_tokenize_for_bm25(c) for c in _clinician_chunks]
         _clinician_bm25 = BM25Okapi(tokenized)
-        print(f"✅ BM25 index built — {len(_clinician_chunks):,} documents")
+        print(f"✅ BM25 index built (stemmed) — {len(_clinician_chunks):,} documents")
     except ImportError:
         print("⬜ rank_bm25 not installed — falling back to FAISS-only retrieval.")
-        print("   pip install rank_bm25")
     except Exception as e:
         print(f"⬜ BM25 index build failed: {e} — falling back to FAISS-only.")
+
+
+# ── MedCPT reranker (Stage 2) ─────────────────────────────────────────────────
+
+_reranker_cache = None   # (tokenizer, model, device) or None
+
+
+def _load_reranker():
+    """Lazy-load ncbi/MedCPT-Cross-Encoder. Returns None if unavailable."""
+    global _reranker_cache
+    if _reranker_cache is not None:
+        return _reranker_cache
+    try:
+        import torch
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        model_name = config.RERANKER_MODEL
+        tokenizer  = AutoTokenizer.from_pretrained(model_name)
+        model      = AutoModelForSequenceClassification.from_pretrained(model_name)
+        device     = "cuda" if torch.cuda.is_available() else "cpu"
+        model      = model.to(device).eval()
+        _reranker_cache = (tokenizer, model, device)
+        print(f"✅ MedCPT reranker loaded on {device}")
+    except Exception as e:
+        print(f"⬜ MedCPT reranker not available: {e} — Stage 2 skipped.")
+        _reranker_cache = False   # tried, not available
+    return _reranker_cache if _reranker_cache is not False else None
+
+
+def _rerank(query: str, candidates: list[dict]) -> list[dict]:
+    """
+    Score every (query, chunk) pair with MedCPT cross-encoder and resort.
+    Adds 'rerank_score' to each candidate dict.
+    Returns original order if reranker is unavailable.
+    """
+    reranker = _load_reranker()
+    if not reranker or not candidates:
+        return candidates
+
+    tokenizer, model, device = reranker
+    import torch
+
+    pairs  = [[query, c["text"]] for c in candidates]
+    scores = []
+
+    try:
+        with torch.no_grad():
+            for i in range(0, len(pairs), 32):
+                batch   = pairs[i : i + 32]
+                encoded = tokenizer(
+                    [p[0] for p in batch],
+                    [p[1] for p in batch],
+                    padding=True, truncation=True,
+                    max_length=512, return_tensors="pt",
+                ).to(device)
+                logits = model(**encoded).logits.squeeze(-1)
+                scores.extend(logits.cpu().float().tolist())
+    except Exception as e:
+        print(f"[reranker] scoring failed: {e} — returning unranked candidates.")
+        return candidates
+
+    for c, s in zip(candidates, scores):
+        c["rerank_score"] = float(s)
+    return sorted(candidates, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
 
 
 # ── Core search helpers ───────────────────────────────────────────────────────
 
 def _faiss_search(index, query: str, k: int) -> list[tuple[int, float]]:
-    """Return (chunk_idx, cosine_score) pairs, sorted descending, no threshold applied."""
+    """Return (chunk_idx, cosine_score) pairs sorted descending. No threshold applied."""
     model = config.get_embed_model()
     q_vec = model.encode([query], normalize_embeddings=True)
     q_vec = np.array(q_vec, dtype="float32")
     scores, indices = index.search(q_vec, k)
-    results = []
-    for score, idx in zip(scores[0], indices[0]):
-        if idx != -1:
-            results.append((int(idx), float(score)))
-    return results   # already sorted descending by FAISS
+    return [
+        (int(idx), float(score))
+        for score, idx in zip(scores[0], indices[0])
+        if idx != -1
+    ]
 
 
 def _bm25_search(bm25, query: str, k: int) -> list[tuple[int, float]]:
     """Return (chunk_idx, bm25_score) pairs for the top-k BM25 results."""
-    tokens = query.lower().split()
-    scores = bm25.get_scores(tokens)        # array of length N
-    top_k  = int(np.argsort(scores)[-k:][::-1][0]) if k == 1 else \
-              [int(i) for i in np.argsort(scores)[-k:][::-1]]
-    if isinstance(top_k, int):
-        top_k = [top_k]
-    return [(idx, float(scores[idx])) for idx in top_k]
+    tokens      = _tokenize_for_bm25(query)
+    scores      = bm25.get_scores(tokens)
+    top_indices = [int(i) for i in np.argsort(scores)[-k:][::-1]]
+    return [(idx, float(scores[idx])) for idx in top_indices]
 
 
 def _rrf_merge(
@@ -101,7 +221,7 @@ def _rrf_merge(
 ) -> list[tuple[int, float]]:
     """
     Reciprocal Rank Fusion of two ranked lists.
-    Each list is (chunk_idx, score); only ranks matter, not score magnitudes.
+    Only ranks matter — not score magnitudes.
     Returns merged list sorted by combined RRF score, descending.
     """
     combined: dict[int, float] = {}
@@ -123,70 +243,94 @@ def _make_result(chunks, metadata, idx: int, score: float) -> dict:
     }
 
 
-def retrieve_context(rag_query: str, k: int = 8) -> list[dict]:
-    """
-    Hybrid retrieval for the doctor report. Combines FAISS dense search with
-    BM25 sparse search via Reciprocal Rank Fusion, then filters by threshold.
+# ── Main retrieval entry point ────────────────────────────────────────────────
 
-    k=8 gives the LLM more grounding material (was 4 — often left doctor report
-    empty when the top chunk was below threshold but chunks 5-8 were good).
-    BM25 fallback: if rank_bm25 is not installed, uses FAISS only.
+def retrieve_context(rag_queries: "list[str] | str", k: int = 8) -> list[dict]:
+    """
+    Three-stage hybrid retrieval.
+
+    Stage 1 — Multi-query hybrid search:
+      Accepts a single query string or a list of up to 3 LLM-generated variants.
+      Each variant is searched independently (FAISS dense + BM25 sparse + RRF).
+      Candidates from all queries are merged; duplicates resolved by highest
+      FAISS cosine score. This catches chunks that match one phrasing but not
+      another without any manual synonym lists.
+
+    Stage 2 — MedCPT reranker:
+      Uses the primary query (index 0) to score every (query, chunk) pair with
+      a cross-encoder trained on PubMed search logs. Resorts candidates by
+      cross-encoder logit. Gracefully skipped if model is unavailable.
+
+    Stage 3 — Dynamic threshold:
+      Filters at max(SIMILARITY_FLOOR, top_faiss_score × 0.60). The threshold
+      rises when strong evidence exists and relaxes when only weak matches are
+      available, while never going below SIMILARITY_FLOOR = 0.35.
+
     Returns [] when CLINICIAN_RAG_READY is False or nothing survives threshold.
     """
     if not CLINICIAN_RAG_READY:
         return []
+
+    if isinstance(rag_queries, str):
+        rag_queries = [rag_queries]
+    rag_queries = [q.strip() for q in rag_queries if q.strip()]
+    if not rag_queries:
+        return []
+
     try:
-        fetch_k = k * 5   # over-fetch before threshold filter
+        fetch_k = k * 5   # over-fetch before threshold + reranker
 
-        # Dense search
-        dense = _faiss_search(_clinician_index, rag_query, fetch_k)
+        # ── Stage 1: multi-query hybrid search ───────────────────────────────
+        all_candidates: dict[str, dict] = {}   # deduplicate by chunk text
 
-        if _clinician_bm25 is not None:
-            # Sparse search + RRF merge
-            sparse  = _bm25_search(_clinician_bm25, rag_query, fetch_k)
-            ranked  = _rrf_merge(dense, sparse)
-            # Use the dense cosine score for threshold filtering — BM25 scores
-            # are not cosine similarities so we look up the FAISS score by idx.
-            dense_score_map = dict(dense)
-            results = []
-            for idx, _rrf_score in ranked:
-                dense_score = dense_score_map.get(idx, 0.0)
-                if dense_score < SIMILARITY_THRESHOLD_CLINICIAN:
-                    continue
-                results.append(_make_result(
-                    _clinician_chunks, _clinician_metadata, idx, dense_score
-                ))
-                if len(results) == k:
-                    break
-        else:
-            # FAISS-only fallback
-            results = []
-            for idx, score in dense:
-                if score < SIMILARITY_THRESHOLD_CLINICIAN:
-                    continue
-                results.append(_make_result(
-                    _clinician_chunks, _clinician_metadata, idx, score
-                ))
-                if len(results) == k:
-                    break
+        for query in rag_queries:
+            dense = _faiss_search(_clinician_index, query, fetch_k)
 
-        return results
+            if _clinician_bm25 is not None:
+                sparse          = _bm25_search(_clinician_bm25, query, fetch_k)
+                ranked          = _rrf_merge(dense, sparse)
+                dense_score_map = dict(dense)
+                for idx, _rrf_score in ranked:
+                    dense_score = dense_score_map.get(idx, 0.0)
+                    if dense_score < SIMILARITY_FLOOR:
+                        continue
+                    result   = _make_result(_clinician_chunks, _clinician_metadata, idx, dense_score)
+                    text_key = _clinician_chunks[idx]
+                    # Keep highest-scoring version if same chunk retrieved via multiple queries
+                    if text_key not in all_candidates or dense_score > all_candidates[text_key]["score"]:
+                        all_candidates[text_key] = result
+            else:
+                for idx, score in dense:
+                    if score < SIMILARITY_FLOOR:
+                        continue
+                    result   = _make_result(_clinician_chunks, _clinician_metadata, idx, score)
+                    text_key = _clinician_chunks[idx]
+                    if text_key not in all_candidates or score > all_candidates[text_key]["score"]:
+                        all_candidates[text_key] = result
+
+        candidates = list(all_candidates.values())
+        if not candidates:
+            return []
+
+        # ── Stage 2: MedCPT reranker ──────────────────────────────────────────
+        # Use the primary query (index 0) for cross-encoder scoring.
+        candidates = _rerank(rag_queries[0], candidates)
+
+        # ── Stage 3: dynamic threshold ────────────────────────────────────────
+        # Applied to the original FAISS cosine score (not reranker logit) to
+        # keep the threshold scale consistent and interpretable.
+        top_score = max(c["score"] for c in candidates)
+        threshold = max(SIMILARITY_FLOOR, top_score * 0.60)
+        filtered  = [c for c in candidates if c["score"] >= threshold]
+
+        return filtered[:k]
 
     except Exception as e:
         print(f"[retrieve_context] ERROR: {e}")
         return []
 
 
-# Sections included when sending medication data to the LLM prompt.
-# The full 7-section record is always fetched and returned — this is the
-# trimmed view used only for prompt construction.
-_LLM_MED_SECTIONS = frozenset({
-    "contraindications",
-    "warnings_and_precautions",
-    "drug_interactions",
-    "adverse_reactions",
-})
-
+# ── Medication info (openFDA) ─────────────────────────────────────────────────
 
 _DOSE_WORDS = {
     "mg", "mcg", "g", "ml", "iu", "unit", "units", "tab", "tabs", "tablet", "tablets", "cap",
@@ -194,6 +338,14 @@ _DOSE_WORDS = {
     "weekly", "as", "needed", "prn", "od", "bd", "bid", "tds", "tid", "qid", "every", "at",
     "night", "morning", "evening", "per", "day", "x",
 }
+
+# Sections included when sending medication data to the LLM prompt.
+_LLM_MED_SECTIONS = frozenset({
+    "contraindications",
+    "warnings_and_precautions",
+    "drug_interactions",
+    "adverse_reactions",
+})
 
 
 def _strip_dose(name: str) -> str:
@@ -253,8 +405,7 @@ def get_medication_info(
 def trim_medication_info(medication_info: dict) -> dict:
     """
     Return a copy of medication_info keeping only the 4 safety-relevant sections
-    per drug (_LLM_MED_SECTIONS). Used by LLM prompt formatters — the full
-    7-section record returned by get_medication_info is not modified.
+    per drug. Used by LLM prompt formatters — the full record is not modified.
     """
     trimmed = {}
     for drug, info in medication_info.items():

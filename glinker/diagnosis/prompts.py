@@ -27,10 +27,17 @@ FINALIZE_PROMPT = (
     "condition, medication, allergy, trigger). For modifier categories (severity, duration, "
     "dosage, frequency, body part) set it to the exact keyword of what it modifies.\n"
     "\n"
-    "JOB 2 — RAG QUERY. Write a dense clinical search string for vector retrieval. "
-    "Compact keyword sequence: chief complaint + site + character + duration + severity "
-    "+ associated features + relevant medications. Put in \"ragQuery\".\n"
-    "  Good: \"right-sided throbbing headache photophobia nausea 6/10 two days losartan hypertension\"\n"
+    "JOB 2 — RAG QUERIES. Write THREE dense clinical search strings for vector retrieval, "
+    "each phrasing the same clinical situation from a different angle. "
+    "ALWAYS write full medical terms — NEVER use abbreviations (write 'hypertension' not 'HTN', "
+    "'myocardial infarction' not 'MI', 'chronic obstructive pulmonary disease' not 'COPD'). "
+    "Put all three in \"ragQueries\" (array of 3 strings):\n"
+    "  ragQueries[0] — symptom-focused: chief complaint + site + character + duration + associated features\n"
+    "  ragQueries[1] — condition-focused: likely condition names + clinical context + relevant medications\n"
+    "  ragQueries[2] — treatment-focused: management approach + drug class + relevant comorbidities\n"
+    "  Good[0]: \"right-sided throbbing headache photophobia nausea two days\"\n"
+    "  Good[1]: \"migraine presentation right temporal headache visual sensitivity losartan hypertension\"\n"
+    "  Good[2]: \"acute migraine episode antihypertensive losartan blood pressure\"\n"
     "  Bad:  \"Patient has had a headache on the right side since yesterday.\"\n"
     "\n"
     "JOB 3 — DIAGNOSTIC QUERY. Write a symptom-focused keyword string specifically "
@@ -87,7 +94,7 @@ FINALIZE_SCHEMA = {
                     "additionalProperties": False,
                 },
             },
-            "ragQuery"       : {"type": "string"},
+            "ragQueries"     : {"type": "array", "items": {"type": "string"}},
             "diagnosticQuery": {"type": "string"},
             "medications": {
                 "type": "array",
@@ -102,7 +109,7 @@ FINALIZE_SCHEMA = {
                 },
             },
         },
-        "required"            : ["entities", "ragQuery", "diagnosticQuery", "medications"],
+        "required"            : ["entities", "ragQueries", "diagnosticQuery", "medications"],
         "additionalProperties": False,
     },
 }
@@ -153,10 +160,11 @@ FINALIZE_FEWSHOT = [
                 {"category": "frequency",         "keyword": "one time every day", "relates_to": "Losartan"},
                 {"category": "medical condition", "keyword": "blood pressure",     "relates_to": ""},
             ],
-            "ragQuery": (
-                "right-sided throbbing headache photophobia nausea 6/10 two days "
-                "losartan 50mg daily hypertension"
-            ),
+            "ragQueries": [
+                "right-sided throbbing headache photophobia nausea two days",
+                "migraine presentation right temporal headache visual sensitivity losartan hypertension",
+                "acute headache episode antihypertensive losartan blood pressure right side",
+            ],
             "diagnosticQuery": (
                 "throbbing headache right side nausea light sensitivity photophobia "
                 "moderate severe constant two days"

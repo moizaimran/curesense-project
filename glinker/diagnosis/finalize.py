@@ -56,7 +56,7 @@ def finalize_report(transcript_text: str, gliner_entities: list[dict],
 
     fallback = {
         "entities"       : [{"category": e["category"], "keyword": e["text"], "relates_to": ""} for e in gliner_entities],
-        "ragQuery"       : "",
+        "ragQueries"     : ["", "", ""],
         "diagnosticQuery": "",
         "medications"    : [],
     }

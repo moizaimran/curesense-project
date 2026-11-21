@@ -17,7 +17,14 @@ whisper_model   = None
 embedding_model = None   # SentenceTransformer, loaded on first use by get_embed_model()
 
 # ── Embedding (local, free, GPU-accelerated) ──────────────────────────────────
-EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"    # 768-dim, stronger medical retrieval; rebuild both indexes after changing
+# bge-large: 1024-dim, 335M params — 3-5% better MTEB retrieval vs bge-base.
+# Changing this requires a full rebuild of both RAG and disease indexes on Kaggle.
+EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
+
+# ── Reranker (Stage 2 of retrieval pipeline) ──────────────────────────────────
+# MedCPT: trained on PubMed search logs — domain-matched for biomedical text.
+# Loaded lazily on first retrieve_context() call; ~440MB on GPU.
+RERANKER_MODEL = "ncbi/MedCPT-Cross-Encoder"
 
 def get_embed_model():
     """Load (or return cached) SentenceTransformer embedding model."""

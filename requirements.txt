@@ -9,9 +9,11 @@ rank_bm25
 tiktoken
 datasets
 sentence-transformers==2.7.0
+transformers>=4.40.0
 pandas
 numpy
 rapidfuzz
 Pillow>=10.4.0,<11.0
 pdfplumber
 pypdfium2
+nltk

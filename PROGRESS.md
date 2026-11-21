@@ -7,46 +7,74 @@
 **LLM**
 - Model: `gpt-5.6-luna` (reasoning model, lighter/cheaper than GPT-4 class)
 - `reasoning_effort: low` — minimal hidden reasoning tokens (billed same as output)
-- Token limits: interview turns 500 · finalize 1200 · combined report 1500
+- Token limits: interview turns 1000 · finalize 1200 · diagnosis/assessment 2000
 - Structured outputs enforced via `response_format: json_schema, strict: True` on every call
+- Safety cap: interview auto-closes at turn 12 without an LLM call
 
 **GLiNER — Medical NER**
 - Model: `Ihor/gliner-biomed-bi-large-v1.0` on CUDA
 - 10 labels: symptom, medical condition, body part, severity, duration, medication, dosage, frequency, allergy, trigger
 - Threshold: 0.4 confidence · runs once after interview completes
 
-**Embedding (RAG)**
-- Model: `BAAI/bge-small-en-v1.5` (local, GPU, free — zero OpenAI cost)
-- Dim: 384 · L2-normalised vectors · FAISS IndexFlatIP
+**Embedding (RAG + Disease)**
+- Model: `BAAI/bge-base-en-v1.5` (768-dim, local, GPU, free — zero OpenAI cost)
+- L2-normalised vectors · FAISS IndexFlatIP
+- Note: rebuild both indexes if the model is changed
 
 **Speech-to-Text**
 - Model: `openai/whisper-large` on CUDA
 - `task="translate"` — any language → English directly
-- Runs only on voice turns, before LLM spelling-correction pass
+- Transcribed via dedicated `/audio/transcribe` endpoint before the interview turn is processed
 
 ---
 
 ## Knowledge Base (RAG)
 
-- **Sources:** `MedRAG/textbooks` (5,000 entries) + `epfl-llm/guidelines` (2,000 entries)
+- **Sources:** `MedRAG/textbooks` + `epfl-llm/guidelines` (NICE, CDC, CMA, WHO, ICRC, CCO, SPOR, PubMed) + `MedRAG/statpearls`
+- **Excluded:** WikiDoc (`audience: "patient"`) — patient summary LLM receives clinician chunks and writes in plain language
 - **Chunking:** 600 tokens / 100 overlap at sentence boundaries
-- **Index:** FAISS `IndexFlatIP` · 44,231 vectors · cosine similarity
-- **Threshold:** 0.45 similarity score to include a chunk
+- **Embedding:** `BAAI/bge-large-en-v1.5` (1024-dim, 335M params) — upgraded from bge-base; rebuild both indexes after changing
+- **Index:** FAISS `IndexFlatIP` · cosine similarity · **rebuild required** after adding StatPearls + bge-large upgrade
+- **k=8** chunks returned; over-fetches k×5 before floor filter
+- **Retrieval pipeline — 3 stages:**
+
+  **Stage 1 — Multi-query hybrid search**
+  - LLM generates 3 `ragQueries` variants (symptom-focused / condition-focused / treatment-focused)
+  - Each variant is searched via FAISS dense + BM25 sparse + RRF; results merged across all 3 queries
+  - Deduplication: same chunk from multiple queries keeps highest FAISS score
+  - Hard floor `SIMILARITY_FLOOR = 0.35` before reranker (was static 0.45)
+  - BM25 uses `_tokenize_for_bm25()` with PorterStemmer (nltk) — "hypertensive" and "hypertension" stem identically
+  - Falls back to medical suffix stripping if nltk not installed; falls back to FAISS-only if rank_bm25 not installed
+
+  **Stage 2 — MedCPT cross-encoder reranker**
+  - `ncbi/MedCPT-Cross-Encoder` — trained on PubMed search logs; ~440MB; loaded lazily
+  - Scores every (primary_query, chunk) pair with full cross-attention; resorts candidates by logit
+  - Gracefully skipped if model unavailable (falls back to FAISS/RRF order)
+
+  **Stage 3 — Dynamic threshold**
+  - Threshold = `max(0.35, top_faiss_score × 0.60)`
+  - Rises when strong evidence exists (top=0.85 → threshold=0.51); relaxes for weaker matches
+  - Applied to original FAISS cosine score (not reranker logit) for consistent scale
+
+- **Retrieval status:** `grounded` if max score ≥ 0.65; `partial` otherwise; `no_relevant_content` if empty
 - **Medications:** NOT in vector DB — fetched live from openFDA API per drug per visit
-- **Saved as:** `uresense-rag-index` Kaggle dataset (skip rebuild on next session)
+- **Abbreviations in queries:** LLM instructed to never use abbreviations in ragQueries (write full terms)
+- **Saved as:** `curesense-indexes` Kaggle dataset (loads in seconds; **rebuild needed** for bge-large + StatPearls)
 
 ---
 
-## Disease Ranking Module
+## Disease Retrieval Module
 
-- **Method:** TF-IDF (`max_features=30,000`, `ngram_range=(1,3)`, `sublinear_tf=True`)
-- **Data:** 9 Kaggle symptom-disease CSVs · 359,632 rows · 2,127 unique diseases
-- **Input:** LLM-generated `diagnosticQuery` (symptom-only plain terms, no meds/conditions)
-  plus verified symptom/body-part/trigger/severity/duration entity keywords
-- **Scoring:** 60% TF-IDF cosine similarity + 40% symptom keyword overlap
-  (overlap = fraction of patient's verified symptom keywords found in disease's dataset entry)
-- **Output:** top-5 ranked diseases with confidence scores (normalized to 100)
-- **Query split:** `diagnosticQuery` for TF-IDF · `ragQuery` (dense clinical terms incl. meds) for FAISS
+- **Method:** FAISS semantic search (replaces the old TF-IDF ranker)
+- **Data:** HPO + ICD-10 disease paragraphs, indexed with `bge-base-en-v1.5`
+- **Index:** `disease_index/disease_index.faiss` · loaded via `load_disease_index()`
+- **Query:** symptom/trigger/body-part/severity/duration keywords from verified entities + LLM `diagnosticQuery`
+  - Medications excluded from query — they bias toward medication-specific conditions
+  - BGE instruction prefix added: `"Represent this sentence for searching relevant passages: "`
+- **Similarity threshold:** 0.65
+- **Top-K:** 5 candidates returned to the LLM
+- **Filter:** disease entries named after a reported symptom (e.g. "Cough", "Sore Throat") are skipped — not diagnoses
+- **Graceful degradation:** returns `[]` if index not loaded; LLM falls back to clinical knowledge
 
 ---
 
@@ -63,6 +91,12 @@ MongoDB Atlas         Flask + Ngrok  (Kaggle T4 GPU, CureSense_AI_Modules/)
 
 Flask is **stateless** — Express sends full context on every request. Flask never writes to DB.
 
+**Kaggle dual-GPU split:**
+- GPU 0 → Flask (Whisper + GLiNER + RAG/disease FAISS)
+- GPU 1 → MedGemma FastAPI (port 5002)
+- FastAPI proxy on port 5003 routes `/analyze/*` → MedGemma, everything else → Flask
+- Single ngrok URL exposes both services via the proxy
+
 ---
 
 ## Complete Pipeline Flow (with responsible files)
@@ -72,7 +106,7 @@ Flask is **stateless** — Express sends full context on every request. Flask ne
 ```
 Patient types or speaks
         ↓
-[Voice only] glinker/interview/session.py — Whisper transcribes audio → English text
+[Voice only] POST /audio/transcribe → Whisper → English text
         ↓
 POST /interview/turn  (api/app.py)
         ↓
@@ -82,12 +116,17 @@ glinker/interview/session.py → run_interview_turn()
     - SOCRATES framework: Site, Onset, Character, Radiation, Associations,
       Time/duration, Exacerbating/relieving, Severity
     - Also covers medications and allergies
-    - STOP EARLY: only complete after ALL 8 SOCRATES dimensions + meds + allergies answered
-  · Returns: { status: "continue"|"complete", message, correctedPatientText }
+    - Credits volunteered info — never asks about something already answered
+    - Never repeats a question (reads own history each turn)
+    - Emergency: adds 1-line safety message then keeps interviewing (never completes early)
+    - STOP RULE: all 10 items must be ticked before status=complete
+    - Safety cap: turn ≥ 12 → Flask returns complete without calling LLM
+  · Returns: { status: "continue"|"complete", message, correctedPatientText,
+               questionType, options, sessionName }
         ↓
 Express (Backend/controllers/sessionController.js)
   · Saves turn to session.transcript[]
-  · If voice: audio uploaded to Cloudinary first, URL sent to Flask
+  · If voice: audio uploaded to Cloudinary first, URL sent to Flask /audio/transcribe
   · Repeats until status = "complete"
 ```
 
@@ -109,48 +148,41 @@ Express sends joined correctedPatientText → POST /pipeline/finalize (api/app.p
 - 3 jobs in one LLM call:
   - JOB 1: Verify/clean GLiNER entities (affirmed? concrete? right category? links modifiers)
   - JOB 2: Write `ragQuery` — dense clinical keywords including meds, for FAISS vector search
-  - JOB 3: Write `diagnosticQuery` — symptom-only plain terms, NO meds/conditions, for TF-IDF
-- Returns: `{ entities[], ragQuery, diagnosticQuery }`
+  - JOB 3: Write `diagnosticQuery` — symptom-only plain terms, NO meds/conditions, for disease FAISS
+  - Also maps every medication (interview + profile) to its US generic name for openFDA
+- Returns: `{ entities[], ragQuery, diagnosticQuery, medications[] }`
 
 **Step 3 — RAG Retrieval** `glinker/rag/retrieval.py → retrieve_context()`
-- Embeds `ragQuery` using BAAI/bge-small-en-v1.5
-- Searches FAISS index (44,231 medical textbook + guideline vectors)
-- Returns top chunks with score ≥ 0.45
+- Hybrid search: FAISS dense + BM25 sparse, merged via RRF
+- Returns up to 8 chunks with score ≥ 0.45
 
-**Step 4 — Disease Ranking** `glinker/disease/ranker.py → rank_diseases()`
-- Input: verified entities + `diagnosticQuery`
-- TF-IDF cosine similarity against 359K rows
-- Blended score: 60% TF-IDF + 40% symptom keyword overlap
-- Returns top-5 diseases with normalized confidence
+**Step 4 — Disease Retrieval** `glinker/disease/disease_retrieval.py → retrieve_diseases()`
+- Semantic FAISS search against HPO + ICD-10 disease paragraph index
+- Returns top-5 disease candidates with ICD code + similarity confidence
+- Symptom-named matches filtered out
 
 **Step 5 — openFDA** `glinker/rag/retrieval.py → get_medication_info()`
-- Extracts medication-category entities from verified list
-- Live HTTP call to openFDA API per drug
-- Returns label sections: indications, contraindications, adverse reactions, dosage
+- Extracts medication entities from verified list + profile medications
+- Resolves brand/local names to US generics using the finalize step's mapping
+- Deduplicates by generic name (Losartan + Losartan 50mg daily = one call)
+- Returns `label_found: false` with empty sections when nothing found (never skips)
+- LLM receives trimmed view of only 4 safety sections: contraindications, warnings_and_precautions, drug_interactions, adverse_reactions
 
-**Step 6 — Combined Report** `glinker/diagnosis/combined_report.py → generate_combined_report()`
-- Schema: `COMBINED_REPORT_SCHEMA` · Prompt: `COMBINED_REPORT_PROMPT` (`glinker/diagnosis/prompts.py`)
-- **Single LLM call** producing all three sections:
+**Step 6 — LLM Call 1: Diagnosis Assessment** `glinker/diagnosis/assessment.py → generate_diagnosis_assessment()`
+- Takes: verified entities + disease candidates + medication info + retrieved chunks + transcript + patient profile
+- 3 jobs in one call:
+  - JOB 1: Evaluate each disease candidate → `interpretedDiagnoses[]` with `plausibility` (likely/possible/unlikely), `clinicalReason`, `patientNote`, `icd_code`
+  - JOB 2: Flag medication safety → `medicationFlags[]` (drug, flag, severity, source)
+  - JOB 3: Assess emergency status → `emergencyWarning` {triggered, reason, message}
+- `verified` on each medicationFlag is set **in code** (never by LLM) — True only when openFDA returned a real label
+- Emergency double-verified: LLM result merged with `check_emergency_list()` code-based check; either source can trigger it
 
-  **Section A — Doctor Report** (clinical language)
-  - Interview clinical summary · retrieval & medication summary
-  - Recommended specialty + reasoning
-  - Guideline considerations (each cited to source)
-  - Medication flags from openFDA (each cited)
-  - Retrieval status + confidence note
+**Steps 7 & 8 — LLM Calls 2 & 3: Doctor Report + Patient Summary (concurrent)**
 
-  **Section B — Patient Summary** (plain language)
-  - Patient complaint summary (what they described, no diagnosis)
-  - Referral specialty
-  - Appointment guidance (from retrieved material only, attributed)
-  - Medication notes (plain language, from openFDA)
+Both depend on assessment but are independent of each other — run in parallel via `ThreadPoolExecutor(max_workers=2)`:
 
-  **Section C — Interpreted Diagnoses** (shared by both dashboards)
-  - LLM evaluates every TF-IDF candidate against verified entities
-  - Assigns `plausibility`: `likely` | `possible` | `unlikely`
-  - `clinicalReason`: 1 sentence for doctor (why plausible/implausible)
-  - `patientNote`: 1 plain-language sentence for patient, **empty string if `unlikely`**
-    → patient never sees implausible candidates
+- `glinker/diagnosis/doctor_report.py → generate_doctor_report()` — clinical language, for doctor dashboard
+- `glinker/diagnosis/patient_summary.py → generate_patient_summary()` — plain language, for patient
 
 ---
 
@@ -159,19 +191,16 @@ Express sends joined correctedPatientText → POST /pipeline/finalize (api/app.p
 Flask `/pipeline/finalize` returns:
 ```json
 {
-  "verifiedEntities":     [...],
-  "rankedDiseases":       [...],
-  "ragQuery":             "...",
-  "diagnosticQuery":      "...",
-  "retrievedSources":     [...],
-  "medicationInfo":       {...},
-  "doctorReport":         { interviewClinicalSummary, retrievalAndMedicationSummary,
-                            patientComplaintSummary, recommendedSpecialty, specialtyReasoning,
-                            guidelineConsiderations[], medicationFlags[],
-                            retrievalStatus, confidenceNote },
-  "patientSummary":       { patientComplaintSummary, referralSpecialty,
-                            appointmentGuidance[], medicationNotes[] },
-  "interpretedDiagnoses": [ { disease, plausibility, clinicalReason, patientNote } ]
+  "verifiedEntities"    : [...],
+  "rankedDiseases"      : [...],
+  "ragQuery"            : "...",
+  "diagnosticQuery"     : "...",
+  "retrievedSources"    : [...],
+  "medicationInfo"      : {...},
+  "emergencyWarning"    : { "triggered": bool, "reason": "...", "message": "..." },
+  "interpretedDiagnoses": [ { "disease", "icd_code", "plausibility", "clinicalReason", "patientNote" } ],
+  "doctorReport"        : { ... },
+  "patientSummary"      : { ... }
 }
 ```
 
@@ -186,37 +215,29 @@ status: in_progress | completed | failed | abandoned
 transcript[]: { turn_number, patient_raw, patient_corrected,
                 assistant_message, voice_message_url }
 ```
-Note: entities and disease_ranking were moved to Report (not in Session anymore).
 
 **reports** collection `(Backend/models/Report.js)`
 ```
 session_id (unique) · patient_id · generated_at
 specialty · rag_query · diagnostic_query
 entities[]          ← verified, LLM-cleaned
-disease_ranking[]   ← raw TF-IDF scores (for debugging)
+disease_ranking[]   ← raw semantic scores (for debugging)
 retrieved_chunks[]  · openfda_results
+emergency_warning   ← { triggered, reason, message }
 
-doctor_report {
-  patientComplaintSummary · interviewClinicalSummary
-  retrievalAndMedicationSummary · recommendedSpecialty · specialtyReasoning
-  guidelineConsiderations[] · medicationFlags[]
-  retrievalStatus · confidenceNote
-}
+doctor_report { ... }
+patient_summary { ... }
 
-patient_summary {
-  patientComplaintSummary · referralSpecialty
-  appointmentGuidance[] · medicationNotes[]
-}
-
-interpreted_diagnoses[] {        ← LLM-evaluated, single source for both dashboards
-  disease · plausibility         ← likely | possible | unlikely
-  clinicalReason                 ← for doctor dashboard
-  patientNote                    ← for patient dashboard (empty if unlikely)
+interpreted_diagnoses[] {
+  disease · icd_code
+  plausibility           ← likely | possible | unlikely
+  clinicalReason         ← for doctor dashboard
+  patientNote            ← for patient dashboard (empty string if unlikely)
 }
 ```
 
 **Dashboard access pattern:**
-- Doctor dashboard → reads `doctor_report` + all `interpreted_diagnoses` entries
+- Doctor dashboard → reads `doctor_report` + all `interpreted_diagnoses` entries + `emergency_warning`
 - Patient dashboard → reads `patient_summary` + only `interpreted_diagnoses` where `plausibility != "unlikely"` and `patientNote != ""`
 
 ---
@@ -225,22 +246,29 @@ interpreted_diagnoses[] {        ← LLM-evaluated, single source for both dashb
 
 | File | Job |
 |------|-----|
-| `api/app.py` | Flask entry point · routes · 7-step finalize pipeline · Ngrok launch |
-| `glinker/config.py` | Shared model instances · LLM config (model, tokens, effort) |
-| `glinker/interview/prompts.py` | INTERVIEW_PROMPT (SOCRATES) · INTERVIEW_FEWSHOT |
+| `api/app.py` | Flask entry point · 8-step finalize pipeline · audio/image routes · Ngrok launch |
+| `glinker/config.py` | Shared model instances · LLM config (model, tokens, effort) · embedding model name |
+| `glinker/interview/prompts.py` | INTERVIEW_PROMPT (SOCRATES + stop rule) · INTERVIEW_SCHEMA · INTERVIEW_FEWSHOT |
 | `glinker/interview/session.py` | `run_interview_turn()` — builds message list, calls LLM |
-| `glinker/diagnosis/prompts.py` | FINALIZE_PROMPT/SCHEMA/FEWSHOT · COMBINED_REPORT_PROMPT/SCHEMA |
-| `glinker/diagnosis/finalize.py` | `run_gliner()` · `finalize_report()` — entity verify + ragQuery + diagnosticQuery |
-| `glinker/diagnosis/combined_report.py` | `generate_combined_report()` — single call → doctor + patient + interpretedDiagnoses |
+| `glinker/diagnosis/prompts.py` | FINALIZE_PROMPT/SCHEMA/FEWSHOT |
+| `glinker/diagnosis/finalize.py` | `run_gliner()` · `finalize_report()` — entity verify + ragQuery + diagnosticQuery + generic name map |
+| `glinker/diagnosis/assessment.py` | `generate_diagnosis_assessment()` — Call 1: plausibility + medication flags + emergency |
+| `glinker/diagnosis/assessment_prompts.py` | ASSESSMENT_PROMPT / ASSESSMENT_SCHEMA / ASSESSMENT_FEWSHOT |
+| `glinker/diagnosis/doctor_report.py` | `generate_doctor_report()` — Call 2 (concurrent) |
+| `glinker/diagnosis/doctor_report_prompts.py` | Doctor report prompt + schema |
+| `glinker/diagnosis/patient_summary.py` | `generate_patient_summary()` — Call 3 (concurrent) |
+| `glinker/diagnosis/patient_summary_prompts.py` | Patient summary prompt + schema |
+| `glinker/diagnosis/emergency_flags.py` | `check_emergency_list()` — code-based emergency safety net |
 | `glinker/rag/ingestion.py` | Loads textbooks/guidelines, chunks, embeds, builds FAISS index |
-| `glinker/rag/retrieval.py` | `load_index()` · `retrieve_context()` · `get_medication_info()` (openFDA) |
-| `glinker/disease/ranker.py` | `load_datasets()` · `rank_diseases()` — TF-IDF + overlap blend |
-| `glinker/utils.py` | `parse_json_response()` — safe JSON parse with fallback |
+| `glinker/rag/retrieval.py` | `load_index()` · `retrieve_context()` (hybrid FAISS+BM25+RRF) · `get_medication_info()` · `trim_medication_info()` |
+| `glinker/rag/corpus.py` | `fetch_openfda()` — live openFDA API caller |
+| `glinker/disease/disease_retrieval.py` | `load_disease_index()` · `retrieve_diseases()` — semantic FAISS over HPO/ICD-10 |
+| `glinker/utils.py` | `call_llm()` — LLM call wrapper with fallback · `parse_json_response()` |
 | `Backend/server.js` | Express app setup · 20MB JSON body limit (for voice base64) |
 | `Backend/models/Session.js` | Session schema — transcript turns, status, timestamps |
-| `Backend/models/Report.js` | Report schema — all AI outputs, interpreted_diagnoses |
+| `Backend/models/Report.js` | Report schema — all AI outputs, interpreted_diagnoses, emergency_warning |
 | `Backend/controllers/sessionController.js` | `processTurn()` — orchestrates voice upload, Flask calls, DB writes |
-| `main.ipynb` | Kaggle notebook — loads models, RAG index, disease datasets, launches Flask |
+| `main.ipynb` | Kaggle notebook — loads models, RAG/disease indexes, launches Flask + MedGemma |
 
 ---
 
@@ -251,16 +279,34 @@ POST /api/sessions/:id/turn
   1. Fetch session — 404 if not found
   2. If status completed/failed/abandoned → 409 conflict
   3. If last_activity > 48 h → mark abandoned → 410
-  4. If voice: base64 → Cloudinary (resource_type:"auto") → get secure URL
+  4. If voice: base64 → Cloudinary → POST Flask /audio/transcribe → English text
   5. Build history flatMap from transcript[].patient_corrected
-  6. POST Flask /interview/turn → { status, message, correctedPatientText }
+  6. POST Flask /interview/turn → { status, message, correctedPatientText, ... }
   7. Push turn to transcript[] · increment turn_count
   8. If status "complete":
        POST Flask /pipeline/finalize
-       Create Report { entities, disease_ranking, doctor_report,
-                       patient_summary, interpreted_diagnoses, ... }
+       Create Report { entities, disease_ranking, emergency_warning,
+                       doctor_report, patient_summary, interpreted_diagnoses, ... }
        Return report_id to frontend
 ```
+
+---
+
+## LLM Call Structure (finalize phase)
+
+| Call | Function | Runs | Output |
+|------|----------|------|--------|
+| Finalize | `finalize_report()` | Sequential (must be first) | verified entities, ragQuery, diagnosticQuery, medication generic names |
+| Call 1 | `generate_diagnosis_assessment()` | Sequential (needs finalize output) | interpretedDiagnoses, medicationFlags, emergencyWarning |
+| Call 2 | `generate_doctor_report()` | Concurrent with Call 3 | doctor report sections |
+| Call 3 | `generate_patient_summary()` | Concurrent with Call 2 | patient summary sections |
+
+**Total LLM calls per visit:** ~7-8 (5-6 interview turns + 1 finalize + 1 assessment + 2 report/summary concurrent)
+
+Cost reduced from ~$0.03-0.04 → ~$0.01 by:
+- `reasoning_effort: low`
+- Calls 2 & 3 run concurrently (no wall-clock penalty for the split)
+- Tighter STOP EARLY prompt (fewer interview turns)
 
 ---
 
@@ -268,15 +314,12 @@ POST /api/sessions/:id/turn
 
 | Phase | LLM Calls | Approx tokens |
 |-------|-----------|---------------|
-| Interview (5-6 turns avg) | 5-6 | ~500 output each |
+| Interview (5-6 turns avg) | 5-6 | ~1000 output each |
 | Finalize (entity verify + queries) | 1 | ~1200 output |
-| Combined report (doctor + patient + diagnoses) | 1 | ~1500 output |
-| **Total LLM calls** | **7-8** | |
-
-Cost reduced from ~$0.03-0.04 → ~$0.01 by:
-- Merging doctor + patient into one LLM call (saves 1 call + ~800 tokens)
-- `reasoning_effort: low` (minimal hidden reasoning tokens)
-- Tighter STOP EARLY prompt (fewer interview turns)
+| Assessment (diagnoses + flags + emergency) | 1 | ~2000 output |
+| Doctor Report | 1 | ~800 output |
+| Patient Summary | 1 (concurrent) | ~700 output |
+| **Total LLM calls** | **9-10** | |
 
 ---
 
@@ -284,36 +327,35 @@ Cost reduced from ~$0.03-0.04 → ~$0.01 by:
 
 - GPU: T4 x2 · Python 3.12
 - Secrets: `OpenAI Key` + `Ngrok Key` + `HF_TOKEN` via `UserSecretsClient`
-- RAG index: loaded from `uresense-rag-index` Kaggle dataset (seconds); built from scratch only first time (20-40 min)
-- 9 disease datasets added via Kaggle "Add Data"
 - Cell 1: `git pull` from `hassan-branch` to get latest code
-- Cell 7: `load_datasets()` — rebuilds TF-IDF from 9 CSVs (fast, in-memory)
-- Cell 8: Flask on port 5001 (GPU 0, no tunnel)
+- Cell 1 install: `!pip install -q nltk transformers` (new deps for reranker + BM25 stemmer)
+- RAG index: loaded from `curesense-indexes` Kaggle dataset → `rag_index/` (seconds) — **rebuild needed** (bge-large + StatPearls)
+- Disease index: loaded from `curesense-indexes` Kaggle dataset → `disease_index/` (seconds) — **rebuild needed** (bge-large)
+- Cell 7: `load_disease_index()` — loads disease FAISS from dataset
+- Cell 8: Flask on port 5001 (GPU 0 — Whisper + GLiNER + RAG)
 - Cell 9: MedGemma on 5002 (GPU 1) + reverse proxy on 5003 + single ngrok tunnel → prints one URL for both `AI_SERVICE_URL` and `MEDGEMMA_SERVICE_URL`
-- GitHub: `https://github.com/moizaimran/curesense-project` · AI branch: `hassan-branch` · Backend branch: `backend`
+- GitHub: `https://github.com/moizaimran/curesense-project` · AI branch: `hassan-branch`
 
 ---
 
 ## Images Module (Medical Scan & Document Analysis)
 
-### New Files
+### Flask Endpoints (api/app.py)
+| Endpoint | Job |
+|----------|-----|
+| `POST /images/analyze-pdf` | Extract text via pdfplumber + GPT analysis |
+| `POST /images/correlate-with-report` | Correlate MedGemma/PDF image analysis with the patient's interview report |
+
+### File Responsibilities
 | File | Repo | Job |
 |------|------|-----|
-| `Backend/models/ImageUpload.js` | Backend | MongoDB schema — stores status, result, Cloudinary URL |
+| `Backend/models/ImageUpload.js` | Backend | MongoDB schema — stores status, result, Cloudinary URLs |
 | `Backend/controllers/imageController.js` | Backend | Upload / list / poll endpoints + background AI dispatch |
 | `Backend/routes/imageRoutes.js` | Backend | Mounts `/api/images` routes |
 | `Mobile/app/(patient)/(tabs)/scan.tsx` | Mobile | Full Scan tab UI — picker, upload, polling, result modal |
 | `CureSense_AI_Modules/api/medgemma_app.py` | AI | FastAPI service — X-ray single-image + CT/MRI multi-slice inference |
-
-### Modified Files
-| File | Change |
-|------|--------|
-| `Backend/server.js` | Register `/api/images` routes |
-| `api/app.py` | Added `POST /images/analyze-pdf` (Flask, GPT-based) |
-| `requirements.txt` | Added `pdfplumber`, `pypdfium2` |
-| `main.ipynb` | Dual-GPU split, HF login (Cell 3), Flask-only Cell 8, proxy+MedGemma+ngrok Cell 9 |
-| `Mobile/constants/api.ts` | Updated LAN IP |
-| `Mobile/package.json` | Added `expo-document-picker`, `expo-file-system` |
+| `CureSense_AI_Modules/glinker/images/pdf_analysis.py` | AI | PDF text extraction + GPT analysis |
+| `CureSense_AI_Modules/glinker/images/correlation.py` | AI | `correlate_image_with_report()` — image × interview report cross-reference |
 
 ### End-to-End Flow
 
@@ -342,8 +384,7 @@ scan.tsx → POST /api/images (file_base64, upload_type:"xray")
 **CT / MRI Analysis (MedGemma montage)**
 ```
 scan.tsx → POST /api/images (file_base64, upload_type:"ct_mri")
-  → Backend:
-      create ImageUpload record (status: processing)
+  → Backend: create ImageUpload record (status: processing)
       → try upload original ZIP to Cloudinary (raw, authenticated) → zip_url
         (best-effort; if >~100 MB free-tier limit, zip_url stays "" — analysis continues)
   → POST ngrok/analyze/ct-mri → proxy:5003 → MedGemma FastAPI:5002 (GPU 1)
@@ -355,78 +396,22 @@ scan.tsx → POST /api/images (file_base64, upload_type:"ct_mri")
       Generates thumbnail montage (up to 9 tiles, ~30-100 KB)
   → Returns: { summary, modality, findings[], flagged_abnormal, impression,
                canvas_b64, thumbnail_b64 }
-  → Backend:
-      canvas_b64 → upload to Cloudinary (image, authenticated) → canvas_url
-      thumbnail_b64 → upload to Cloudinary (image, authenticated) → storage_url
-      All three (zip_url, canvas_url, storage_url) on same MongoDB document — _id is the link
-  → Saves analysis to MongoDB (base64 blobs stripped — already in Cloudinary)
+  → Backend: canvas_b64 + thumbnail_b64 → Cloudinary → save URLs to MongoDB
   → Mobile: polls GET /api/images/:id → renders result modal
 ```
 
-**Kaggle Notebook Single-URL Architecture**
-```
-one ngrok URL → FastAPI proxy on port 5003
-  /analyze/*     →  MedGemma FastAPI on 5002  (GPU 1)
-  everything else →  Flask on 5001             (GPU 0 — Whisper + GLiNER)
-```
+### MedGemma Working Config (T4, confirmed)
+- `torch_dtype=torch.bfloat16` — fixes all-pad output; float16 overflows vision encoder activations
+- `attn_implementation="eager"` — prevents dynamo/torch.compile crash on T4
+- `torch._dynamo.config.disable = True` (set BEFORE `from_pretrained`) — prevents per-token JIT attempts
+- `INFERENCE_SLICES = 4` — safe with montage approach (always 1 SigLIP forward pass)
+- **Must be set together** — any combination of only 2 of the 3 fails on T4
 
-### Key Implementation Details
-- **Polling**: Mobile polls every 3s up to 4 min; background job has 12 min timeout guard in Express
-- **Retry policy**: 3 attempts with 1s/2s/4s backoff; HTTP errors (4xx/5xx) surface immediately without retrying
-- **MedGemma fallback parser**: if model returns labeled text instead of JSON (common for 4B), `_parse_text_fallback()` extracts fields via regex
-- **Privacy**: `storage_url` never sent to client; no PHI logged to console
-- **GPU split**: Flask (Whisper + GLiNER) on GPU 0, MedGemma on GPU 1 via `device_map={"": 1}`
-- **Magic byte validation**: upload rejected before any AI call if file type doesn't match declared `upload_type`
-- **CT/MRI storage — three linked assets per record** (all linked by MongoDB document `_id`):
-  - `zip_url` — original ZIP (Cloudinary raw, authenticated). Best-effort; empty if file exceeds free-tier upload limit
-  - `canvas_url` — the 4-slice inference montage (448×1792 JPEG) MedGemma actually analyzed
-  - `storage_url` — compact display thumbnail (up to 9 tiles, 128px each, ~30-100 KB)
-  None of these URLs are sent to the mobile client — they are backend/audit only
-- **MedGemma working config (T4 free tier, confirmed)**:
-  - `torch_dtype=torch.bfloat16` — fixes all-pad output; float16 overflows vision encoder activations
-  - `attn_implementation="eager"` — prevents dynamo/torch.compile crash; T4 cannot compile bfloat16 natively
-  - `torch._dynamo.config.disable = True` (set before `from_pretrained`) — prevents per-token JIT attempts
-  - `INFERENCE_SLICES = 4` — safe with montage approach (always 1 SigLIP forward pass regardless of slice count)
-- **CT/MRI montage approach**: MedGemma 1.5-4B was fine-tuned on single-image tasks. Multi-image format causes "I am a text-based AI" refusal. Slices are stacked into a single 448×(448×N) canvas image and processed identically to X-ray inference
-
-#### How to improve CT/MRI quality in the future
-| Improvement | What to change | Expected gain |
-|---|---|---|
-| More slices | Raise `INFERENCE_SLICES` (memory flat — always 1 SigLIP pass) | Better scan coverage |
-| Better model | Switch to MedGemma 27B or a CT-specialist model | Significantly better accuracy |
-| All-slice analysis | Run inference in batches, aggregate results | Catches small nodules (<5mm) currently missed |
-| Current config | `INFERENCE_SLICES = 4`, montage approach, bfloat16 + eager — confirmed working on T4 | — |
-
----
-
-### CT / MRI ZIP Upload — Supported & Unsupported Cases
-
-#### ✅ Supported
-
-| Case | Structure | How detected |
-|------|-----------|--------------|
-| Hospital CD/DVD export | `DICOM/IM0001`, `IM0002`… (no extension) inside ZIP | Magic bytes: bytes 128–131 == `DICM` |
-| Simple .dcm ZIP | `0001.dcm`, `0002.dcm`… | File extension `.dcm` |
-| .dcm in subfolder | `series1/0001.dcm`… | File extension, any depth |
-| JPEG/PNG exports | `slice001.jpg`… | File extension |
-| Mixed content (viewer software on CD) | DICOM files + `.exe`, `.inf`, `readme.txt` | Non-DICOM files skipped silently |
-| Single .dcm file (no ZIP) | One DICOM slice | pydicom direct read |
-| Single JPEG/PNG (no ZIP) | One image file | PIL direct read |
-
-#### ❌ Not Supported — returns clear error message
-
-| Case | Error shown to user |
-|------|---------------------|
-| ~~**Multiple series in one ZIP**~~ | ~~error~~ → **now auto-selects the largest series** (axial CT wins; scout/coronal/sagittal skipped) |
-| **Philips PAR/REC format** (.par + .rec files) | "Philips PAR/REC format is not supported. Ask your imaging centre for a DICOM export." |
-| **Old DICOM without standard preamble** (pre-1993 equipment) | "Files may be old-format DICOM without the standard header, which is not supported." |
-| **NIfTI format** (.nii, .nii.gz) | Falls through to generic "no supported files found" error |
-| **PDF uploaded into X-ray or CT/MRI slot** | "That looks like a PDF — please use the PDF / Report option instead." |
-| **Image/scan uploaded into PDF slot** | "That looks like an image or scan — please use the X-ray or CT/MRI option instead." |
-
-#### Size limits
-| Type | Max file size |
-|------|--------------|
-| PDF | 40 MB |
-| X-ray | 40 MB |
-| CT / MRI ZIP | 150 MB (~100–300 DICOM slices; MedGemma samples 8 for inference) |
+### CT/MRI ZIP — Supported Formats
+| Supported | Not Supported |
+|-----------|---------------|
+| DICOM files (with/without .dcm extension, magic bytes) | Philips PAR/REC format |
+| .dcm in subfolders | NIfTI (.nii, .nii.gz) |
+| JPEG/PNG slices | Pre-1993 DICOM without standard preamble |
+| Mixed content (viewer exe + DICOM on CD) | PDF uploaded into X-ray/CT slot |
+| Multiple series → auto-selects largest (axial wins) | Image uploaded into PDF slot |

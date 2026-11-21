@@ -165,24 +165,23 @@ def pipeline_finalize():
     # ── 1. GLiNER ─────────────────────────────────────────────────────────────
     gliner_entities = run_gliner(transcript_text)
 
-    # ── 2. Finalize — entity verification + ragQuery + diagnosticQuery ─────────
+    # ── 2. Finalize — entity verification + ragQueries + diagnosticQuery ────────
     report           = finalize_report(transcript_text, gliner_entities, profile_medications)
-    rag_query        = report.get("ragQuery", "")
+    rag_queries      = report.get("ragQueries", [])
+    rag_query        = rag_queries[0] if rag_queries else ""   # primary query for DB / response
     diagnostic_query = report.get("diagnosticQuery", "")
 
-    # ── 3. RAG retrieval — clinician + patient corpus run concurrently ─────────
-    # Both are in-process FAISS searches on separate index objects — no shared
-    # state, so running them in parallel is safe and cuts wall-clock time.
+    # ── 3. RAG retrieval — multi-query hybrid search + MedCPT reranker ─────────
     retrieved_chunks = []
     with ThreadPoolExecutor(max_workers=1) as pool:
-        if rag_query:
-            fut_clinician = pool.submit(retrieve_context, rag_query)
+        if rag_queries and any(rag_queries):
+            fut_clinician = pool.submit(retrieve_context, rag_queries)
             try:
                 retrieved_chunks = fut_clinician.result()
                 n = len(retrieved_chunks)
-                print(f"[RAG-clinician] {n} chunk(s)." if n else "[RAG-clinician] No chunks above threshold.")
+                print(f"[RAG] {n} chunk(s) returned." if n else "[RAG] No chunks above threshold.")
             except Exception as e:
-                print(f"[RAG-clinician] retrieve failed: {e} — continuing without retrieval.")
+                print(f"[RAG] retrieve failed: {e} — continuing without retrieval.")
 
     # ── 4. Disease retrieval — semantic search against HPO + ICD-10 index ─────
     ranked_diseases = []
@@ -249,7 +248,8 @@ def pipeline_finalize():
     return jsonify({
         "verifiedEntities"    : report["entities"],
         "rankedDiseases"      : ranked_diseases,
-        "ragQuery"            : rag_query,
+        "ragQuery"            : rag_query,        # primary query — stored in DB
+        "ragQueries"          : rag_queries,      # all 3 variants — for debugging
         "diagnosticQuery"     : diagnostic_query,
         "retrievedSources"    : retrieved_chunks,
         "medicationInfo"      : medication_info,

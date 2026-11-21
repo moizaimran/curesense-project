@@ -123,6 +123,49 @@ def _chunks_from_textbooks(max_entries: int | None = None) -> list[dict]:
     return all_chunks
 
 
+def _chunks_from_statpearls(max_entries: int | None = None) -> list[dict]:
+    """
+    Load MedRAG/statpearls and convert to clinician chunks.
+
+    StatPearls provides peer-reviewed clinical articles covering differential
+    diagnosis, treatment protocols, and clinical pearls — complementary to
+    textbooks (pathophysiology) and guidelines (population recommendations).
+
+    max_entries: cap for quick testing only. Leave as None for a full corpus build.
+    """
+    from datasets import load_dataset
+    print("Loading MedRAG/statpearls ...")
+    ds = load_dataset("MedRAG/statpearls", split="train")
+    print(f"  {len(ds):,} entries found")
+
+    sample     = ds[0]
+    text_field = next(
+        (f for f in ["content", "text", "passage", "abstract", "body"] if f in sample),
+        None,
+    )
+    if text_field is None:
+        raise ValueError(f"Cannot find text field in MedRAG/statpearls. Keys: {list(sample.keys())}")
+
+    all_chunks = []
+    entries    = ds if max_entries is None else ds.shuffle(seed=42).select(range(min(max_entries, len(ds))))
+    for i, entry in enumerate(entries):
+        text = entry.get(text_field, "").strip()
+        if not text or len(text) < 50:
+            continue
+        meta = {
+            "source"  : entry.get("id", f"statpearls_{i}"),
+            "doc_type": "statpearls",
+            "title"   : entry.get("title", ""),
+            "audience": "clinician",
+        }
+        all_chunks.extend(chunk_text(text, meta))
+        if (i + 1) % 5000 == 0:
+            print(f"  Processed {i+1:,} StatPearls entries ({len(all_chunks):,} chunks so far)")
+
+    print(f"  → {len(all_chunks):,} chunks from StatPearls")
+    return all_chunks
+
+
 def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
     """
     Load epfl-llm/guidelines and convert to chunks.
@@ -232,25 +275,28 @@ def _save_index(chunks: list[dict], index_dir: str, name: str,
 
 
 def build_index(
-    textbooks_limit : int | None = None,
-    guidelines_limit: int | None = None,
+    textbooks_limit  : int | None = None,
+    guidelines_limit : int | None = None,
+    statpearls_limit : int | None = None,
 ) -> bool:
     """
     Build the single clinician FAISS index and save to config.RAG_INDEX_DIR.
 
-    Sources: MedRAG/textbooks + clinician/mixed guidelines.
-    The separate patient index was removed — the patient summary LLM now
-    receives clinician chunks and is prompted to write in plain language,
-    which is more reliable than a separate wikidoc corpus that rarely
-    returned relevant chunks above threshold.
+    Sources:
+      • MedRAG/textbooks   — pathophysiology and clinical reasoning
+      • epfl-llm/guidelines — NICE, CDC, CMA, WHO, ICRC, CCO, SPOR, PubMed
+      • MedRAG/statpearls  — differential diagnosis, treatment protocols, clinical pearls
 
     *_limit params cap entries for quick testing; leave as None for full corpus.
+    WikiDoc excluded (audience: "patient") — patient summary LLM receives clinician
+    chunks and is prompted to write in plain language, which is more reliable.
     """
     index_dir = config.RAG_INDEX_DIR
     os.makedirs(index_dir, exist_ok=True)
 
-    # ── Load datasets ────────────────────────────────────────────────────────
-    textbook_chunks, guideline_chunks = [], []
+    # ── Load all three sources ────────────────────────────────────────────────
+    textbook_chunks, guideline_chunks, statpearls_chunks = [], [], []
+
     try:
         textbook_chunks = _chunks_from_textbooks(max_entries=textbooks_limit)
     except Exception as e:
@@ -261,17 +307,26 @@ def build_index(
     except Exception as e:
         print(f"[ingestion] guidelines failed: {e}")
 
-    if not textbook_chunks and not guideline_chunks:
+    try:
+        statpearls_chunks = _chunks_from_statpearls(max_entries=statpearls_limit)
+    except Exception as e:
+        print(f"[ingestion] statpearls failed: {e}")
+
+    if not textbook_chunks and not guideline_chunks and not statpearls_chunks:
         print("[ingestion] No chunks produced — check dataset access.")
         return False
 
-    # Clinician index: textbooks + clinician/mixed guidelines
-    clinician_chunks = textbook_chunks + [
-        c for c in guideline_chunks
-        if c["metadata"].get("audience") in ("clinician", "mixed")
-    ]
+    # Clinician index: textbooks + clinician/mixed guidelines + StatPearls
+    clinician_chunks = (
+        textbook_chunks
+        + [c for c in guideline_chunks if c["metadata"].get("audience") in ("clinician", "mixed")]
+        + statpearls_chunks
+    )
 
     print(f"\n[Build] {len(clinician_chunks):,} clinician chunks to index.")
+    print(f"        textbooks={len(textbook_chunks):,}  "
+          f"guidelines={len([c for c in guideline_chunks if c['metadata'].get('audience') in ('clinician','mixed')]):,}  "
+          f"statpearls={len(statpearls_chunks):,}")
 
     n_clinician = _save_index(clinician_chunks, index_dir, "clinician")
     print(f"\n✅ Done — clinician index: {n_clinician:,} vectors")
