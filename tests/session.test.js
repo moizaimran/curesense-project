@@ -636,3 +636,209 @@ test("patient_raw stores the text the patient sent, not the AI service's copy", 
   expect(turn.patient_raw).toBe("mera sar bohot dard kar raha hai");
   expect(turn.patient_corrected).toBe("My head hurts a lot.");
 });
+
+// =============================================================================
+// Adaptive checkpoint — differential diagnosis interview phases
+// =============================================================================
+
+const TURN_REPLY = (n) => ({
+  data: {
+    status: "continue", message: `Question ${n}`, correctedPatientText: `Answer ${n}`,
+    questionType: "text", options: [], sessionName: "",
+  },
+});
+
+const CHECKPOINT_REPLY = {
+  data: {
+    diseases: [
+      { name: "Migraine",        icdCode: "G43.9", confidence: 0.87 },
+      { name: "Tension headache", icdCode: "G44.2", confidence: 0.71 },
+    ],
+  },
+};
+
+async function advanceSession(sessionId, token, turns) {
+  for (let i = 0; i < turns; i++) {
+    axios.post.mockResolvedValueOnce(TURN_REPLY(i + 1));
+    await request(app).post(`/api/sessions/${sessionId}/turn`)
+      .set("Authorization", `Bearer ${token}`).send({ patient_text: `Answer ${i + 1}` });
+  }
+}
+
+describe("Adaptive checkpoint — interview phases", () => {
+  test("checkpoint NOT called on turns 1–4", async () => {
+    const { patient, token } = await buildPatientUser("CP1");
+    const session = await Session.create({ patient_id: patient._id });
+
+    for (let i = 0; i < 4; i++) {
+      axios.post.mockResolvedValueOnce(TURN_REPLY(i + 1));
+      await request(app).post(`/api/sessions/${session._id}/turn`)
+        .set("Authorization", `Bearer ${token}`).send({ patient_text: `answer ${i + 1}` });
+    }
+
+    // All 4 calls should be to /interview/turn only — no checkpoint
+    const checkpointCalls = axios.post.mock.calls.filter(c => c[0].includes("/interview/checkpoint"));
+    expect(checkpointCalls).toHaveLength(0);
+
+    const updated = await Session.findById(session._id);
+    expect(updated.interview_diseases).toHaveLength(0);
+  });
+
+  test("checkpoint called after turn 5, diseases saved to session", async () => {
+    const { patient, token } = await buildPatientUser("CP2");
+    const session = await Session.create({ patient_id: patient._id });
+
+    // 4 normal turns
+    await advanceSession(session._id, token, 4);
+
+    // Turn 5: interview turn reply + checkpoint reply
+    axios.post.mockResolvedValueOnce(TURN_REPLY(5));
+    axios.post.mockResolvedValueOnce(CHECKPOINT_REPLY);
+
+    await request(app).post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`).send({ patient_text: "answer 5" });
+
+    const checkpointCalls = axios.post.mock.calls.filter(c => c[0].includes("/interview/checkpoint"));
+    expect(checkpointCalls).toHaveLength(1);
+    expect(checkpointCalls[0][1].history).toHaveLength(10); // 5 turns × 2 messages each
+
+    const updated = await Session.findById(session._id);
+    expect(updated.interview_diseases).toHaveLength(2);
+    expect(updated.interview_diseases[0].name).toBe("Migraine");
+  });
+
+  test("differential_diseases passed to Flask from turn 6 onwards", async () => {
+    const { patient, token } = await buildPatientUser("CP3");
+    const diseases = [{ name: "Migraine", icdCode: "G43.9", confidence: 0.87 }];
+    const session  = await Session.create({
+      patient_id: patient._id,
+      turn_count: 5,
+      interview_diseases: diseases,
+      transcript: Array.from({ length: 5 }, (_, i) => ({
+        turn_number: i + 1, patient_raw: `q${i}`, patient_corrected: `q${i}`,
+        assistant_message: `a${i}`, question_type: "text", question_options: [],
+      })),
+    });
+
+    axios.post.mockResolvedValueOnce(TURN_REPLY(6));
+
+    await request(app).post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`).send({ patient_text: "answer 6" });
+
+    const turnCall = axios.post.mock.calls.find(c => c[0].includes("/interview/turn"));
+    expect(turnCall[1].differential_diseases).toHaveLength(1);
+    expect(turnCall[1].differential_diseases[0]).toMatchObject({ name: "Migraine", icdCode: "G43.9", confidence: 0.87 });
+  });
+
+  test("checkpoint NOT called on turns 6–9 (only at 5 and 10)", async () => {
+    const { patient, token } = await buildPatientUser("CP4");
+    const session = await Session.create({
+      patient_id: patient._id,
+      turn_count: 5,
+      interview_diseases: [{ name: "Migraine", icdCode: "G43.9", confidence: 0.87 }],
+      transcript: Array.from({ length: 5 }, (_, i) => ({
+        turn_number: i + 1, patient_raw: `q${i}`, patient_corrected: `q${i}`,
+        assistant_message: `a${i}`, question_type: "text", question_options: [],
+      })),
+    });
+
+    for (let i = 6; i <= 9; i++) {
+      axios.post.mockResolvedValueOnce(TURN_REPLY(i));
+      await request(app).post(`/api/sessions/${session._id}/turn`)
+        .set("Authorization", `Bearer ${token}`).send({ patient_text: `answer ${i}` });
+    }
+
+    const checkpointCalls = axios.post.mock.calls.filter(c => c[0].includes("/interview/checkpoint"));
+    expect(checkpointCalls).toHaveLength(0);
+  });
+
+  test("checkpoint called again after turn 10, diseases updated", async () => {
+    const { patient, token } = await buildPatientUser("CP5");
+    const session = await Session.create({
+      patient_id: patient._id,
+      turn_count: 9,
+      interview_diseases: [{ name: "Migraine", icdCode: "G43.9", confidence: 0.87 }],
+      transcript: Array.from({ length: 9 }, (_, i) => ({
+        turn_number: i + 1, patient_raw: `q${i}`, patient_corrected: `q${i}`,
+        assistant_message: `a${i}`, question_type: "text", question_options: [],
+      })),
+    });
+
+    const updatedCheckpoint = {
+      data: {
+        diseases: [
+          { name: "Migraine",        icdCode: "G43.9", confidence: 0.92 },
+          { name: "Cluster headache", icdCode: "G44.0", confidence: 0.65 },
+        ],
+      },
+    };
+
+    axios.post.mockResolvedValueOnce(TURN_REPLY(10));
+    axios.post.mockResolvedValueOnce(updatedCheckpoint);
+
+    await request(app).post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`).send({ patient_text: "answer 10" });
+
+    const checkpointCalls = axios.post.mock.calls.filter(c => c[0].includes("/interview/checkpoint"));
+    expect(checkpointCalls).toHaveLength(1);
+
+    const updated = await Session.findById(session._id);
+    expect(updated.interview_diseases).toHaveLength(2);
+    expect(updated.interview_diseases[1].name).toBe("Cluster headache");
+  });
+
+  test("interview_diseases passed to finalize on completion", async () => {
+    const { patient, token } = await buildPatientUser("CP6");
+    const diseases = [{ name: "Migraine", icdCode: "G43.9", confidence: 0.87 }];
+    const session  = await Session.create({
+      patient_id: patient._id,
+      interview_diseases: diseases,
+    });
+
+    axios.post.mockResolvedValueOnce({
+      data: {
+        status: "complete", message: "Thank you.", correctedPatientText: "Done.",
+        questionType: "text", options: [], sessionName: "",
+      },
+    });
+    axios.post.mockResolvedValueOnce({
+      data: {
+        ragQuery: "", diagnosticQuery: "", verifiedEntities: [], rankedDiseases: [],
+        retrievedSources: [], medicationInfo: {}, doctorReport: {}, patientSummary: {},
+        interpretedDiagnoses: [], ragQueries: [],
+      },
+    });
+
+    await request(app).post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`).send({ patient_text: "Done." });
+
+    const finalizeCall = axios.post.mock.calls.find(c => c[0].includes("/pipeline/finalize"));
+    expect(finalizeCall[1].interview_diseases).toHaveLength(1);
+    expect(finalizeCall[1].interview_diseases[0]).toMatchObject({ name: "Migraine", icdCode: "G43.9", confidence: 0.87 });
+  });
+
+  test("checkpoint error on turn 5 → turn still completes, checkpoint_error flag set on session", async () => {
+    const { patient, token } = await buildPatientUser("CP7");
+    const session = await Session.create({ patient_id: patient._id });
+
+    await advanceSession(session._id, token, 4);
+
+    // Turn 5: interview turn succeeds, checkpoint call fails
+    axios.post.mockResolvedValueOnce(TURN_REPLY(5));
+    const checkpointError = Object.assign(new Error("Checkpoint LLM failed"), {
+      response: { status: 500, data: { error: "OpenAI error" } },
+    });
+    axios.post.mockRejectedValueOnce(checkpointError);
+
+    const res = await request(app).post(`/api/sessions/${session._id}/turn`)
+      .set("Authorization", `Bearer ${token}`).send({ patient_text: "answer 5" });
+
+    // Interview must NOT crash — smooth fallback
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("continue");
+
+    // Error flag must be persisted so it's visible for debugging
+    const updated = await Session.findById(session._id);
+    expect(updated.checkpoint_error).toMatch(/^turn_5:/);
+  });
+});

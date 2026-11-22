@@ -35,6 +35,17 @@ const SessionSchema = new mongoose.Schema(
     session_name:    { type: String, default: '' },
     turn_count:      { type: Number, default: 0 },
     transcript:      { type: [TurnSchema], default: [] },
+    interview_diseases: {
+      type: [{
+        name:       { type: String, required: true },
+        icdCode:    { type: String, required: true },
+        confidence: { type: Number, required: true },
+      }],
+      default: [],
+    },
+    // Set when a checkpoint call fails — "turn_5:<message>" or "turn_10:<message>".
+    // Non-null means the interview continued without intermediate disease ranking at that turn.
+    checkpoint_error: { type: String, default: null },
     is_deleted:      { type: Boolean, default: false },
   },
   { timestamps: false }

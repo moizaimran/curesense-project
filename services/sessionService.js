@@ -109,6 +109,8 @@ async function processTurn(sessionId, body, user) {
     patient_text,
     // The title comes from the first turn's own LLM call (retried on turn 2 if it came back empty)
     request_session_name: !session.session_name && session.turn_count < 2,
+    // Inject checkpoint diseases from turn 6 onwards so Flask can ask differential questions
+    ...(session.interview_diseases.length > 0 && { differential_diseases: session.interview_diseases }),
   };
 
   // Throws axios error if Flask call fails — controller handles those separately
@@ -131,6 +133,39 @@ async function processTurn(sessionId, body, user) {
     question_options:  options      ?? [],
   });
   session.turn_count += 1;
+
+  // ── Checkpoint at turn 5 and turn 10 ────────────────────────────────────────
+  // Calls Flask /interview/checkpoint with the full history so far.
+  // Result is stored in session.interview_diseases and passed to Flask on
+  // subsequent turns to guide differential and closing questions.
+  // On failure: logs the full error clearly and sets session.checkpoint_error
+  // so both developers and monitoring can see what went wrong. The interview
+  // turn is NOT aborted — the session continues without intermediate ranking.
+  if (session.turn_count === 5 || session.turn_count === 10) {
+    const checkpointHistory = session.transcript.flatMap((t) => [
+      { role: "user",      content: t.patient_corrected },
+      { role: "assistant", content: t.assistant_message },
+    ]);
+    try {
+      const checkpointResp = await callAI(
+        `${process.env.AI_SERVICE_URL}/interview/checkpoint`,
+        { history: checkpointHistory },
+        30_000
+      );
+      const diseases = checkpointResp.data.diseases ?? [];
+      console.log(`[checkpoint] turn ${session.turn_count}: ${diseases.length} disease(s) identified`);
+      if (diseases.length > 0) {
+        session.interview_diseases = diseases;
+      }
+    } catch (err) {
+      const detail = err.response
+        ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`
+        : (err.message || "unknown error");
+      console.error(`[checkpoint] FAILED at turn ${session.turn_count} — interview continues without differential ranking`);
+      console.error(`[checkpoint] Error detail: ${detail}`);
+      session.checkpoint_error = `turn_${session.turn_count}:${detail}`;
+    }
+  }
 
   if (status === "complete") {
     const fullTranscript = session.transcript.map((t) => t.patient_corrected).join(" ");
@@ -161,6 +196,7 @@ async function processTurn(sessionId, body, user) {
           profile_allergies:    profile.allergies,
           profile_conditions:   profile.conditions,
           specialties:          SPECIALTIES,
+          interview_diseases:   session.interview_diseases,
         },
         180_000   // first report after a Kaggle restart has taken ~120 s (model warm-up)
       );
