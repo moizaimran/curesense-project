@@ -112,3 +112,26 @@ describe("QueryPanel — close button", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
+
+describe("QueryPanel — read-only (closed case)", () => {
+  function mountReadOnly(queries) {
+    return renderWithProviders(
+      <QueryPanel appointmentId={APPT_ID} queries={queries} token={TOKEN} onClose={vi.fn()} readOnly />
+    );
+  }
+
+  test("shows the conversation history without a composer", () => {
+    mountReadOnly(existingMessages);
+    expect(screen.getByText("I have a question")).toBeInTheDocument();
+    expect(screen.getByText("Please bring your records")).toBeInTheDocument();
+    expect(screen.getByText("Conversation history — this case is closed")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/write your query/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send query" })).not.toBeInTheDocument();
+    expect(screen.getByText(/new messages can't be sent/i)).toBeInTheDocument();
+  });
+
+  test("never sends anything", () => {
+    mountReadOnly(existingMessages);
+    expect(api.post).not.toHaveBeenCalled();
+  });
+});

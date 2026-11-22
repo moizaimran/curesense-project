@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
 // Redux fake-data usage commented out — component now uses the real API.
 // import { useDispatch } from "react-redux";
@@ -9,6 +8,9 @@ import { useSelector } from "react-redux";
 import patientPlaceholder from "../../assets/images/patient-avatar.jpg";
 import { selectToken } from "../../features/auth/authSlice";
 import { api } from "../../utils/api";
+import { useSignOut } from "../../features/auth/useSignOut";
+import ChangePasswordCard from "../../components/settings/ChangePasswordCard";
+import NotificationSettings from "../../components/settings/NotificationSettings";
 
 function fmtDate(iso) {
     if (!iso) return "—";
@@ -16,8 +18,8 @@ function fmtDate(iso) {
 }
 
 export default function AdminProfile() {
-    const navigate = useNavigate();
     const token    = useSelector(selectToken);
+    const signOut  = useSignOut("/admin/login");
 
     const [user,      setUser]      = useState(null);
     const [formData,  setFormData]  = useState({ name: "" });
@@ -25,11 +27,6 @@ export default function AdminProfile() {
     const [saveMsg,   setSaveMsg]   = useState(null);
     const [loading,   setLoading]   = useState(true);
 
-    const [passwordData, setPasswordData] = useState({
-        currentPassword: "",
-        newPassword: "",
-        confirmPassword: "",
-    });
 
     useEffect(() => {
         if (!token) return;
@@ -40,7 +37,6 @@ export default function AdminProfile() {
     }, [token]);
 
     const handleChange = e => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
-    const handlePasswordChange = e => setPasswordData(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
     const handleSave = async () => {
         setSaveMsg(null);
@@ -56,15 +52,6 @@ export default function AdminProfile() {
         }
     };
 
-    const handlePasswordUpdate = () => {
-        if (passwordData.newPassword !== passwordData.confirmPassword) {
-            alert("Passwords do not match");
-            return;
-        }
-        // Password change endpoint not yet implemented — placeholder
-        alert("Password update is not yet wired to the backend.");
-        setPasswordData({ currentPassword: "", newPassword: "", confirmPassword: "" });
-    };
 
     if (loading) return <div className="p-8 text-gray-400">Loading…</div>;
     if (!user) return null;
@@ -143,45 +130,6 @@ export default function AdminProfile() {
 
                         <hr className="border-gray-200" />
 
-                        {/* Change Password */}
-                        <div>
-                            <h2 className="text-2xl font-bold text-slate-800 mb-6">Change Password</h2>
-                            <div className="grid grid-cols-3 gap-6">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-600 mb-2">Current Password</label>
-                                    <input
-                                        type="password" name="currentPassword"
-                                        value={passwordData.currentPassword} onChange={handlePasswordChange}
-                                        className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#264296]"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-600 mb-2">New Password</label>
-                                    <input
-                                        type="password" name="newPassword"
-                                        value={passwordData.newPassword} onChange={handlePasswordChange}
-                                        className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#264296]"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-600 mb-2">Confirm Password</label>
-                                    <input
-                                        type="password" name="confirmPassword"
-                                        value={passwordData.confirmPassword} onChange={handlePasswordChange}
-                                        className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#264296]"
-                                    />
-                                </div>
-                            </div>
-                            <button
-                                type="button" onClick={handlePasswordUpdate}
-                                className="mt-8 bg-[#264296] hover:bg-blue-900 text-white px-8 py-3 rounded-xl font-semibold"
-                            >
-                                Update Password
-                            </button>
-                        </div>
-
-                        <hr className="border-gray-200" />
-
                         {/* Account Info */}
                         <div>
                             <h2 className="text-2xl font-bold text-slate-800 mb-6">Account Information</h2>
@@ -202,7 +150,7 @@ export default function AdminProfile() {
                         <div className="flex justify-end">
                             <button
                                 type="button"
-                                onClick={() => navigate("/admin/login")}
+                                onClick={signOut}
                                 className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded-xl font-semibold"
                             >
                                 Logout
@@ -211,6 +159,9 @@ export default function AdminProfile() {
                     </div>
                 </div>
             </div>
+
+            <ChangePasswordCard />
+            <NotificationSettings role="admin" token={token} />
         </div>
     );
 }

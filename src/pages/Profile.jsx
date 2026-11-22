@@ -7,6 +7,9 @@ import { useSelector } from "react-redux";
 
 import DoctorProfileCard from "../components/Profile/DoctorProfileCard";
 import PersonalInfo from "../components/Profile/PersonalInfo";
+import ConsultationFee from "../components/Profile/ConsultationFee";
+import ChangePasswordCard from "../components/settings/ChangePasswordCard";
+import NotificationSettings from "../components/settings/NotificationSettings";
 import { selectToken } from "../features/auth/authSlice";
 import { api } from "../utils/api";
 import doctorPlaceholder from "../assets/images/doctor-avatar.jpg";
@@ -86,13 +89,19 @@ export default function Profile() {
 
             <DoctorProfileCard doctor={profile} />
 
+            <ConsultationFee
+                fee={rawProfile?.consultation_fee ?? 0}
+                token={token}
+                onSaved={(updated) => setRawProfile(updated)}
+            />
+
             <PersonalInfo
                 profile={profile}
                 setProfile={setProfile}
                 isEditing={isEditing}
             />
 
-            <div className="flex justify-end gap-4">
+            <div className="flex justify-end gap-4 -mt-4">
                 {!isEditing ? (
                     <button
                         onClick={() => setIsEditing(true)}
@@ -118,6 +127,9 @@ export default function Profile() {
                     </>
                 )}
             </div>
+
+            <ChangePasswordCard />
+            <NotificationSettings role="doctor" token={token} />
         </div>
     );
 }

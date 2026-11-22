@@ -27,6 +27,7 @@ import doctorPlaceholder from "../../assets/images/doctor-avatar.jpg";
 import { selectToken } from "../../features/auth/authSlice";
 import { api } from "../../utils/api";
 import { RatingBadge } from "../../components/common/StarRating";
+import { formatPKR } from "../../utils/payment";
 
 // Map backend status values to display labels + badge colours
 const STATUS_DISPLAY = {
@@ -227,6 +228,9 @@ export default function ManageDoctors() {
                                     <p className="text-gray-500 mt-1">{doc.specialty}</p>
                                     <p className="text-gray-500">{[doc.hospital_clinic, doc.location?.city].filter(Boolean).join(" · ")}</p>
                                     <p className="text-sm text-blue-700 mt-1">PMDC: {doc.pmdc_number}</p>
+                                    <p className="text-sm text-slate-600 mt-1">
+                                        Fee: <span className="font-semibold">{doc.consultation_fee > 0 ? formatPKR(doc.consultation_fee) : "Free"}</span>
+                                    </p>
                                     <RatingBadge rating={doc.rating} className="mt-1" />
                                 </div>
                             </div>

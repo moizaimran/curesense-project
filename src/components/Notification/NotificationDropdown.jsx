@@ -1,85 +1,54 @@
-
-import NotificationItem from "./NotificationItem";
+import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
-import { markAllAsRead } from "../../features/notifications/notificationSlice";
-import { useDispatch } from "react-redux";
+import { BellOff } from "lucide-react";
+import NotificationItem from "./NotificationItem";
+import { markAllNotificationsRead } from "../../features/notifications/notificationSlice";
+import { selectToken } from "../../features/auth/authSlice";
 
-export default function NotificationDropdown({notifications}) {
+// Bell dropdown: latest 8 notifications, mark all, link to the full page.
+export default function NotificationDropdown({ notifications, unreadCount, onClose }) {
     const navigate = useNavigate();
     const dispatch = useDispatch();
+    const token    = useSelector(selectToken);
+    const latest   = notifications.slice(0, 8);
 
-    const unreadCount = notifications.filter(
-        (notification) => !notification.read
-    ).length;
-
-    const handleMarkAll = () => {
-    dispatch(markAllAsRead());
-};
     return (
-
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-200 w-96">
-
-            {/* Header */}
-
+        <div className="bg-white rounded-2xl shadow-xl border border-gray-200 w-96 z-50">
             <div className="flex justify-between items-center p-5 border-b">
-
                 <div>
-
-                    <h2 className="text-lg font-bold text-slate-800">
-
-                        Notifications
-
-                    </h2>
-
-                    <p className="text-sm text-gray-500">
-
-                        {unreadCount} unread notifications
-
-                    </p>
-
+                    <h2 className="text-lg font-bold text-slate-800">Notifications</h2>
+                    <p className="text-sm text-gray-500">{unreadCount} unread</p>
                 </div>
-
                 <button
-    onClick={handleMarkAll}
-    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
->
-
-    Mark all
-
-</button>
-
+                    type="button"
+                    onClick={() => dispatch(markAllNotificationsRead({ token }))}
+                    disabled={unreadCount === 0}
+                    className="text-sm text-blue-600 hover:text-blue-700 font-medium disabled:text-gray-300"
+                >
+                    Mark all read
+                </button>
             </div>
-
-            {/* Notifications */}
 
             <div className="max-h-96 overflow-y-auto">
-
-                {notifications.map((notification) => (
-
-                    <NotificationItem
-                      key={notification.id}
-                      notification={notification}
-                             />
-
-                ))}
-
+                {latest.length === 0 ? (
+                    <div className="py-10 text-center text-gray-400">
+                        <BellOff size={28} className="mx-auto mb-2" />
+                        <p className="text-sm">You're all caught up.</p>
+                    </div>
+                ) : (
+                    latest.map((n) => <NotificationItem key={n._id} notification={n} onNavigate={onClose} />)
+                )}
             </div>
 
-            {/* Footer */}
-
-            <div className="border-t p-4">
-
-                <button onClick={()=> navigate("/notifications")}
-                className="w-full text-center text-blue-600 hover:text-blue-700 font-medium">
-
-                    View All Notifications
-
+            <div className="p-4 border-t text-center">
+                <button
+                    type="button"
+                    onClick={() => { navigate("/notifications"); onClose?.(); }}
+                    className="text-sm font-semibold text-blue-600 hover:text-blue-700"
+                >
+                    View all notifications
                 </button>
-
             </div>
-
         </div>
-
     );
-
 }

@@ -134,6 +134,50 @@ export default function Settings() {
                 </div>
 
             </div>
+
+            {/* Payment Accounts */}
+
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+
+                <h2 className="text-2xl font-bold text-slate-800">
+                    Payment Accounts
+                </h2>
+                <p className="text-gray-500 text-sm mt-1 mb-6">
+                    Patients pay consultation fees into these CureSense accounts (never directly to the doctor).
+                    Leave a wallet empty to hide it at checkout.
+                </p>
+
+                <div className="grid grid-cols-2 gap-6">
+                    {[
+                        ["easypaisaAccountTitle",  "EasyPaisa account title",  "e.g. CureSense Pvt Ltd"],
+                        ["easypaisaAccountNumber", "EasyPaisa account number", "e.g. 03001234567"],
+                        ["jazzcashAccountTitle",   "JazzCash account title",   "e.g. CureSense Pvt Ltd"],
+                        ["jazzcashAccountNumber",  "JazzCash account number",  "e.g. 03001234567"],
+                    ].map(([name, label, placeholder]) => (
+                        <div key={name}>
+                            <label htmlFor={name} className="block mb-2 font-medium">{label}</label>
+                            <input
+                                id={name}
+                                type="text"
+                                name={name}
+                                value={formData[name] || ""}
+                                placeholder={placeholder}
+                                onChange={handleChange}
+                                className="w-full border rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-[#264296]"
+                            />
+                        </div>
+                    ))}
+                </div>
+
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 mt-6">
+                    Card payments are running in <strong>sandbox (test) mode</strong>: only test cards such as
+                    4242 4242 4242 4242 are accepted and no real money moves. Connect a payment gateway
+                    with merchant keys to take real card payments. EasyPaisa/JazzCash payments are real
+                    transfers to the numbers above — check each transaction ID before approving.
+                </p>
+
+            </div>
+
                         {/* AI Configuration */}
 
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">

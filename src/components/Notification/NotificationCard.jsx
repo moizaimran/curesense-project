@@ -1,188 +1,55 @@
-import {
-    UserPlus,
-    Brain,
-    AlertTriangle,
-    Image,
-    CheckCircle,
-    CalendarClock,
-    ArrowRight,
-} from "lucide-react";
-
+import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
+import { ArrowRight } from "lucide-react";
+import { markNotificationRead } from "../../features/notifications/notificationSlice";
+import { selectToken } from "../../features/auth/authSlice";
+import NotificationIcon from "./NotificationIcon";
+import { NOTIFICATION_TYPES, timeAgo } from "../../utils/notificationTypes";
 
+// Full-width card on the Notifications page.
 export default function NotificationCard({ notification }) {
-
     const navigate = useNavigate();
+    const dispatch = useDispatch();
+    const token    = useSelector(selectToken);
+    const meta     = NOTIFICATION_TYPES[notification.type];
 
-    const getIcon = () => {
-
-        switch (notification.type) {
-
-            case "new_patient":
-                return <UserPlus size={24} className="text-blue-600" />;
-
-            case "ai_completed":
-                return <Brain size={24} className="text-purple-600" />;
-
-            case "high_severity":
-                return <AlertTriangle size={24} className="text-red-600" />;
-
-            case "image_uploaded":
-                return <Image size={24} className="text-green-600" />;
-
-            case "doctor_review":
-                return <CheckCircle size={24} className="text-emerald-600" />;
-
-            case "follow_up":
-                return <CalendarClock size={24} className="text-orange-600" />;
-
-            default:
-                return <Brain size={24} />;
-        }
-
-    };
+    function open() {
+        if (!notification.read) dispatch(markNotificationRead({ token, id: notification._id }));
+        if (notification.link) navigate(notification.link);
+    }
 
     return (
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition">
-
-            {/* Top */}
-
-            <div className="flex justify-between">
-
-                <div className="flex gap-4">
-
-                    <div className="mt-1">
-
-                        {getIcon()}
-
+        <div className={`rounded-2xl shadow-sm border p-6 transition hover:shadow-md ${notification.read ? "bg-white border-gray-100" : "bg-blue-50/60 border-blue-100"}`}>
+            <div className="flex justify-between gap-4">
+                <div className="flex gap-4 min-w-0">
+                    <NotificationIcon type={notification.type} size={22} />
+                    <div className="min-w-0">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{meta?.label}</p>
+                        <h2 className="text-lg font-semibold text-slate-800 mt-0.5">{notification.title}</h2>
+                        {notification.message && <p className="text-gray-600 mt-1">{notification.message}</p>}
+                        <p className="text-sm text-gray-400 mt-2">{timeAgo(notification.created_at)}</p>
                     </div>
-
-                    <div>
-
-                        <h2 className="text-xl font-semibold text-slate-800">
-
-                            {notification.title}
-
-                        </h2>
-
-                        <p className="text-gray-600 mt-1">
-
-                            {notification.message}
-
-                        </p>
-
-                    </div>
-
                 </div>
+                {!notification.read && <span className="w-3 h-3 rounded-full bg-blue-600 mt-2 shrink-0" aria-label="Unread" />}
+            </div>
 
+            <div className="flex justify-end gap-4 mt-4">
                 {!notification.read && (
-
-                    <span className="w-3 h-3 rounded-full bg-blue-600 mt-2"></span>
-
+                    <button
+                        type="button"
+                        onClick={() => dispatch(markNotificationRead({ token, id: notification._id }))}
+                        className="text-sm font-medium text-gray-500 hover:text-gray-700"
+                    >
+                        Mark as read
+                    </button>
                 )}
-
-            </div>
-
-            {/* Details */}
-
-            <div className="grid grid-cols-2 gap-6 mt-6">
-
-                <div>
-
-                    <p className="text-sm text-gray-500">
-
-                        Patient
-
-                    </p>
-
-                    <p className="font-semibold">
-
-                        {notification.patientName}
-
-                    </p>
-
-                </div>
-
-                <div>
-
-                    <p className="text-sm text-gray-500">
-
-                        Time
-
-                    </p>
-
-                    <p className="font-semibold">
-
-                        {notification.createdAt}
-
-                    </p>
-
-                </div>
-
-                {notification.severity && (
-
-                    <div>
-
-                        <p className="text-sm text-gray-500">
-
-                            Severity
-
-                        </p>
-
-                        <p className="font-semibold">
-
-                            {notification.severity}
-
-                        </p>
-
-                    </div>
-
+                {notification.link && (
+                    <button type="button" onClick={open}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold">
+                        Open case <ArrowRight size={16} />
+                    </button>
                 )}
-
-                {notification.confidence && (
-
-                    <div>
-
-                        <p className="text-sm text-gray-500">
-
-                            Confidence
-
-                        </p>
-
-                        <p className="font-semibold text-green-600">
-
-                            {notification.confidence}%
-
-                        </p>
-
-                    </div>
-
-                )}
-
             </div>
-
-            {/* Button */}
-
-            <div className="mt-8 flex justify-end">
-
-                <button
-                    onClick={() =>
-                        navigate(`/patients/${notification.patientId}`)
-                    }
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl transition"
-                >
-
-                    Open Patient
-
-                    <ArrowRight size={18} />
-
-                </button>
-
-            </div>
-
         </div>
-
     );
-
 }

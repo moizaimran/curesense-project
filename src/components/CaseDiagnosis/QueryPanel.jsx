@@ -119,6 +119,8 @@ export default function QueryPanel({
     onClose,
     onUnreadCleared,
     onDoctorMessageSent,
+    // Closed cases (completed / cancelled): show the history, no composer
+    readOnly = false,
 }) {
     const [messages, setMessages] = useState(initialQueries || []);
     const [text, setText] = useState("");
@@ -208,9 +210,11 @@ export default function QueryPanel({
                         </div>
 
                         <div>
-                            <h2 className="font-bold text-slate-800">Patient Query</h2>
+                            <h2 className="font-bold text-slate-800">{readOnly ? "Messages" : "Patient Query"}</h2>
                             <p className="text-xs text-slate-500">
-                                Send a question or clarification to the patient
+                                {readOnly
+                                    ? "Conversation history — this case is closed"
+                                    : "Send a question or clarification to the patient"}
                             </p>
                         </div>
                     </div>
@@ -235,7 +239,9 @@ export default function QueryPanel({
                                 </div>
                                 <p className="font-semibold text-slate-700">No messages yet</p>
                                 <p className="text-sm text-slate-500 mt-1">
-                                    Write your first query below. After it is sent, this case will move to Ongoing.
+                                    {readOnly
+                                        ? "No messages were exchanged on this case."
+                                        : "Write your first query below. After it is sent, this case will move to Ongoing."}
                                 </p>
                             </div>
                         </div>
@@ -275,7 +281,14 @@ export default function QueryPanel({
                     )}
                 </div>
 
-                {/* Composer */}
+                {/* Composer (hidden on closed cases) */}
+                {readOnly ? (
+                    <div className="border-t border-slate-200 bg-white px-5 py-4">
+                        <p className="text-sm text-slate-500">
+                            This case is closed, so new messages can't be sent. The patient can book a follow-up appointment to continue.
+                        </p>
+                    </div>
+                ) : (
                 <div className="border-t border-slate-200 bg-white p-4">
                     <div className="flex items-end gap-3">
                         <textarea
@@ -308,6 +321,7 @@ export default function QueryPanel({
                         </p>
                     </div>
                 </div>
+                )}
             </div>
         </>
     );

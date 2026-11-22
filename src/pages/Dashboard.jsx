@@ -5,6 +5,7 @@ import { Users, Brain, TriangleAlert, FileCheck, UserRound, ChevronRight } from 
 import WelcomeSection from "../components/Dashboard/WelcomeSection";
 import SummaryCard from "../components/Dashboard/SummaryCard";
 import PatientsTreatedChart from "../components/Dashboard/PatientsTreatedChart";
+import CaseOverview from "../components/Dashboard/CaseOverview";
 import { selectToken, selectUser } from "../features/auth/authSlice";
 import { api } from "../utils/api";
 import React, { useEffect, useState, useRef } from "react";
@@ -330,6 +331,11 @@ export default function Dashboard() {
             {/* ── Patients treated chart (own data only) ─────────────────────── */}
             {!activeTab && profileId && (
                 <PatientsTreatedChart doctorId={profileId} token={token} />
+            )}
+
+            {/* ── Case status + this month vs last month (own data only) ───── */}
+            {!activeTab && profileId && (
+                <CaseOverview doctorId={profileId} token={token} />
             )}
 
             {/* ── Overview Preview Lists ─────────────────────────────────────── */}

@@ -3,6 +3,8 @@ import { useSelector } from "react-redux";
 import { CalendarCheck, UserRound, Stethoscope, ChevronDown, ChevronUp, CheckCircle2, XCircle } from "lucide-react";
 import { selectToken } from "../../features/auth/authSlice";
 import { api } from "../../utils/api";
+import PaymentInfo from "../../components/admin/Appointments/PaymentInfo";
+import { paymentReadyForApproval, PAYMENT_STATUS_META } from "../../utils/payment";
 
 function calcAge(dob) {
     if (!dob) return null;
@@ -33,7 +35,7 @@ const STATUS_BADGE = {
     no_show:              "bg-gray-100 text-gray-600",
 };
 
-const EMPTY_FILTERS = { specialty: "", date_from: "", date_to: "" };
+const EMPTY_FILTERS = { specialty: "", date_from: "", date_to: "", payment_status: "" };
 
 const fieldCls = "w-full px-4 py-2.5 rounded-xl border border-gray-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#264296] text-sm";
 
@@ -75,34 +77,44 @@ export default function AppointmentReview() {
         if (debouncedSearch) params.set("search", debouncedSearch);
         Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
 
+        // Ignore responses from superseded requests (e.g. quickly switching tabs)
+        let cancelled = false;
         api.get(`/api/appointments/admin?${params}`, token)
             .then(data => {
+                if (cancelled) return;
                 setAppointments(data.results ?? []);
                 setTotal(data.total ?? 0);
             })
-            .catch(err => setError(err.message))
-            .finally(() => setLoading(false));
+            .catch(err => { if (!cancelled) setError(err.message); })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
     }, [token, status, debouncedSearch, filters]);
 
     const setFilter = (key) => (e) => setFilters(f => ({ ...f, [key]: e.target.value }));
     const hasFilters = search || Object.values(filters).some(Boolean);
     const tabLabel = STATUS_TABS.find(t => t.value === status)?.label ?? status;
 
-    // After approve/reject: drop it from the pending tab, or update its badge elsewhere
-    function applyDecision(id, newStatus) {
+    // After approve/reject: drop it from the pending tab, or update it in place elsewhere
+    function applyDecision(id, updated) {
         if (status === "pending_admin_review") {
             setAppointments(prev => prev.filter(a => a._id !== id));
             setTotal(prev => Math.max(0, prev - 1));
         } else {
-            setAppointments(prev => prev.map(a => a._id === id ? { ...a, status: newStatus } : a));
+            setAppointments(prev => prev.map(a => a._id === id
+                ? { ...a, status: updated.status, payment: updated.payment ?? a.payment }
+                : a));
         }
+    }
+
+    function updatePayment(id, payment) {
+        setAppointments(prev => prev.map(a => a._id === id ? { ...a, payment } : a));
     }
 
     async function handleApprove(appt) {
         setApproving(prev => ({ ...prev, [appt._id]: true }));
         try {
-            await api.patch(`/api/appointments/admin/${appt._id}/review`, { decision: "approve" }, token);
-            applyDecision(appt._id, "confirmed");
+            const data = await api.patch(`/api/appointments/admin/${appt._id}/review`, { decision: "approve" }, token);
+            applyDecision(appt._id, data.appointment ?? { status: "confirmed" });
         } catch (err) {
             alert(`Approval failed: ${err.message}`);
         } finally {
@@ -130,8 +142,8 @@ export default function AppointmentReview() {
         }
         setRejecting(prev => ({ ...prev, [appt._id]: { ...prev[appt._id], submitting: true, err: "" } }));
         try {
-            await api.patch(`/api/appointments/admin/${appt._id}/review`, { decision: "reject", rejection_reason: rj.reason.trim() }, token);
-            applyDecision(appt._id, "rejected");
+            const data = await api.patch(`/api/appointments/admin/${appt._id}/review`, { decision: "reject", rejection_reason: rj.reason.trim() }, token);
+            applyDecision(appt._id, data.appointment ?? { status: "rejected" });
             closeReject(appt._id);
         } catch (err) {
             setRejecting(prev => ({ ...prev, [appt._id]: { ...prev[appt._id], submitting: false, err: err.message } }));
@@ -146,12 +158,12 @@ export default function AppointmentReview() {
                     <h1 className="text-3xl font-bold text-slate-800">Appointment Review</h1>
                     {!loading && (
                         <span className="bg-yellow-100 text-yellow-800 text-sm font-semibold px-3 py-1 rounded-full">
-                            {total} {tabLabel.toLowerCase()}
+                            {total} {status === "all" ? "total" : tabLabel.toLowerCase()}
                         </span>
                     )}
                 </div>
                 <p className="text-gray-500 mt-1">
-                    Review and approve or reject first-time patient–doctor appointments before the doctor gains access.
+                    Verify payments and approve or reject appointments before the doctor gains access.
                 </p>
             </div>
 
@@ -175,7 +187,7 @@ export default function AppointmentReview() {
 
             {/* Search + filters */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 items-end">
+                <div className="grid grid-cols-1 lg:grid-cols-6 gap-3 items-end">
                     <label className="text-xs font-semibold text-gray-500 lg:col-span-2">
                         Search
                         <input
@@ -202,6 +214,15 @@ export default function AppointmentReview() {
                         Slot to
                         <input type="date" value={filters.date_to} min={filters.date_from || undefined}
                             onChange={setFilter("date_to")} className={`${fieldCls} mt-1`} />
+                    </label>
+                    <label className="text-xs font-semibold text-gray-500">
+                        Payment
+                        <select value={filters.payment_status} onChange={setFilter("payment_status")} className={`${fieldCls} mt-1`}>
+                            <option value="">Any payment</option>
+                            {Object.entries(PAYMENT_STATUS_META).map(([value, m]) => (
+                                <option key={value} value={value}>{m.label}</option>
+                            ))}
+                        </select>
                     </label>
                 </div>
                 {hasFilters && (
@@ -231,7 +252,9 @@ export default function AppointmentReview() {
                             ? "No appointments match your filters."
                             : status === "pending_admin_review"
                                 ? "No appointments pending review."
-                                : `No ${tabLabel.toLowerCase()} appointments.`}
+                                : status === "all"
+                                    ? "No appointments yet."
+                                    : `No ${tabLabel.toLowerCase()} appointments.`}
                     </p>
                 </div>
             )}
@@ -244,6 +267,7 @@ export default function AppointmentReview() {
                         const rj   = rejecting[appt._id] ?? {};
                         const busy = approving[appt._id] || rj.submitting;
                         const age  = calcAge(p?.dob);
+                        const paymentOk = paymentReadyForApproval(appt.payment);
 
                         return (
                             <div key={appt._id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
@@ -313,12 +337,15 @@ export default function AppointmentReview() {
                                     <div className="flex items-center gap-3 shrink-0 lg:pt-6">
                                         <button
                                             type="button"
-                                            disabled={busy}
+                                            disabled={busy || !paymentOk}
+                                            title={paymentOk ? undefined : "Waiting for the patient's payment"}
                                             onClick={() => handleApprove(appt)}
-                                            className="flex items-center gap-1.5 bg-[#264296] hover:bg-[#1e3480] disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-semibold transition"
+                                            className="flex items-center gap-1.5 bg-[#264296] hover:bg-[#1e3480] disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-xl text-sm font-semibold transition"
                                         >
                                             <CheckCircle2 size={16} />
-                                            {approving[appt._id] ? "Approving…" : "Approve"}
+                                            {approving[appt._id]
+                                                ? "Approving…"
+                                                : appt.payment?.required ? "Verify payment & Approve" : "Approve"}
                                         </button>
                                         <button
                                             type="button"
@@ -332,6 +359,17 @@ export default function AppointmentReview() {
                                         </button>
                                     </div>
                                     )}
+                                </div>
+
+                                {/* Payment — the admin verifies it while approving */}
+                                <div className="mt-5 pt-5 border-t border-gray-100">
+                                    <p className="text-xs uppercase tracking-wider text-gray-400 font-semibold mb-2">Payment</p>
+                                    <PaymentInfo
+                                        appointmentId={appt._id}
+                                        payment={appt.payment}
+                                        token={token}
+                                        onChange={(payment) => updatePayment(appt._id, payment)}
+                                    />
                                 </div>
 
                                 {/* Inline rejection form */}

@@ -7,7 +7,11 @@ import { useLocation } from "react-router-dom";
 import NotificationDropdown from "../Notification/NotificationDropdown";
 
 import { useState,useEffect,useRef } from "react";
-import { useSelector } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
+import { fetchNotifications, selectNotifications, selectUnreadCount } from "../../features/notifications/notificationSlice";
+import { selectToken } from "../../features/auth/authSlice";
+
+const POLL_MS = 60_000; // check for new notifications every minute
 const pageTitles = {
         "/": "Dashboard",
         "/patients": "Patients",
@@ -21,9 +25,19 @@ export default function NavBar() {
     const location = useLocation();
     const [showNotifications, setShowNotifications] = useState(false);
     // 
-    const notifications = useSelector(
-    (state) => state.notifications.notifications
-);
+    const dispatch      = useDispatch();
+    const token         = useSelector(selectToken);
+    const notifications = useSelector(selectNotifications);
+    const unreadCount   = useSelector(selectUnreadCount);
+
+    // Load now, then poll while the tab is visible
+    useEffect(() => {
+        if (!token) return;
+        const load = () => { if (document.visibilityState === "visible") dispatch(fetchNotifications({ token })); };
+        load();
+        const t = setInterval(load, POLL_MS);
+        return () => clearInterval(t);
+    }, [dispatch, token]);
     const notificationRef = useRef();
     useEffect(() => {
 
@@ -45,9 +59,7 @@ export default function NavBar() {
     };
 
 }, []);
-const unreadCount = notifications.filter(
-    (item) => !item.read
-).length;
+
 
     
 
@@ -86,7 +98,11 @@ const unreadCount = notifications.filter(
 
         <div className="absolute right-0 mt-3">
 
-            <NotificationDropdown notifications={notifications}  />
+            <NotificationDropdown
+                notifications={notifications}
+                unreadCount={unreadCount}
+                onClose={() => setShowNotifications(false)}
+            />
 
         </div>
 

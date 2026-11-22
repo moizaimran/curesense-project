@@ -1365,6 +1365,21 @@ export default function CaseDiagnosis() {
                 )}
 
 
+                {/* Closed case: read-only conversation history */}
+                {!canQuery && appt.queries?.length > 0 && (
+
+                    <button
+                        type="button"
+                        onClick={() => setShowQuery(true)}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border border-slate-200 bg-white hover:border-blue-300 text-slate-700 transition"
+                    >
+                        <MessageCircle size={16} />
+                        View Messages ({appt.queries.length})
+                    </button>
+
+                )}
+
+
                 {canQuery && (
 
                     <button
@@ -2114,6 +2129,7 @@ export default function CaseDiagnosis() {
                 <QueryPanel
                     appointmentId={appointmentId}
                     queries={appt.queries || []}
+                    readOnly={!canQuery}
                     token={token}
                     onClose={() => setShowQuery(false)}
                     onUnreadCleared={() =>

@@ -50,8 +50,11 @@ function ChartTooltip({ active, payload, period }) {
     );
 }
 
-// "Patients treated" for one doctor — only completed cases count.
-export default function PatientsTreatedChart({ doctorId, token }) {
+// "Patients treated" — only completed cases count.
+// Doctor dashboard: pass doctorId. Admin dashboard: pass endpoint (e.g.
+// "/api/stats/treated?doctor_id=…" or "/api/stats/treated" for everyone).
+export default function PatientsTreatedChart({ doctorId, token, endpoint, title = "Patients Treated" }) {
+    const base = endpoint || (doctorId ? `/api/doctors/${doctorId}/stats/treated` : null);
     const [period,    setPeriod]    = useState("daily");
     const [data,      setData]      = useState(null);
     const [loading,   setLoading]   = useState(true);
@@ -59,14 +62,14 @@ export default function PatientsTreatedChart({ doctorId, token }) {
     const [showTable, setShowTable] = useState(false);
 
     useEffect(() => {
-        if (!doctorId || !token) return;
+        if (!base || !token) return;
         let cancelled = false;
-        api.get(`/api/doctors/${doctorId}/stats/treated?period=${period}`, token)
+        api.get(`${base}${base.includes("?") ? "&" : "?"}period=${period}`, token)
             .then((d) => { if (!cancelled) { setData(d); setError(null); } })
             .catch((err) => { if (!cancelled) setError(err.message); })
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
-    }, [doctorId, token, period]);
+    }, [base, token, period]);
 
     function choosePeriod(key) {
         if (key === period) return;
@@ -90,7 +93,7 @@ export default function PatientsTreatedChart({ doctorId, token }) {
             <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
                 <div>
                     <h2 id="treated-title" className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                        <Activity size={20} className="text-blue-600" /> Patients Treated
+                        <Activity size={20} className="text-blue-600" /> {title}
                     </h2>
                     <p className="text-sm text-slate-500 mt-1">
                         {loading
