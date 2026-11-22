@@ -47,7 +47,8 @@ LLM_CONFIG = {
     "interview_turn_max_tokens": 1000,   # reasoning tokens count toward this cap; 500 truncated replies
     "finalize_max_tokens"      : 1200,
     "diagnose_max_tokens"      : 2000,
-    "interview_max_turns"      : 12,
+    "checkpoint_max_tokens"    : 600,
+    "interview_max_turns"      : 15,
 }
 
 # ── GLiNER label set ──────────────────────────────────────────────────────────

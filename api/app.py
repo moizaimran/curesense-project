@@ -34,8 +34,13 @@ import requests as http
 from flask import Flask, request, jsonify
 
 from glinker import config
+from glinker.utils                          import call_llm
 from glinker.interview.session              import run_interview_turn
 from glinker.interview.prompts              import INTERVIEW_PROMPT, INTERVIEW_FEWSHOT, SESSION_NAME_NOTE
+from glinker.diagnosis.prompts              import (
+    CHECKPOINT_PROMPT, CHECKPOINT_SCHEMA,
+    build_differential_prompt, build_closing_prompt,
+)
 from glinker.diagnosis.finalize             import run_gliner, finalize_report
 from glinker.rag.retrieval                  import retrieve_context, get_medication_info
 from glinker.disease.disease_retrieval      import retrieve_diseases
@@ -116,7 +121,9 @@ def interview_turn():
         return jsonify({"error": "turn_number is required"}), 400
 
     # Voice answers are transcribed beforehand via /audio/transcribe, so every turn is text
-    patient_text = data.get("patient_text", "").strip()
+    patient_text          = data.get("patient_text", "").strip()
+    differential_diseases = data.get("differential_diseases", [])
+
     if not patient_text:
         return jsonify({"error": "patient_text is required"}), 400
 
@@ -141,9 +148,51 @@ def interview_turn():
     full_history = _build_full_history(live_history)
     if wants_name:
         full_history.append({"role": "system", "content": SESSION_NAME_NOTE})
+
+    # ── Phase injection — append differential/closing prompt when diseases known ─
+    # Turns 6–10: differential phase — ask questions to distinguish top diseases
+    # Turns 11–15: closing phase — confirm leading diagnosis and wrap up
+    if differential_diseases:
+        if turn_number <= 10:
+            full_history.append({
+                "role"   : "system",
+                "content": build_differential_prompt(differential_diseases),
+            })
+        else:
+            full_history.append({
+                "role"   : "system",
+                "content": build_closing_prompt(differential_diseases),
+            })
+
     result = run_interview_turn(full_history, patient_text)
     if not wants_name:
         result["sessionName"] = ""
+    return jsonify(result)
+
+
+@app.route("/interview/checkpoint", methods=["POST"])
+def interview_checkpoint():
+    """
+    Intermediate disease ranking call — called by Express after turns 5 and 10.
+
+    Takes the conversation history so far and returns the top likely diseases
+    based ONLY on what the patient has explicitly reported. The result is stored
+    in the session and injected as a system prompt in subsequent interview turns
+    to guide differential questioning.
+
+    Body:  { "history": [{role, content}, ...] }
+    Returns: { "diseases": [{name, icdCode, confidence}, ...] }
+    """
+    data    = request.get_json(force=True)
+    history = data.get("history", [])
+
+    if not history:
+        return jsonify({"error": "history is required"}), 400
+
+    messages = [{"role": "system", "content": CHECKPOINT_PROMPT}] + history
+    fallback = {"diseases": []}
+    result   = call_llm(messages, CHECKPOINT_SCHEMA, "checkpoint_max_tokens", fallback, "interview_checkpoint")
+    print(f"[checkpoint] {len(result.get('diseases', []))} disease(s) identified")
     return jsonify(result)
 
 
@@ -158,6 +207,8 @@ def pipeline_finalize():
         "knownAllergies"   : data.get("profile_allergies", []),
         "medicalConditions": data.get("profile_conditions", []),
     }
+
+    interview_diseases  = data.get("interview_diseases", [])
 
     if not transcript_text:
         return jsonify({"error": "full_transcript_text is required"}), 400
@@ -208,12 +259,13 @@ def pipeline_finalize():
 
     # ── 6. Call 1 — Diagnosis Assessment (must complete before Calls 2 & 3) ───
     assessment = generate_diagnosis_assessment(
-        verified_entities = report["entities"],
-        ranked_diseases   = ranked_diseases,
-        medication_info   = medication_info,
-        retrieved_chunks  = retrieved_chunks,
-        transcript_text   = transcript_text,
-        patient_profile   = patient_profile,
+        verified_entities  = report["entities"],
+        ranked_diseases    = ranked_diseases,
+        medication_info    = medication_info,
+        retrieved_chunks   = retrieved_chunks,
+        transcript_text    = transcript_text,
+        patient_profile    = patient_profile,
+        interview_diseases = interview_diseases,
     )
 
     # ── 7. Calls 2 & 3 — Doctor Report + Patient Summary (concurrent) ─────────

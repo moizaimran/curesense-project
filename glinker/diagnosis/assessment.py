@@ -75,6 +75,43 @@ def _fmt_candidates(ranked_diseases: list[dict]) -> str:
     )
 
 
+def _merge_interview_diseases(
+    ranked_diseases    : list[dict],
+    interview_diseases : list[dict],
+) -> list[dict]:
+    """
+    Supplement FAISS-ranked disease candidates with interview checkpoint diseases.
+
+    - Diseases that appear in both lists get a 10% confidence boost.
+    - New interview diseases not in the FAISS list are appended as candidates.
+    - interview_diseases.confidence is 0.0–1.0; ranked_diseases.confidence is 0–100.
+    """
+    if not interview_diseases:
+        return ranked_diseases
+
+    faiss_icds = {d.get("icd_code", "").upper() for d in ranked_diseases}
+    merged     = [dict(d) for d in ranked_diseases]  # shallow copy to avoid mutating originals
+
+    for id_ in interview_diseases:
+        icd = id_.get("icdCode", "").upper()
+        if icd in faiss_icds:
+            for d in merged:
+                if d.get("icd_code", "").upper() == icd:
+                    d["confidence"] = min(100.0, d.get("confidence", 0) * 1.1)
+        else:
+            merged.append({
+                "disease"   : id_["name"],
+                "icd_code"  : id_["icdCode"],
+                "confidence": id_["confidence"] * 100,
+                "paragraph" : (
+                    f"[Interview-identified] {id_['name']} — identified during "
+                    "adaptive interview based on reported symptoms."
+                ),
+            })
+
+    return merged
+
+
 def _merge_emergency(llm_warning: dict, code_check: dict | None) -> dict:
     """
     Merge the LLM's emergencyWarning with the code-based check_emergency_list result.
@@ -107,12 +144,13 @@ _ASSESSMENT_FALLBACK = {
 
 
 def generate_diagnosis_assessment(
-    verified_entities : list[dict],
-    ranked_diseases   : list[dict],
-    medication_info   : dict,
-    retrieved_chunks  : list[dict],
-    transcript_text   : str = "",
-    patient_profile   : dict | None = None,
+    verified_entities  : list[dict],
+    ranked_diseases    : list[dict],
+    medication_info    : dict,
+    retrieved_chunks   : list[dict],
+    transcript_text    : str = "",
+    patient_profile    : dict | None = None,
+    interview_diseases : list[dict] | None = None,
 ) -> dict:
     """
     Call 1 of 3 in the refactored pipeline.
@@ -127,14 +165,15 @@ def generate_diagnosis_assessment(
     Emergency is doubly verified: LLM assessment merged with check_emergency_list()
     so a missed LLM flag can never silently drop a life-threatening condition.
     """
-    trimmed_meds = trim_medication_info(medication_info)
+    trimmed_meds    = trim_medication_info(medication_info)
+    merged_diseases = _merge_interview_diseases(ranked_diseases, interview_diseases or [])
 
     payload = json.dumps({
         "transcript"          : transcript_text,
         "verifiedEntities"    : verified_entities,
         "retrievedChunks"     : _fmt_chunks(retrieved_chunks),
         "medicationInfo"      : _fmt_medications(trimmed_meds),
-        "diagnosticCandidates": _fmt_candidates(ranked_diseases),
+        "diagnosticCandidates": _fmt_candidates(merged_diseases),
         "patientProfile"      : patient_profile or {},
     })
 

@@ -176,6 +176,74 @@ FINALIZE_FEWSHOT = [
 
 
 
+# ── INTERVIEW CHECKPOINT ─────────────────────────────────────────────────────
+
+CHECKPOINT_PROMPT = (
+    "You are a clinical diagnostic AI. Review this patient interview conversation "
+    "and identify the most likely diseases or conditions based ONLY on symptoms the "
+    "patient has explicitly reported.\n\n"
+    "Rules:\n"
+    "- Use ONLY what the patient has reported — do NOT infer symptoms not mentioned\n"
+    "- Each entry must have a valid ICD-10 code\n"
+    "- Confidence is 0.0–1.0 (how well this condition explains the reported symptoms)\n"
+    "- List up to 8 conditions, most likely first\n\n"
+    "Return valid JSON only — no explanation, no markdown."
+)
+
+CHECKPOINT_SCHEMA = {
+    "name"  : "interview_checkpoint",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "diseases": {
+                "type": "array",
+                "items": {
+                    "type"      : "object",
+                    "properties": {
+                        "name"      : {"type": "string"},
+                        "icdCode"   : {"type": "string"},
+                        "confidence": {"type": "number"},
+                    },
+                    "required"            : ["name", "icdCode", "confidence"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required"            : ["diseases"],
+        "additionalProperties": False,
+    },
+}
+
+
+def build_differential_prompt(diseases: list[dict]) -> str:
+    """System prompt injected on turns 6–10 to focus on differential questioning."""
+    lines = "\n".join(
+        f"{i+1}. {d['name']} (ICD: {d['icdCode']}) — {int(d['confidence'] * 100)}% confidence"
+        for i, d in enumerate(diseases)
+    )
+    return (
+        f"Based on symptoms reported so far, the top likely conditions are:\n{lines}\n\n"
+        "Focus your next questions on differentiating between these conditions. "
+        "Ask about symptoms that would confirm or rule out each one. "
+        "Do NOT re-ask about symptoms already reported."
+    )
+
+
+def build_closing_prompt(diseases: list[dict]) -> str:
+    """System prompt injected on turns 11–15 to close the interview."""
+    lines = "\n".join(
+        f"{i+1}. {d['name']} (ICD: {d['icdCode']})"
+        for i, d in enumerate(diseases[:5])
+    )
+    return (
+        f"Based on all reported symptoms, the most likely conditions are:\n{lines}\n\n"
+        "You have a few questions remaining. Ask 1–2 final clarifying questions "
+        "to confirm the leading diagnosis, then close the interview naturally. "
+        "Do not introduce any new symptom areas."
+    )
+
+
 # The example intake has no saved profile medicines; keep its input shape aligned with real requests.
 for _msg in FINALIZE_FEWSHOT:
     if _msg["role"] == "user":
