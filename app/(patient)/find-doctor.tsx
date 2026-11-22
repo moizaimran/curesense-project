@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { API_URL } from "@/constants/api";
+import { formatPKR } from "@/utils/payment";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ interface DoctorProfile {
   experience_years: number;
   hospital_clinic: string;
   rating?: { average: number; count: number };
+  consultation_fee?: number;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -81,6 +83,11 @@ function DoctorCard({
 
       {/* Meta row */}
       <View style={s.metaRow}>
+        <MetaChip
+          icon="cash-outline"
+          label={doc.consultation_fee ? formatPKR(doc.consultation_fee) : "Free"}
+          color="#34D399"
+        />
         <MetaChip
           icon={doc.rating?.count ? "star" : "star-outline"}
           label={
@@ -185,9 +192,17 @@ const RATING_OPTIONS: Option<"" | "3" | "4" | "4.5">[] = [
   { value: "3", label: "3★ & up" },
 ];
 
-const SORT_OPTIONS: Option<"experience" | "rating" | "newest">[] = [
+const FEE_OPTIONS: Option<"" | "1000" | "2000" | "3000">[] = [
+  { value: "", label: "Any fee" },
+  { value: "1000", label: "Up to Rs 1,000" },
+  { value: "2000", label: "Up to Rs 2,000" },
+  { value: "3000", label: "Up to Rs 3,000" },
+];
+
+const SORT_OPTIONS: Option<"experience" | "rating" | "fee_low" | "newest">[] = [
   { value: "experience", label: "Most experienced" },
   { value: "rating", label: "Highest rated" },
+  { value: "fee_low", label: "Lowest fee" },
   { value: "newest", label: "Newest on CureSense" },
 ];
 
@@ -248,13 +263,14 @@ export default function FindDoctorScreen() {
   const [minExperience, setMinExperience] = useState<"" | "5" | "10" | "15">("");
   const [availability, setAvailability] = useState<"" | "today" | "tomorrow">("");
   const [minRating, setMinRating] = useState<"" | "3" | "4" | "4.5">("");
-  const [sort, setSort] = useState<"experience" | "rating" | "newest">("experience");
+  const [maxFee, setMaxFee] = useState<"" | "1000" | "2000" | "3000">("");
+  const [sort, setSort] = useState<"experience" | "rating" | "fee_low" | "newest">("experience");
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [page, setPage] = useState(1);
 
   // Count of active "more filters" — shown on the toggle button
   const extraFilterCount =
-    (minExperience ? 1 : 0) + (availability ? 1 : 0) + (minRating ? 1 : 0) + (sort !== "experience" ? 1 : 0);
+    (minExperience ? 1 : 0) + (availability ? 1 : 0) + (minRating ? 1 : 0) + (maxFee ? 1 : 0) + (sort !== "experience" ? 1 : 0);
   const [total, setTotal] = useState(0);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -270,7 +286,7 @@ export default function FindDoctorScreen() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [search, cityFilter, genderFilter, minExperience, availability, minRating, sort]);
+  }, [search, cityFilter, genderFilter, minExperience, availability, minRating, maxFee, sort]);
 
   async function fetchDoctors(targetPage: number, reset = false) {
     // Stamp this request; any earlier in-flight request that completes later
@@ -293,6 +309,7 @@ export default function FindDoctorScreen() {
       if (minExperience) params.set("min_experience", minExperience);
       if (availability) params.set("available_on", localDate(availability === "today" ? 0 : 1));
       if (minRating) params.set("min_rating", minRating);
+      if (maxFee) params.set("max_fee", maxFee);
       params.set("sort", sort);
 
       const res = await fetch(`${API_URL}/api/doctors?${params}`, {
@@ -473,6 +490,8 @@ export default function FindDoctorScreen() {
             <PillRow options={AVAILABILITY_OPTIONS} value={availability} onChange={setAvailability} />
             <Text style={s.filterLabel}>Rating</Text>
             <PillRow options={RATING_OPTIONS} value={minRating} onChange={setMinRating} />
+            <Text style={s.filterLabel}>Fee</Text>
+            <PillRow options={FEE_OPTIONS} value={maxFee} onChange={setMaxFee} />
             <Text style={s.filterLabel}>Sort by</Text>
             <PillRow options={SORT_OPTIONS} value={sort} onChange={setSort} />
             {extraFilterCount > 0 && (
@@ -481,6 +500,7 @@ export default function FindDoctorScreen() {
                   setMinExperience("");
                   setAvailability("");
                   setMinRating("");
+                  setMaxFee("");
                   setSort("experience");
                 }}
                 style={{ marginTop: 10 }}

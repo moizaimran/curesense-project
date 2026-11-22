@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { API_URL } from "@/constants/api";
 import RateDoctorCard from "@/components/RateDoctorCard";
+import { formatPKR, PAYMENT_STATUS_LABEL } from "@/utils/payment";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -77,6 +78,17 @@ interface Appointment {
   queries: QueryMessage[];
 
   report_id: { _id: string } | string | null;
+
+  payment?: {
+    required: boolean;
+    amount: number;
+    status: string;
+    method: "card" | "easypaisa" | "jazzcash" | null;
+    card_brand?: string;
+    card_last4?: string;
+    transaction_id?: string;
+    rejection_reason?: string;
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -888,6 +900,52 @@ export default function AppointmentDetailScreen() {
             </View>
           )}
 
+          {/* Payment */}
+
+          {appt.payment?.required && (
+            <View style={s.card}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={s.paymentLabel}>Consultation fee</Text>
+                <Text style={s.paymentAmount}>{formatPKR(appt.payment.amount)}</Text>
+              </View>
+              <Text
+                style={[
+                  s.paymentStatus,
+                  ["unpaid", "rejected"].includes(appt.payment.status) && { color: "#FCD34D" },
+                  ["paid", "verified"].includes(appt.payment.status) && { color: "#34D399" },
+                ]}
+              >
+                {PAYMENT_STATUS_LABEL[appt.payment.status] ?? appt.payment.status}
+                {appt.payment.method === "card" && appt.payment.card_last4
+                  ? ` · ${appt.payment.card_brand} •••• ${appt.payment.card_last4}`
+                  : appt.payment.transaction_id
+                    ? ` · TID ${appt.payment.transaction_id}`
+                    : ""}
+              </Text>
+              {appt.payment.status === "rejected" && appt.payment.rejection_reason ? (
+                <Text style={[s.paymentStatus, { color: "#FCA5A5" }]}>{appt.payment.rejection_reason}</Text>
+              ) : null}
+              {appt.payment.status === "refund_due" && (
+                <Text style={s.paymentStatus}>Your payment will be refunded by CureSense.</Text>
+              )}
+              {isPending && ["unpaid", "rejected"].includes(appt.payment.status) && (
+                <TouchableOpacity
+                  style={s.payBtn}
+                  activeOpacity={0.85}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/(patient)/payment",
+                      params: { appointment_id: appt._id, doctor_name: doctor?.user_id?.name ?? "" },
+                    } as any)
+                  }
+                >
+                  <Ionicons name="card-outline" size={16} color="#fff" />
+                  <Text style={s.payBtnText}>Pay now</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
           {/* Pending info note */}
 
           {isPending && (
@@ -1143,6 +1201,20 @@ const s = StyleSheet.create({
     paddingTop: 16,
     gap: 12,
   },
+
+  paymentLabel: { color: "rgba(255,255,255,0.55)", fontSize: 13, fontWeight: "600" },
+  paymentAmount: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  paymentStatus: { color: "rgba(255,255,255,0.7)", fontSize: 13 },
+  payBtn: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#2563EB",
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  payBtnText: { color: "#fff", fontWeight: "800", fontSize: 14 },
 
   card: {
     backgroundColor: "rgba(255,255,255,0.06)",

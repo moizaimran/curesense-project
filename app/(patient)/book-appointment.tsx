@@ -6,7 +6,6 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -16,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { API_URL } from "@/constants/api";
+import { formatPKR } from "@/utils/payment";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -180,6 +180,19 @@ export default function BookAppointmentScreen() {
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
 
   const [booking, setBooking] = useState(false);
+  const [bookingError, setBookingError] = useState("");
+  // Consultation fee (PKR) — shown before booking; null while loading
+  const [fee, setFee] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!doctor_profile_id) return;
+    Storage.getAuthToken().then((token) =>
+      fetch(`${API_URL}/api/doctors/${doctor_profile_id}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .then((d) => setFee(Number(d.consultation_fee) || 0))
+        .catch(() => setFee(0)),
+    );
+  }, [doctor_profile_id]);
 
   // ── Load the doctor's available dates (buttons) ──────────────────────────────
   useEffect(() => {
@@ -255,13 +268,11 @@ export default function BookAppointmentScreen() {
   async function confirmBooking() {
     if (!selectedDate || !selectedSlot) return;
     if (!report_id) {
-      Alert.alert(
-        "No report linked",
-        "Please select a report to share with the doctor before booking.",
-      );
+      setBookingError("Please select a report to share with the doctor before booking.");
       return;
     }
     setBooking(true);
+    setBookingError("");
     try {
       const token = await Storage.getAuthToken();
       const res = await fetch(`${API_URL}/api/appointments`, {
@@ -281,21 +292,15 @@ export default function BookAppointmentScreen() {
         }),
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ?? "Booking failed");
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Booking failed");
 
-      Alert.alert(
-        "Appointment Requested",
-        `Your appointment with Dr. ${doctor_name} on ${selectedDate} at ${selectedSlot.start_time} has been submitted for review.`,
-        [
-          {
-            text: "OK",
-            onPress: () => router.replace("/(patient)/(tabs)/chat" as any),
-          },
-        ],
-      );
+      // Paid consultation → go straight to checkout (slot is held while paying).
+      // Free → open the new appointment. (No Alert: it does nothing on web.)
+      router.replace({
+        pathname: data.payment_required ? "/(patient)/payment" : "/(patient)/appointment-detail",
+        params: { appointment_id: data.appointment._id, doctor_name: doctor_name ?? "" },
+      } as any);
     } catch (e: any) {
       // If the day filled up right as we tried to book, refresh both the
       // date list and the slots for this date so the patient sees it.
@@ -303,7 +308,7 @@ export default function BookAppointmentScreen() {
         loadAvailableDates();
         setSelectedDate(null);
       }
-      Alert.alert("Booking Failed", e.message ?? "Please try again.");
+      setBookingError(e.message ?? "Booking failed. Please try again.");
     } finally {
       setBooking(false);
     }
@@ -426,6 +431,12 @@ export default function BookAppointmentScreen() {
               label="Report shared"
               value={report_id ? "Yes — AI consultation report" : "None"}
             />
+            <SummaryRow
+              label="Consultation fee"
+              value={fee === null ? "…" : fee > 0 ? `${formatPKR(fee)} — paid in advance` : "Free"}
+            />
+
+            {bookingError ? <Text style={s.bookingError}>{bookingError}</Text> : null}
 
             <TouchableOpacity
               style={[s.confirmBtn, booking && s.confirmBtnDisabled]}
@@ -442,14 +453,17 @@ export default function BookAppointmentScreen() {
                     size={18}
                     color="#fff"
                   />
-                  <Text style={s.confirmBtnText}>Confirm Appointment</Text>
+                  <Text style={s.confirmBtnText}>
+                    {fee && fee > 0 ? `Continue to payment · ${formatPKR(fee)}` : "Confirm Appointment"}
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
 
             <Text style={s.reviewNote}>
-              Your appointment request will be reviewed by admin before the
-              doctor is notified.
+              {fee && fee > 0
+                ? "Your slot is held while you pay. Once paid, an admin verifies the payment and confirms your appointment. The fee is refunded if it isn't approved."
+                : "Your appointment request will be reviewed by admin before the doctor is notified."}
             </Text>
           </View>
         )}
@@ -572,6 +586,12 @@ const s = StyleSheet.create({
   confirmBtnDisabled: { opacity: 0.6 },
   confirmBtnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 
+  bookingError: {
+    color: "#F87171",
+    fontSize: 13,
+    textAlign: "center",
+    marginTop: 8,
+  },
   reviewNote: {
     color: "rgba(255,255,255,0.28)",
     fontSize: 11,

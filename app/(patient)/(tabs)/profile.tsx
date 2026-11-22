@@ -1,9 +1,9 @@
 import * as Storage from "@/utils/storage";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   ScrollView,
@@ -66,9 +66,12 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  // Load on first focus, and refresh when returning from Settings (name / phone may have changed)
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, []),
+  );
 
   async function fetchData() {
     try {
@@ -194,15 +197,27 @@ export default function ProfileScreen() {
             <Text style={s.logoText}>CureSense</Text>
           </View>
 
-          <TouchableOpacity
-            style={s.logoutBtn}
-            onPress={handleLogout}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="log-out-outline" size={17} color="#FCA5A5" />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TouchableOpacity
+              style={s.settingsBtn}
+              onPress={() => router.push("/(patient)/settings" as any)}
+              activeOpacity={0.8}
+              accessibilityLabel="Settings"
+            >
+              <Ionicons name="settings-outline" size={17} color="#93C5FD" />
+              <Text style={s.settingsText}>Settings</Text>
+            </TouchableOpacity>
 
-            <Text style={s.logoutText}>Sign Out</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={s.logoutBtn}
+              onPress={handleLogout}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="log-out-outline" size={17} color="#FCA5A5" />
+
+              <Text style={s.logoutText}>Sign Out</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* ───────────────── Profile Hero ───────────────── */}
@@ -571,6 +586,20 @@ const s = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: -0.5,
   },
+
+  settingsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 11,
+    backgroundColor: "rgba(59,130,246,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.22)",
+  },
+
+  settingsText: { color: "#93C5FD", fontSize: 13, fontWeight: "700" },
 
   logoutBtn: {
     flexDirection: "row",
