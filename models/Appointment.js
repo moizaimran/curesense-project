@@ -148,6 +148,47 @@ const SlotSchema = new mongoose.Schema(
 
 // ── Appointment ─────────────────────────────────────────────────────────────
 
+// ── Advance payment (see services/paymentService.js) ─────────────────────────
+// status flow:
+//   not_required                      fee was 0 (or appointment predates payments)
+//   unpaid → paid       (card, gateway-confirmed) → verified (admin approves)
+//   unpaid → submitted  (EasyPaisa/JazzCash TID)  → verified (admin approves)
+//            submitted → rejected (admin: TID not found) → patient can pay again
+//   unpaid → void        (payment window expired, or cancelled before paying)
+//   paid/submitted/verified → refund_due (appointment rejected/cancelled) → refunded
+const PaymentSchema = new mongoose.Schema(
+  {
+    required: { type: Boolean, default: false },
+    amount:   { type: Number,  default: 0, min: 0 },
+    currency: { type: String,  default: "PKR" },
+    status: {
+      type: String,
+      enum: ["not_required", "unpaid", "submitted", "paid", "verified", "rejected", "void", "refund_due", "refunded"],
+      default: "not_required",
+    },
+    method:  { type: String, enum: ["card", "easypaisa", "jazzcash", null], default: null },
+    due_by:  { type: Date, default: null }, // unpaid bookings are released after this
+
+    // Card (only brand + last 4 are ever stored — never the full number or CVC)
+    card_brand:  { type: String, default: "" },
+    card_last4:  { type: String, default: "" },
+    gateway:     { type: String, default: "" }, // "sandbox" until a real gateway is configured
+    gateway_ref: { type: String, default: "" },
+
+    // Mobile wallet (EasyPaisa / JazzCash) — verified by an admin while approving
+    transaction_id: { type: String, default: "" },
+    payer_number:   { type: String, default: "" },
+
+    paid_at:          { type: Date, default: null },
+    submitted_at:     { type: Date, default: null },
+    verified_at:      { type: Date, default: null },
+    verified_by:      { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    rejection_reason: { type: String, default: "" },
+    refunded_at:      { type: Date, default: null },
+  },
+  { _id: false }
+);
+
 const AppointmentSchema = new mongoose.Schema(
   {
     patient_id: {
@@ -195,6 +236,11 @@ const AppointmentSchema = new mongoose.Schema(
     reviewed_at: {
       type: Date,
       default: null,
+    },
+
+    payment: {
+      type: PaymentSchema,
+      default: () => ({}),
     },
 
     // When the doctor marked the case completed ("patient treated").

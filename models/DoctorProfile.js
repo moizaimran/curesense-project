@@ -103,6 +103,11 @@ const DoctorProfileSchema = new mongoose.Schema(
     verified_by:      { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     verified_at:      { type: Date, default: null },
 
+    // ── Consultation fee (PKR) — set by the doctor, shown before booking ──────
+    // 0 = free consultation (no payment step). Paid to the CureSense admin
+    // account, never directly to the doctor.
+    consultation_fee: { type: Number, default: 0, min: 0, max: 100000 },
+
     // ── Rating summary (kept in sync by services/reviewService.js) ────────────
     // Average 1–5 stars from patients; count = number of reviews.
     rating: {

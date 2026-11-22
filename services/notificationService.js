@@ -39,6 +39,15 @@ async function sendPushNotification(expoPushToken, { title, body, data = {} }) {
  * @param {{ title: string, body: string, data?: object }} payload
  */
 async function notifyUser(userId, payload) {
+  // In-app copy for the dashboard bell (these calls are about patient images)
+  const appointmentId = payload?.data?.appointment_id || null;
+  await require("./inAppNotificationService").create(userId, {
+    type: "image_uploaded",
+    title: payload.title,
+    message: payload.body,
+    appointmentId,
+    link: appointmentId ? `/cases/${appointmentId}` : "/patients",
+  });
   try {
     const User = require("../models/User");
     const user = await User.findById(userId).select("expo_push_token");

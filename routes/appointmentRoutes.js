@@ -20,6 +20,7 @@ const {
   cancelAppointment,
 } = require("../controllers/appointmentController");
 const { submitReview, getAppointmentReviews } = require("../controllers/reviewController");
+const { payByCard, payByWallet, adminPaymentDecision } = require("../controllers/paymentController");
 const { protect, authorize }   = require("../middleware/auth");
 const { writeLimiter }         = require("../middleware/rateLimiter");
 const { validateObjectId }     = require("../middleware/validate");
@@ -36,6 +37,7 @@ router.get("/doctor", protect, authorize("doctor"), getDoctorAppointments);
 // ── Admin routes ──────────────────────────────────────────────────────────────
 router.get("/admin",              protect, authorize("admin"), adminGetAppointments);
 router.patch("/admin/:id/review", protect, authorize("admin"), validateObjectId("id"), adminReviewAppointment);
+router.patch("/admin/:id/payment", protect, authorize("admin"), validateObjectId("id"), adminPaymentDecision);
 
 // ── Patient history — patient (own), doctor (active assignment), or admin ─────
 router.get("/patient/:id/history", protect, authorize("patient", "doctor", "admin"), validateObjectId("id"), getPatientAppointmentHistory);
@@ -54,6 +56,10 @@ router.post("/:id/feedback",      protect, authorize("doctor"),                 
 // Test result uploads (patient → doctor) — rate-limited, it's a Cloudinary upload
 router.post("/:id/test-uploads",       protect, authorize("patient"), writeLimiter, validateObjectId("id"), uploadTestResult);
 router.patch("/:id/test-uploads/read", protect, authorize("doctor"),                validateObjectId("id"), markTestUploadsRead);
+
+// Advance payment (patient) — card via the gateway; wallets verified by an admin
+router.post("/:id/payment/card",   protect, authorize("patient"), writeLimiter, validateObjectId("id"), payByCard);
+router.post("/:id/payment/wallet", protect, authorize("patient"), writeLimiter, validateObjectId("id"), payByWallet);
 
 // Post-case rating & feedback (patient ↔ doctor), only once completed
 router.post("/:id/review",  protect, authorize("patient", "doctor"),          writeLimiter, validateObjectId("id"), submitReview);

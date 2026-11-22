@@ -25,7 +25,7 @@ const {
   resendVerification,
 } = require("../controllers/doctorController");
 const { getDoctorReviews }           = require("../controllers/reviewController");
-const { doctorPatientsTreated }      = require("../controllers/statsController");
+const { doctorPatientsTreated, doctorCaseOverview } = require("../controllers/statsController");
 const { protect, authorize }         = require("../middleware/auth");
 const { authLimiter }                = require("../middleware/rateLimiter");
 const { validateObjectId, validateDateQuery } = require("../middleware/validate");
@@ -61,6 +61,7 @@ router.get("/:id/availability",       protect,                              vali
 // Public list of patient reviews for a verified doctor
 router.get("/:id/reviews",            validateObjectId("id"), getDoctorReviews);
 router.get("/:id/stats/treated",      protect, authorize("doctor", "admin"), validateObjectId("id"), doctorPatientsTreated);
+router.get("/:id/stats/overview",     protect, authorize("doctor", "admin"), validateObjectId("id"), doctorCaseOverview);
 router.get("/:id/dashboard-summary",  protect, authorize("doctor", "admin"), validateObjectId("id"), getDashboardSummary);
 router.get("/:id",                    protect,                              validateObjectId("id"), getDoctorById);
 

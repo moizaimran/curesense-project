@@ -9,6 +9,7 @@ const {
   forgotPassword,
   createStaff, assignPatient,
   getMe, updateMe,
+  getNotificationPrefs, updateNotificationPrefs,
   listStaff, getSettings, updateSettings,
   registerPushToken,
 } = require("../controllers/authController");
@@ -31,6 +32,8 @@ router.post("/forgot-password", authLimiter, forgotPassword);
 // ── Current user — any authenticated role ─────────────────────────────────────
 router.get("/me",           protect, getMe);
 router.patch("/me",         protect, updateMe);
+router.get("/me/notifications",   protect, getNotificationPrefs);
+router.patch("/me/notifications", protect, updateNotificationPrefs);
 router.patch("/push-token", protect, registerPushToken);
 
 // ── Admin-only ────────────────────────────────────────────────────────────────

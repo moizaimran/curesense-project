@@ -359,7 +359,43 @@ async function getMe(user) {
 
 async function updateUserName(userId, name) {
   if (!name?.trim()) throw new AppError("name is required", 400);
-  return User.findByIdAndUpdate(userId, { name: name.trim() }, { new: true }).select("name email role patient_id provider_uid google_id expo_push_token created_at updated_at");
+  if (name.trim().length > 100) throw new AppError("name must be at most 100 characters", 400);
+  const user = await User.findByIdAndUpdate(userId, { name: name.trim() }, { new: true })
+    .select("name email role patient_id provider_uid google_id expo_push_token created_at updated_at");
+  // Patients also carry their name on the Patient record doctors see — keep both in sync
+  if (user?.patient_id) {
+    const Patient = require("../models/Patient");
+    await Patient.updateOne({ _id: user.patient_id }, { $set: { name: user.name } });
+  }
+  return user;
+}
+
+// ── Notification preferences (GET/PATCH /api/auth/me/notifications) ──────────
+
+const NOTIFICATION_KEYS = ["appointment_updates", "payment_updates", "messages"];
+
+function prefsView(user) {
+  const email = user.notification_prefs?.email || {};
+  return { email: Object.fromEntries(NOTIFICATION_KEYS.map((k) => [k, email[k] !== false])) };
+}
+
+async function getNotificationPrefs(userId) {
+  const user = await User.findById(userId).select("notification_prefs").lean();
+  if (!user) throw new AppError("User not found", 404);
+  return prefsView(user);
+}
+
+async function updateNotificationPrefs(userId, body) {
+  const email = body?.email;
+  if (!email || typeof email !== "object") throw new AppError("email preferences are required", 400);
+  const update = {};
+  for (const [k, v] of Object.entries(email)) {
+    if (!NOTIFICATION_KEYS.includes(k)) throw new AppError(`Unknown notification setting: ${k}`, 400);
+    if (typeof v !== "boolean") throw new AppError(`${k} must be true or false`, 400);
+    update[`notification_prefs.email.${k}`] = v;
+  }
+  const user = await User.findByIdAndUpdate(userId, { $set: update }, { new: true }).select("notification_prefs").lean();
+  return prefsView(user);
 }
 
 async function listAdminUsers() {
@@ -383,6 +419,8 @@ async function updateSettings(body) {
     "aiConfidence", "aiDiagnosis", "imageAnalysis",
     "sessionTimeout", "twoFactorAuth",
     "doctorApprovalEmails", "patientRegistrationEmails", "systemAlerts",
+    "easypaisaAccountTitle", "easypaisaAccountNumber",
+    "jazzcashAccountTitle", "jazzcashAccountNumber",
   ];
   const update = {};
   for (const key of allowed) {
@@ -414,6 +452,8 @@ module.exports = {
   createStaffUser,
   assignPatientToDoctor,
   updateUserName,
+  getNotificationPrefs,
+  updateNotificationPrefs,
   listAdminUsers,
   getSettings,
   updateSettings,

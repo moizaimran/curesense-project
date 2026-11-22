@@ -160,10 +160,128 @@ async function patientsTreated({ doctorId = null, period = "daily", timeZone = T
   };
 }
 
+// ── Case status + monthly comparison ─────────────────────────────────────────
+//
+// Case states (same definitions as the doctor dashboard cards):
+//   completed → status "completed"
+//   ongoing   → status "confirmed" and the doctor has replied at least once
+//   pending   → status "confirmed" and the doctor hasn't replied yet (new case)
+// Appointments still waiting for admin review aren't the doctor's cases yet.
+//
+// Monthly comparison (calendar months, clinic timezone):
+//   patients_treated → distinct patients with a case completed that month
+//   completed        → cases completed that month
+//   pending/ongoing  → cases whose appointment falls in that month and are
+//                      still pending / ongoing now
+// "This month" is month-to-date.
+
+const STATE_EXPR = {
+  $switch: {
+    branches: [
+      { case: { $eq: ["$status", "completed"] }, then: "completed" },
+      {
+        case: {
+          $and: [
+            { $eq: ["$status", "confirmed"] },
+            { $in: ["doctor", { $ifNull: ["$queries.sender", []] }] },
+          ],
+        },
+        then: "ongoing",
+      },
+      { case: { $eq: ["$status", "confirmed"] }, then: "pending" },
+    ],
+    default: null,
+  },
+};
+
+function pctChange(current, previous) {
+  if (!previous) return current ? null : 0; // null = "new" (nothing last month to compare with)
+  return Math.round(((current - previous) / previous) * 100);
+}
+
+function monthLabel(ym) {
+  return new Date(`${ym}-01T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", month: "long", year: "numeric" });
+}
+
+async function caseOverview({ doctorId = null, timeZone = TIMEZONE, today } = {}) {
+  const now       = today || todayIn(timeZone);
+  const thisMonth = now.slice(0, 7);
+  const lastMonth = addMonths(`${thisMonth}-01`, -1).slice(0, 7);
+
+  const match = { status: { $in: ["completed", "confirmed"] } };
+  if (doctorId) match.doctor_id = new mongoose.Types.ObjectId(String(doctorId));
+
+  const rows = await Appointment.aggregate([
+    { $match: match },
+    {
+      $project: {
+        patient_id: 1,
+        state: STATE_EXPR,
+        slot_month: { $substrBytes: [{ $ifNull: ["$requested_slot.date", ""] }, 0, 7] },
+        completed_month: {
+          $cond: [
+            { $eq: ["$status", "completed"] },
+            {
+              $ifNull: [
+                { $dateToString: { format: "%Y-%m", date: "$completed_at", timezone: timeZone } },
+                { $substrBytes: [{ $ifNull: ["$requested_slot.date", ""] }, 0, 7] },
+              ],
+            },
+            null,
+          ],
+        },
+      },
+    },
+    { $match: { state: { $ne: null } } },
+  ]);
+
+  // Status donut — all of the doctor's current cases
+  const status = { completed: 0, ongoing: 0, pending: 0 };
+  for (const r of rows) status[r.state] += 1;
+  const total = status.completed + status.ongoing + status.pending;
+  const pct = (n) => (total ? Math.round((n / total) * 1000) / 10 : 0);
+
+  // Monthly comparison
+  function month(ym) {
+    const completedRows = rows.filter((r) => r.completed_month === ym);
+    return {
+      month: ym,
+      label: monthLabel(ym),
+      patients_treated: new Set(completedRows.map((r) => String(r.patient_id))).size,
+      completed: completedRows.length,
+      pending:   rows.filter((r) => r.state === "pending" && r.slot_month === ym).length,
+      ongoing:   rows.filter((r) => r.state === "ongoing" && r.slot_month === ym).length,
+    };
+  }
+  const current  = month(thisMonth);
+  const previous = month(lastMonth);
+
+  return {
+    timezone: timeZone,
+    status: {
+      total,
+      completed: { count: status.completed, percent: pct(status.completed) },
+      ongoing:   { count: status.ongoing,   percent: pct(status.ongoing) },
+      pending:   { count: status.pending,   percent: pct(status.pending) },
+    },
+    monthly: {
+      this_month: current,
+      last_month: previous,
+      change: {
+        patients_treated: pctChange(current.patients_treated, previous.patients_treated),
+        completed:        pctChange(current.completed, previous.completed),
+        pending:          pctChange(current.pending, previous.pending),
+        ongoing:          pctChange(current.ongoing, previous.ongoing),
+      },
+    },
+  };
+}
+
 module.exports = {
   PERIODS,
   assertCanViewDoctor,
   patientsTreated,
+  caseOverview,
   // exported for tests
   _internal: { bucketStarts, bucketStart, bucketLabel },
 };

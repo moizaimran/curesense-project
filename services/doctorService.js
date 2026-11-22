@@ -163,12 +163,13 @@ const DOCTOR_SORTS = {
   experience: { experience_years: -1 },
   newest:     { created_at: -1 },
   rating:     { "rating.average": -1, "rating.count": -1 },
+  fee_low:    { consultation_fee: 1, experience_years: -1 },
 };
 
 async function searchDoctors(query) {
   const {
     q, specialty, sub_specialty, gender, city, hospital_clinic,
-    min_experience, max_experience, education_degree, available_on, min_rating,
+    min_experience, max_experience, education_degree, available_on, min_rating, max_fee,
     sort = "experience",
     page = 1, limit = 20,
   } = query;
@@ -194,6 +195,12 @@ async function searchDoctors(query) {
     const r = Number(min_rating);
     if (!(r >= 1 && r <= 5)) throw new AppError("min_rating must be between 1 and 5", 400);
     filter["rating.average"] = { $gte: r };
+  }
+
+  if (max_fee !== undefined && max_fee !== "") {
+    const f = Number(max_fee);
+    if (!(f >= 0)) throw new AppError("max_fee must be a positive number", 400);
+    filter.consultation_fee = { $lte: f };
   }
   if (specialty)       filter.specialty              = { $regex: escapeRegex(specialty),       $options: "i" };
   if (sub_specialty)   filter.sub_specialty          = { $regex: escapeRegex(sub_specialty),   $options: "i" };
@@ -231,7 +238,7 @@ async function getMyProfile(userId) {
 // ── PATCH /api/doctors/me ─────────────────────────────────────────────────────
 
 async function updateMyProfile(userId, body) {
-  const { specialty, sub_specialty, hospital_clinic, experience_years, location, contact } = body;
+  const { specialty, sub_specialty, hospital_clinic, experience_years, location, contact, consultation_fee } = body;
   const update = {};
   if (specialty !== undefined && !isValidSpecialty(specialty))
     throw new AppError(INVALID_SPECIALTY, 400);
@@ -242,6 +249,12 @@ async function updateMyProfile(userId, body) {
   if (location?.city    !== undefined) update["location.city"]       = location.city;
   if (location?.address !== undefined) update["location.address"]    = location.address;
   if (contact?.phone    !== undefined) update["contact.phone"]       = contact.phone;
+  if (consultation_fee  !== undefined) {
+    const fee = Number(consultation_fee);
+    if (!Number.isInteger(fee) || fee < 0 || fee > 100000)
+      throw new AppError("consultation_fee must be a whole number of rupees between 0 and 100,000", 400);
+    update.consultation_fee = fee;
+  }
 
   const profile = await DoctorProfile.findOneAndUpdate(
     { user_id: userId },
@@ -267,6 +280,7 @@ async function getDoctorById(id) {
 
 async function getDoctorAvailableDates(doctorProfileId) {
   const Appointment = require("../models/Appointment");
+  await require("./paymentService").expireUnpaidAppointments({ doctorId: doctorProfileId });
   const avail = await DoctorAvailability.findOne({ doctor_id: doctorProfileId });
   if (!avail) return { dates: [] };
 
@@ -304,6 +318,7 @@ async function getDoctorAvailableDates(doctorProfileId) {
 
 async function getDoctorAvailability(doctorProfileId, queryDate) {
   const Appointment = require("../models/Appointment");
+  await require("./paymentService").expireUnpaidAppointments({ doctorId: doctorProfileId });
   const avail = await DoctorAvailability.findOne({ doctor_id: doctorProfileId });
   if (!avail) throw new AppError("No availability record found", 404);
 

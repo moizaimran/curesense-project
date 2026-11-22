@@ -9,6 +9,8 @@ const Report                  = require("../models/Report");
 const Patient                 = require("../models/Patient");
 const User                    = require("../models/User");
 const { escapeRegex }         = require("../utils/validation");
+const paymentService          = require("./paymentService");
+const activity                = require("./activityNotifications");
 const cloudinary              = require("../config/cloudinary");
 
 const QUERY_MAX_CHARS    = 2000;
@@ -98,6 +100,9 @@ async function createAppointment(body, user) {
   if (!doctor) throw new AppError("Doctor not found", 404);
   if (doctor.status !== "verified") throw new AppError("This doctor is not yet verified", 400);
 
+  // Release this doctor's expired unpaid bookings so their slots are free again
+  await paymentService.expireUnpaidAppointments({ doctorId: doctor._id });
+
   // Slot validation — capacity mode vs normal
   const availForCapacityCheck = await DoctorAvailability.findOne({ doctor_id: doctor._id });
   const exceptionForDate = (availForCapacityCheck?.exceptions || []).find(
@@ -129,8 +134,12 @@ async function createAppointment(body, user) {
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
+  // Paid consultations always go through admin review so the admin can verify
+  // the payment. Free repeat visits are confirmed straight away (as before).
+  const payment           = paymentService.initialPayment(doctor);
   const isRepeatVisit     = assignment.status === "active";
-  const appointmentStatus = isRepeatVisit ? "confirmed" : "pending_admin_review";
+  const needsReview       = !isRepeatVisit || payment.required;
+  const appointmentStatus = needsReview ? "pending_admin_review" : "confirmed";
 
   const appointment = await Appointment.create({
     patient_id:     patientId,
@@ -139,11 +148,17 @@ async function createAppointment(body, user) {
     requested_slot: { date: requestedDate, start_time: normalizedSlot.start_time, end_time: normalizedSlot.end_time },
     status:         appointmentStatus,
     report_id:      report._id,
+    payment,
   });
 
   await Report.findByIdAndUpdate(report._id, { $set: { appointment_id: appointment._id } });
 
-  return { appointment, assignment_status: assignment.status, requires_admin_review: !isRepeatVisit };
+  return {
+    appointment,
+    assignment_status:     assignment.status,
+    requires_admin_review: needsReview,
+    payment_required:      payment.required,
+  };
 }
 
 // ── GET /api/appointments/:id ─────────────────────────────────────────────────
@@ -213,9 +228,16 @@ const APPOINTMENT_STATUSES = Appointment.schema.path("status").enumValues;
 
 async function adminGetAppointments({
   status = "pending_admin_review", search, specialty, doctor_id,
-  date_from, date_to, page = 1, limit = 50,
+  date_from, date_to, payment_status, page = 1, limit = 50,
 } = {}) {
+  await paymentService.expireUnpaidAppointments();
+
   const filter = {};
+
+  if (payment_status) {
+    const list = String(payment_status).split(",").map((s) => s.trim()).filter(Boolean);
+    filter["payment.status"] = list.length === 1 ? list[0] : { $in: list };
+  }
 
   // status: a single value, a comma-separated list, or "all"
   if (status && status !== "all") {
@@ -293,6 +315,14 @@ async function adminReviewAppointment(id, { decision, rejection_reason }, adminU
   appointment.reviewed_at = new Date();
 
   if (decision === "approve") {
+    // The admin verifies the advance payment as part of approving
+    if (!paymentService.isReadyForApproval(appointment.payment))
+      throw new AppError("Payment has not been received for this appointment yet", 409);
+    if (appointment.payment?.required) {
+      appointment.payment.status      = "verified";
+      appointment.payment.verified_at = new Date();
+      appointment.payment.verified_by = adminUserId;
+    }
     appointment.status = "confirmed";
     await appointment.save();
 
@@ -303,14 +333,18 @@ async function adminReviewAppointment(id, { decision, rejection_reason }, adminU
       assignment.activated_at = new Date();
       await assignment.save();
     }
+    activity.appointmentApproved(appointment);
   } else {
     if (!rejection_reason?.trim()) throw new AppError("rejection_reason is required when rejecting", 400);
     appointment.status           = "rejected";
     appointment.rejection_reason = rejection_reason.trim();
+    if (appointment.payment?.required)
+      appointment.payment.status = paymentService.statusAfterRelease(appointment.payment);
     await appointment.save();
     if (appointment.report_id) {
       await Report.findByIdAndUpdate(appointment.report_id, { $unset: { appointment_id: "" } });
     }
+    activity.appointmentRejected(appointment);
   }
 
   return { appointment };
@@ -399,6 +433,7 @@ async function addQuery(appointmentId, body, user) {
       doctorProfileId: appointment.doctor_id,
     });
 
+    activity.newMessage(appointment, sender);
     return { query: lastQuery, has_unread_patient_query: updated.has_unread_patient_query };
   }
 
@@ -410,6 +445,7 @@ async function addQuery(appointmentId, body, user) {
 
   const updated   = await Appointment.findByIdAndUpdate(appointmentId, update, { new: true });
   const lastQuery = updated.queries[updated.queries.length - 1];
+  activity.newMessage(appointment, sender);
   return { query: lastQuery, has_unread_patient_query: updated.has_unread_patient_query };
 }
 
@@ -533,6 +569,7 @@ async function uploadTestResult(appointmentId, body, user) {
     { new: true }
   );
   const lastUpload = updated.test_uploads[updated.test_uploads.length - 1];
+  activity.testResultUploaded(appointment, lastUpload?.test_name);
   return { upload: lastUpload, has_new_test_upload: updated.has_new_test_upload };
 }
 
@@ -562,6 +599,8 @@ async function cancelAppointment(appointmentId, user) {
     throw new AppError(`Cannot cancel an appointment with status '${appointment.status}'`, 409);
 
   appointment.status = "cancelled";
+  if (appointment.payment?.required)
+    appointment.payment.status = paymentService.statusAfterRelease(appointment.payment);
   await appointment.save();
 
   await PatientDoctorAssignment.findByIdAndUpdate(

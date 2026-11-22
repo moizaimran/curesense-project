@@ -23,6 +23,16 @@ const UserSchema = new mongoose.Schema(
 
     // Expo push notification token — registered by the mobile app after login
     expo_push_token: { type: String, default: null },
+
+    // Notification preferences (Settings page). Security emails — verification,
+    // password reset, account approval — are always sent and aren't listed here.
+    notification_prefs: {
+      email: {
+        appointment_updates: { type: Boolean, default: true }, // confirmed / rejected / new case
+        payment_updates:     { type: Boolean, default: true }, // receipts, verification, refunds
+        messages:            { type: Boolean, default: true }, // new message on a case
+      },
+    },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );

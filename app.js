@@ -16,6 +16,9 @@ const reportRoutes      = require("./routes/reportRoutes");
 const imageRoutes       = require("./routes/imageRoutes");
 const doctorRoutes      = require("./routes/doctorRoutes");
 const appointmentRoutes = require("./routes/appointmentRoutes");
+const paymentRoutes     = require("./routes/paymentRoutes");
+const statsRoutes       = require("./routes/statsRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 
 const app = express();
 
@@ -33,6 +36,9 @@ app.use("/api/reports",      reportRoutes);
 app.use("/api/images",       imageRoutes);
 app.use("/api/doctors",      doctorRoutes);
 app.use("/api/appointments", appointmentRoutes);
+app.use("/api/payments",     paymentRoutes);
+app.use("/api/stats",        statsRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 

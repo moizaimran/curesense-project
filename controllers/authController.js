@@ -49,6 +49,14 @@ const updateMe = asyncHandler(async (req, res) => {
   res.json(user);
 });
 
+const getNotificationPrefs = asyncHandler(async (req, res) => {
+  res.json(await authService.getNotificationPrefs(req.user._id));
+});
+
+const updateNotificationPrefs = asyncHandler(async (req, res) => {
+  res.json(await authService.updateNotificationPrefs(req.user._id, req.body));
+});
+
 const listStaff = asyncHandler(async (req, res) => {
   const result = await authService.listAdminUsers();
   res.json(result);
@@ -75,6 +83,7 @@ module.exports = {
   forgotPassword,
   createStaff, assignPatient,
   getMe, updateMe,
+  getNotificationPrefs, updateNotificationPrefs,
   listStaff, getSettings, updateSettings,
   registerPushToken,
 };

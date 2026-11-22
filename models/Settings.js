@@ -22,6 +22,13 @@ const SettingsSchema = new mongoose.Schema(
     sessionTimeout: { type: Number,  default: 30 },
     twoFactorAuth:  { type: Boolean, default: false },
 
+    // ── Payment accounts — every consultation fee is paid to these admin
+    // accounts, never directly to the doctor. Shown to patients at checkout.
+    easypaisaAccountTitle:  { type: String, default: "" },
+    easypaisaAccountNumber: { type: String, default: "" },
+    jazzcashAccountTitle:   { type: String, default: "" },
+    jazzcashAccountNumber:  { type: String, default: "" },
+
     doctorApprovalEmails:      { type: Boolean, default: true },
     patientRegistrationEmails: { type: Boolean, default: true },
     systemAlerts:              { type: Boolean, default: true },

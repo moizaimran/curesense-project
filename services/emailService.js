@@ -303,7 +303,36 @@ async function sendDoctorRejectionEmail(toEmail, doctorName, reason) {
   logger.info({ to: toEmail }, "Doctor rejection email sent");
 }
 
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Generic activity notification (appointment / payment / message updates).
+// Callers go through services/notifyService.js, which checks the user's
+// notification preferences first.
+async function sendNotificationEmail(toEmail, { subject, heading, lines = [] }) {
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    logger.warn({ to: toEmail, subject }, "SMTP_USER or SMTP_PASS not set — skipping notification email");
+    return;
+  }
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:24px;color:#0f172a">
+      <h2 style="color:#264296;margin:0 0 16px">${escapeHtml(heading)}</h2>
+      ${lines.map((l) => `<p style="font-size:15px;line-height:1.5;margin:0 0 10px">${escapeHtml(l)}</p>`).join("")}
+      <p style="font-size:12px;color:#64748b;margin-top:24px">
+        You can turn these emails off in CureSense → Settings → Notifications.
+      </p>
+    </div>`;
+  await transporter.sendMail({
+    from:    `"CureSense" <${process.env.SMTP_USER}>`,
+    to:      toEmail,
+    subject,
+    html,
+  });
+}
+
 module.exports = {
+  sendNotificationEmail,
   sendVerificationLinkEmail,
   sendPasswordResetLinkEmail,
   sendDoctorRegistrationEmail,

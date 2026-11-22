@@ -32,8 +32,13 @@ async function updatePatientProfile(patientId, body, user) {
   if (!patient) throw new AppError("Patient not found", 404);
   if (!(await canAccessPatient(user, patient._id))) throw new AppError("Access denied", 403);
 
-  const { allergies, current_medications, medical_conditions, dob, gender, profile_complete } = body;
+  const { allergies, current_medications, medical_conditions, dob, gender, profile_complete, phone } = body;
   const updates = { updated_at: new Date() };
+  if (phone !== undefined) {
+    const p = String(phone).replace(/[\s-]/g, "");
+    if (p && !/^(\+92|0)3\d{9}$/.test(p)) throw new AppError("phone must be a Pakistani mobile number, e.g. 03001234567", 400);
+    updates["contact.phone"] = p;
+  }
   if (allergies)           updates.allergies           = allergies;
   if (current_medications) updates.current_medications = current_medications;
   if (medical_conditions)  updates.medical_conditions  = medical_conditions;

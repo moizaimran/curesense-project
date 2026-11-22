@@ -8,4 +8,10 @@ const doctorPatientsTreated = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-module.exports = { doctorPatientsTreated };
+// GET /api/doctors/:id/stats/overview — case status donut + monthly comparison
+const doctorCaseOverview = asyncHandler(async (req, res) => {
+  const doctorId = await statsService.assertCanViewDoctor(req.params.id, req.user);
+  res.json(await statsService.caseOverview({ doctorId }));
+});
+
+module.exports = { doctorPatientsTreated, doctorCaseOverview };
