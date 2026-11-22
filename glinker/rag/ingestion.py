@@ -16,6 +16,7 @@
 import os
 import json
 import re
+import time
 
 import numpy as np
 import faiss
@@ -243,8 +244,9 @@ def _save_index(chunks: list[dict], index_dir: str, name: str,
     total = len(chunks)
     print(f"\n[{name}] Embedding {total:,} chunks (batch={embed_batch}) …")
 
-    model = config.get_embed_model()
-    index = None   # created on first batch so we know the embedding dim
+    model      = config.get_embed_model()
+    index      = None   # created on first batch so we know the embedding dim
+    start_time = time.time()
 
     for i in range(0, total, embed_batch):
         batch       = chunks[i : i + embed_batch]
@@ -260,9 +262,14 @@ def _save_index(chunks: list[dict], index_dir: str, name: str,
         index.add(vecs)
         del vecs   # free batch immediately — keeps peak RAM low
 
-        done = min(i + embed_batch, total)
+        done    = min(i + embed_batch, total)
+        elapsed = time.time() - start_time
+        pct     = done / total * 100
+        rate    = done / elapsed if elapsed > 0 else 0
+        eta_min = (total - done) / rate / 60 if rate > 0 else 0
         if done % 10_000 == 0 or done == total:
-            print(f"  [{name}] {done:,}/{total:,} embedded | index size: {index.ntotal:,}")
+            print(f"  [{name}] {done:,}/{total:,} ({pct:.1f}%) | "
+                  f"{elapsed/60:.1f}m elapsed | ~{eta_min:.0f}m remaining")
 
     faiss.write_index(index, f"{index_dir}/{name}_index.faiss")
     with open(f"{index_dir}/{name}_meta.json", "w") as f:
