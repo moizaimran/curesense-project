@@ -118,7 +118,7 @@ def _chunks_from_textbooks(max_entries: int | None = None) -> list[dict]:
         }
         all_chunks.extend(chunk_text(text, meta))
         if (i + 1) % 5000 == 0:
-            print(f"  Processed {i+1:,} textbook entries ({len(all_chunks):,} chunks so far)")
+            print(f"  Processed {i+1:,} textbook entries ({len(all_chunks):,} chunks so far)", flush=True)
 
     print(f"  → {len(all_chunks):,} chunks from textbooks")
     return all_chunks
@@ -209,7 +209,7 @@ def _chunks_from_guidelines(max_entries: int | None = None) -> list[dict]:
         }
         all_chunks.extend(chunk_text(text, meta))
         if (i + 1) % 2000 == 0:
-            print(f"  Processed {i+1:,} guideline entries ({len(all_chunks):,} chunks so far)")
+            print(f"  Processed {i+1:,} guideline entries ({len(all_chunks):,} chunks so far)", flush=True)
 
     print(f"  → {len(all_chunks):,} chunks from guidelines")
     return all_chunks
@@ -269,7 +269,8 @@ def _save_index(chunks: list[dict], index_dir: str, name: str,
         eta_min = (total - done) / rate / 60 if rate > 0 else 0
         if done % 10_000 == 0 or done == total:
             print(f"  [{name}] {done:,}/{total:,} ({pct:.1f}%) | "
-                  f"{elapsed/60:.1f}m elapsed | ~{eta_min:.0f}m remaining")
+                  f"{elapsed/60:.1f}m elapsed | ~{eta_min:.0f}m remaining",
+                  flush=True)
 
     faiss.write_index(index, f"{index_dir}/{name}_index.faiss")
     with open(f"{index_dir}/{name}_meta.json", "w") as f:
