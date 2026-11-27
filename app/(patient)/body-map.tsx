@@ -1,5 +1,6 @@
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
+import { bodyMapStore } from "@/utils/bodyMapStore";
 import { useState } from "react";
 import {
   Image,
@@ -420,10 +421,8 @@ export default function BodyMapScreen() {
       })
       .join("\n");
 
-    router.navigate({
-      pathname: "/interview",
-      params: { bodyMapAnswer: bodyMapAnswer || "No body area selected." },
-    });
+    bodyMapStore.set(bodyMapAnswer || "No body area selected.");
+    router.back();
   };
 
   return (

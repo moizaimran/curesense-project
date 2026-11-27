@@ -1,14 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { GoogleSignin, statusCodes } from "@react-native-google-signin/google-signin";
+// GoogleSignin disabled in Expo Go — requires native build (npx expo run:ios)
+// import { GoogleSignin, statusCodes } from "@react-native-google-signin/google-signin";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
 
-GoogleSignin.configure({
-  iosClientId: "404929302395-ul8nq13macaht9u6bp8egheh0vb50ftg.apps.googleusercontent.com",
-  webClientId: "404929302395-sgjs2bp6dct6md3v70dnotlklmg3urrt.apps.googleusercontent.com",
-});
+// GoogleSignin.configure({ ... });
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -53,26 +51,8 @@ export default function HomeScreen() {
   const [gLoading, setGLoading]   = useState(false);
   const [showPass, setShowPass]   = useState(false);
 
-  async function handleGoogleSignIn() {
-    setGLoading(true);
-    setError("");
-    try {
-      await GoogleSignin.hasPlayServices();
-      const userInfo = await GoogleSignin.signIn();
-      const idToken  = userInfo.data?.idToken;
-      if (!idToken) { setError("Google sign-in failed. No token received."); return; }
-      await handleGoogleToken(idToken);
-    } catch (e: any) {
-      if (e.code === statusCodes.SIGN_IN_CANCELLED) {
-        // user closed the sheet — no error shown
-      } else if (e.code === statusCodes.IN_PROGRESS) {
-        // already in progress — ignore
-      } else {
-        setError("Google sign-in failed. Please try again.");
-      }
-    } finally {
-      setGLoading(false);
-    }
+  function handleGoogleSignIn() {
+    setError("Google Sign-In unavailable in Expo Go. Use email/password or run a dev build.");
   }
 
   async function handleGoogleToken(idToken: string) {

@@ -318,7 +318,7 @@ export default function ReportsScreen() {
                   </View>
 
                   <View style={s.activeTitleWrap}>
-                    <Text style={s.activeTitle}>AI Consultation</Text>
+                    <Text style={s.activeTitle}>{sess.session_name || "AI Consultation"}</Text>
 
                     <Text style={s.cardDate}>
                       Started {fmtDate(sess.started_at)}
@@ -379,7 +379,10 @@ export default function ReportsScreen() {
                   <TouchableOpacity
                     style={s.resumeBtn}
                     onPress={() =>
-                      router.navigate("/(patient)/(tabs)/interview" as any)
+                      router.navigate({
+                        pathname: "/(patient)/(tabs)/interview",
+                        params: { resumeSessionId: sess._id },
+                      } as any)
                     }
                     activeOpacity={0.8}
                   >

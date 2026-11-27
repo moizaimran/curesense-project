@@ -8,7 +8,8 @@ import {
 } from "expo-audio";
 import * as FileSystem from "expo-file-system/legacy";
 import { LinearGradient } from "expo-linear-gradient";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { bodyMapStore } from "@/utils/bodyMapStore";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -60,8 +61,10 @@ export default function InterviewScreen() {
   const [sending, setSending] = useState(false);
   const [starting, setStarting] = useState(false);
   const [textInput, setTextInput] = useState("");
+  const [emergencyBanner, setEmergencyBanner] = useState<string | null>(null);
 
-  const { bodyMapAnswer } = useLocalSearchParams<{ bodyMapAnswer?: string }>();
+
+  const { resumeSessionId } = useLocalSearchParams<{ resumeSessionId?: string }>();
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -72,115 +75,106 @@ export default function InterviewScreen() {
   const opacity = useRef(new Animated.Value(1)).current;
   const translateY = useRef(new Animated.Value(0)).current;
 
-  const bodyMapSent = useRef(false);
+  // ── When returning from body map, pre-fill the text input ───────────────────
+  // Using a focus effect + module store avoids remount issues with router.navigate.
 
-  // ── Pre-fill text input with body map selection ──────────────────────────────
+  useFocusEffect(
+    useCallback(() => {
+      if (stage !== "question") return;
+      const answer = bodyMapStore.take();
+      if (answer) setTextInput(answer);
+    }, [stage]),
+  );
 
-  useEffect(() => {
-    if (
-      bodyMapAnswer &&
-      sessionId &&
-      stage === "question" &&
-      !bodyMapSent.current
-    ) {
-      bodyMapSent.current = true;
-      setTextInput(bodyMapAnswer);
-      router.setParams({ bodyMapAnswer: undefined });
-    }
-  }, [bodyMapAnswer, sessionId, stage]);
-
-  // ── Check latest session on screen load ─────────────────────────────────────
+  // ── On mount: always show greeting ───────────────────────────────────────────
 
   useEffect(() => {
-    checkLatestSession();
+    setStage("greeting");
   }, []);
 
-  // ── Check only the latest session ────────────────────────────────────────────
+  // ── Resume a specific session when navigated from Reports tab ────────────────
 
-  async function checkLatestSession() {
+  useEffect(() => {
+    if (!resumeSessionId) return;
+    resumeSpecificSession(resumeSessionId);
+  }, [resumeSessionId]);
+
+  async function resumeSpecificSession(id: string) {
     setStage("checking");
-
     try {
       const token = await Storage.getAuthToken();
-      const patient_id = await Storage.getItemAsync("patient_id");
+      const res = await fetch(`${API_URL}/api/sessions/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-      const res = await fetch(
-        `${API_URL}/api/sessions/patient/${patient_id}/latest`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
-      if (!res.ok) {
-        setStage("greeting");
-        return;
-      }
+      if (!res.ok) { setStage("greeting"); return; }
 
       const session = await res.json();
 
-      if (!session || session.status !== "in_progress") {
-        setStage("greeting");
-        return;
-      }
-
-      const hoursIdle =
-        (Date.now() - new Date(session.last_activity_at).getTime()) / 36e5;
-
-      if (hoursIdle >= 48) {
-        setStage("greeting");
-        return;
-      }
+      if (session.status !== "in_progress") { setStage("greeting"); return; }
 
       await Storage.setItemAsync(SESSION_KEY, session._id);
 
       const transcript: any[] = session.transcript ?? [];
+      const lastTurn = transcript.length > 0 ? transcript[transcript.length - 1] : null;
 
-      const lastTurn =
-        transcript.length > 0 ? transcript[transcript.length - 1] : null;
+      const rawLastQ = lastTurn?.assistant_message ?? OPENING_QUESTION;
+      const { question: lastQ, emergency: lastEmergency } = parseEmergency(rawLastQ);
+      if (lastEmergency) setEmergencyBanner(lastEmergency);
 
-      const lastQ = lastTurn?.assistant_message ?? OPENING_QUESTION;
-
-      const savedQuestionType = lastTurn?.question_type;
-
-      const validQuestionTypes: QuestionType[] = [
-        "yes_no",
-        "mcq",
-        "scale",
-        "text",
-        "number",
-      ];
-
-      const resumedQuestionType: QuestionType = validQuestionTypes.includes(
-        savedQuestionType,
-      )
-        ? savedQuestionType
-        : "text";
-
-      const resumedOptions = Array.isArray(lastTurn?.question_options)
-        ? lastTurn.question_options
-        : [];
+      const validQuestionTypes: QuestionType[] = ["yes_no", "mcq", "scale", "text", "number"];
+      const resumedType: QuestionType = validQuestionTypes.includes(lastTurn?.question_type)
+        ? lastTurn.question_type : "text";
+      const resumedOptions = Array.isArray(lastTurn?.question_options) ? lastTurn.question_options : [];
 
       setSessionId(session._id);
       setTurnCount(session.turn_count ?? 0);
       setIsFirstQ((session.turn_count ?? 0) === 0);
       setCurrentQ(lastQ);
-      setQuestionType(resumedQuestionType);
+      setQuestionType(resumedType);
       setOptions(resumedOptions);
       setTextInput("");
       setStage("question");
-    } catch (error) {
+    } catch {
       setStage("greeting");
     }
+  }
+
+  // ── Extract emergency safety sentence from AI message ───────────────────────
+  // The LLM prepends one safety sentence containing "1122" / "emergency" when it
+  // detects danger signs. We split it out so it can be shown as a persistent banner.
+
+  function parseEmergency(raw: string): { question: string; emergency: string | null } {
+    const sentences = raw.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) ?? [raw];
+    const emergencyParts: string[] = [];
+    const questionParts: string[] = [];
+
+    for (const s of sentences) {
+      if (/1122|emergency services|emergency department/i.test(s)) {
+        emergencyParts.push(s.trim());
+      } else {
+        questionParts.push(s.trim());
+      }
+    }
+
+    return {
+      question: questionParts.join(" ").trim() || raw.trim(),
+      emergency: emergencyParts.length > 0 ? emergencyParts.join(" ") : null,
+    };
   }
 
   // ── Blink + slide transition ────────────────────────────────────────────────
 
   function transitionToQuestion(q: string, type: QuestionType, opts: string[]) {
-    setCurrentQ(q);
+    const { question, emergency } = parseEmergency(q);
+    if (emergency) setEmergencyBanner(emergency);
+    setCurrentQ(question);
     setQuestionType(type);
     setOptions(opts);
+    if (type !== "text") {
+      setTextInput("");
+      setPendingAudioUrl(null);
+    }
 
     opacity.setValue(0);
     translateY.setValue(28);
@@ -271,7 +265,6 @@ export default function InterviewScreen() {
 
     setSending(true);
     setTextInput("");
-    setIsFirstQ(false);
 
     try {
       const token = await Storage.getAuthToken();
@@ -321,6 +314,7 @@ export default function InterviewScreen() {
       }
 
       setTurnCount((t) => t + 1);
+      setIsFirstQ(false);
 
       setPendingAudioUrl(null);
 
@@ -342,7 +336,7 @@ export default function InterviewScreen() {
       }
     } catch (error) {
       opacity.setValue(1);
-
+      setPendingAudioUrl(null);
       Alert.alert("Connection Error", "Could not reach the server.");
     } finally {
       setSending(false);
@@ -399,6 +393,8 @@ export default function InterviewScreen() {
         setIsTranscribing(false);
       }
     } else {
+      if (sending) return;
+
       const status = await requestRecordingPermissionsAsync();
 
       if (!status.granted) {
@@ -480,11 +476,49 @@ export default function InterviewScreen() {
           </View>
         </View>
 
+        <TouchableOpacity
+          style={s.newInterviewBtn}
+          activeOpacity={0.75}
+          onPress={() =>
+            Alert.alert(
+              "Start New Interview",
+              "Your current session will be saved and can be resumed from the Reports tab.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Start New",
+                  onPress: () => {
+                    setSessionId(null);
+                    setTurnCount(0);
+                    setIsFirstQ(true);
+                    setCurrentQ("");
+                    setTextInput("");
+                    setPendingAudioUrl(null);
+                    setEmergencyBanner(null);
+                    setStage("greeting");
+                  },
+                },
+              ],
+            )
+          }
+        >
+          <Ionicons name="add" size={13} color="#93C5FD" />
+          <Text style={s.newInterviewBtnText}>New</Text>
+        </TouchableOpacity>
+
         <View style={s.qBadge}>
           <Text style={s.qBadgeSmall}>QUESTION</Text>
           <Text style={s.qBadgeText}>{turnCount + 1}</Text>
         </View>
       </LinearGradient>
+
+      {/* Emergency banner — shown once and stays until session ends */}
+      {emergencyBanner && (
+        <View style={s.emergencyBanner}>
+          <Ionicons name="warning" size={16} color="#FEF08A" style={{ marginRight: 8, flexShrink: 0 }} />
+          <Text style={s.emergencyBannerText}>{emergencyBanner}</Text>
+        </View>
+      )}
 
       {sending ? (
         <CoolLoader />
@@ -1138,6 +1172,25 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
 
+  newInterviewBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(96,165,250,0.20)",
+    backgroundColor: "rgba(37,99,235,0.08)",
+    marginRight: 8,
+  },
+
+  newInterviewBtnText: {
+    color: "#93C5FD",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
   qBadge: {
     minWidth: 58,
     backgroundColor: "rgba(37,99,235,0.13)",
@@ -1161,6 +1214,24 @@ const s = StyleSheet.create({
     fontSize: 15,
     fontWeight: "900",
     marginTop: 1,
+  },
+
+  emergencyBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(220,38,38,0.18)",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(220,38,38,0.35)",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+
+  emergencyBannerText: {
+    flex: 1,
+    color: "#FCA5A5",
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "600",
   },
 
   questionArea: {
