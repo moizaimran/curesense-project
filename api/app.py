@@ -26,7 +26,6 @@
 # Flask runs in a daemon thread; Ngrok exposes it and returns the public URL.
 # ==============================================================================
 import os
-import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -43,32 +42,17 @@ from glinker.diagnosis.prompts              import (
 )
 from glinker.diagnosis.finalize             import run_gliner, finalize_report
 from glinker.rag.retrieval                  import retrieve_context, get_medication_info
-from glinker.disease.disease_retrieval      import retrieve_diseases
 from glinker.diagnosis.assessment           import generate_diagnosis_assessment
 from glinker.diagnosis.doctor_report        import generate_doctor_report
 from glinker.diagnosis.patient_summary      import generate_patient_summary
 from glinker.images.pdf_analysis            import analyze_pdf
 from glinker.images.correlation             import correlate_image_with_report
+from glinker.images.scan_analysis          import analyze_xray, analyze_ct_mri
 
 app = Flask(__name__)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _transcribe_audio(audio_url: str) -> str:
-    """Download audio from URL and transcribe/translate to English via Whisper."""
-    resp = http.get(audio_url, timeout=30)
-    resp.raise_for_status()
-
-    suffix = os.path.splitext(audio_url.split("?")[0])[-1] or ".mp3"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
-        f.write(resp.content)
-        tmp_path = f.name
-
-    try:
-        result = config.whisper_model.transcribe(tmp_path, task="translate")
-        return result["text"].strip()
-    finally:
-        os.unlink(tmp_path)
 
 
 def _retrieval_status(chunks: list[dict]) -> str:
@@ -94,21 +78,6 @@ def _build_full_history(live_history: list[dict]) -> list[dict]:
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-
-@app.route("/audio/transcribe", methods=["POST"])
-def audio_transcribe():
-    """Transcribe a Cloudinary audio URL with Whisper — no interview logic."""
-    data = request.get_json(force=True)
-    audio_url = data.get("audio_url", "").strip()
-    if not audio_url:
-        return jsonify({"error": "audio_url is required"}), 400
-    try:
-        transcribed = _transcribe_audio(audio_url)
-        return jsonify({"transcribed_text": transcribed})
-    except Exception as e:
-        print(f"[audio_transcribe] ERROR: {e}")
-        return jsonify({"error": f"Transcription failed: {e}"}), 502
-
 
 @app.route("/interview/turn", methods=["POST"])
 def interview_turn():
@@ -149,11 +118,27 @@ def interview_turn():
     if wants_name:
         full_history.append({"role": "system", "content": SESSION_NAME_NOTE})
 
+    # ── Minimum turn guard — prevent premature status=complete ────────────────
+    # The LLM (especially with low reasoning effort) can shortcut the STOP RULE
+    # on early turns when the patient gives a brief or structured answer (e.g. a
+    # body map selection). Block complete before turn 5 at the prompt level.
+    MIN_TURNS_BEFORE_COMPLETE = 8
+    if turn_number < MIN_TURNS_BEFORE_COMPLETE:
+        full_history.append({
+            "role"   : "system",
+            "content": (
+                f"HARD RULE: You MUST NOT set status=complete on turn {turn_number}. "
+                f"At least {MIN_TURNS_BEFORE_COMPLETE} patient answers are required before "
+                "the STOP RULE check is permitted. Set status=continue and ask the next "
+                "uncovered SOCRATES dimension."
+            ),
+        })
+
     # ── Phase injection — append differential/closing prompt when diseases known ─
-    # Turns 6–10: differential phase — ask questions to distinguish top diseases
-    # Turns 11–15: closing phase — confirm leading diagnosis and wrap up
+    # Turns 5–8: differential phase — ask questions to distinguish top diseases
+    # Turns 9–15: closing phase — confirm leading diagnosis and wrap up
     if differential_diseases:
-        if turn_number <= 10:
+        if turn_number <= 8:
             full_history.append({
                 "role"   : "system",
                 "content": build_differential_prompt(differential_diseases),
@@ -173,7 +158,7 @@ def interview_turn():
 @app.route("/interview/checkpoint", methods=["POST"])
 def interview_checkpoint():
     """
-    Intermediate disease ranking call — called by Express after turns 5 and 10.
+    Intermediate disease ranking call — called by Express after turns 4 and 8.
 
     Takes the conversation history so far and returns the top likely diseases
     based ONLY on what the patient has explicitly reported. The result is stored
@@ -204,8 +189,9 @@ def pipeline_finalize():
     specialties         = data.get("specialties", [])   # allowed referral specialties (backend's list)
     # Allergies and conditions saved in the patient's profile — treated like reported history
     patient_profile = {
-        "knownAllergies"   : data.get("profile_allergies", []),
-        "medicalConditions": data.get("profile_conditions", []),
+        "knownAllergies"    : data.get("profile_allergies", []),
+        "medicalConditions" : data.get("profile_conditions", []),
+        "profileMedications": profile_medications,
     }
 
     interview_diseases  = data.get("interview_diseases", [])
@@ -234,13 +220,11 @@ def pipeline_finalize():
             except Exception as e:
                 print(f"[RAG] retrieve failed: {e} — continuing without retrieval.")
 
-    # ── 4. Disease retrieval — semantic search against HPO + ICD-10 index ─────
+    # ── 4. Disease ranking — LLM-only via interview checkpoint diseases ─────────
+    # FAISS removed: checkpoint diseases (from /interview/checkpoint at T4 and T8)
+    # are passed directly to generate_diagnosis_assessment() as interview_diseases.
+    # The assessment LLM evaluates them against verified entities.
     ranked_diseases = []
-    try:
-        ranked_diseases = retrieve_diseases(report["entities"], diagnostic_query)
-        print(f"[DiseaseRAG] {len(ranked_diseases)} candidate(s) returned.")
-    except Exception as e:
-        print(f"[DiseaseRAG] retrieve_diseases failed: {e} — continuing without disease candidates.")
 
     # ── 5. openFDA — official label per medication (non-critical) ─────────────
     # Interview medications first, then the saved profile list; finalize_report mapped
@@ -367,6 +351,44 @@ def images_correlate_with_report():
     except Exception as exc:
         print(f"[images_correlate_with_report] ERROR: {exc}")
         return jsonify({"error": f"Correlation failed: {exc}"}), 502
+
+
+# ── Scan analysis: X-ray and CT/MRI via SageMaker MedGemma ──────────────────
+# Backend sets MEDGEMMA_SERVICE_URL to this EC2 service URL.
+# Preprocessing (DICOM, CT windowing, montage) runs here on EC2 CPU;
+# only the final preprocessed image is sent to the SageMaker endpoint.
+
+@app.route("/analyze/xray", methods=["POST"])
+def route_analyze_xray():
+    data         = request.get_json(force=True)
+    image_base64 = data.get("image_base64", "").strip()
+    if not image_base64:
+        return jsonify({"error": "image_base64 is required"}), 400
+    try:
+        result = analyze_xray(image_base64)
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 422
+    except Exception as exc:
+        print(f"[analyze/xray] ERROR: {exc}")
+        return jsonify({"error": f"Analysis failed: {exc}"}), 502
+
+
+@app.route("/analyze/ct-mri", methods=["POST"])
+def route_analyze_ct_mri():
+    data         = request.get_json(force=True)
+    image_base64 = data.get("image_base64", "").strip()
+    modality     = data.get("modality", "ct")
+    if not image_base64:
+        return jsonify({"error": "image_base64 is required"}), 400
+    try:
+        result = analyze_ct_mri(image_base64, modality)
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 422
+    except Exception as exc:
+        print(f"[analyze/ct-mri] ERROR: {exc}")
+        return jsonify({"error": f"Analysis failed: {exc}"}), 502
 
 
 # ── Launch (called from the notebook after secrets are loaded) ────────────────

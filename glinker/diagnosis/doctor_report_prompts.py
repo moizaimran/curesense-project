@@ -27,8 +27,15 @@ DOCTOR_REPORT_PROMPT = (
     "'No relevant reference material was found for this symptom pattern.'\n"
     "Put in \"ragSummary\".\n"
     "\n"
-    "PATIENT PROFILE: \"patientProfile\" lists known allergies and medical conditions the patient "
-    "saved in their profile. Include them in the complaint summary as reported history.\n"
+    "PATIENT PROFILE: \"patientProfile\" lists known allergies, medical conditions, and "
+    "profileMedications (medications saved in the patient's profile record).\n"
+    "Include allergies and conditions as reported history.\n"
+    "MEDICATION RECONCILIATION: If profileMedications lists medications but the transcript "
+    "shows the patient denied taking any medications during the interview, do NOT write "
+    "'They take no medications.' Instead acknowledge both sources — for example: "
+    "'The patient's profile records [name(s)], though the patient stated no current "
+    "medications during the interview.' Always surface profile medications so the "
+    "clinician can follow up.\n"
     "\n"
     "Return only the JSON the schema requires — no extra text."
 )
@@ -56,6 +63,11 @@ DOCTOR_REPORT_FEWSHOT = [
                 "Bright light makes it much worse. A little nausea but no vomiting. "
                 "I take Losartan 50mg once a day for blood pressure. No allergies."
             ),
+            "patientProfile": {
+                "knownAllergies"    : [],
+                "medicalConditions" : ["Hypertension"],
+                "profileMedications": ["Losartan 50mg"],
+            },
             "verifiedEntities": [
                 {"category": "symptom",           "keyword": "headache",        "relates_to": ""},
                 {"category": "body part",         "keyword": "right side",      "relates_to": "headache"},

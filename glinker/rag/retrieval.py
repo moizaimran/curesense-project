@@ -28,6 +28,9 @@
 # Call load_index() once at notebook startup to initialise the state below.
 # ==============================================================================
 import json
+import os
+import pickle
+import threading
 import numpy as np
 import faiss
 
@@ -96,6 +99,37 @@ def _tokenize_for_bm25(text: str) -> list[str]:
     return result
 
 
+def _start_bm25_background(cache_path: str) -> None:
+    """
+    Load BM25 from cache or build it in a daemon thread.
+    Either way the Flask worker becomes available immediately after FAISS loads.
+    """
+    global _clinician_bm25
+
+    def _build():
+        global _clinician_bm25
+        try:
+            from rank_bm25 import BM25Okapi
+            if os.path.exists(cache_path):
+                with open(cache_path, "rb") as f:
+                    _clinician_bm25 = pickle.load(f)
+                print(f"✅ BM25 index loaded from cache — {len(_clinician_chunks):,} documents")
+                return
+            print(f"⚙️  Building BM25 index for {len(_clinician_chunks):,} documents (background, one-time)…")
+            tokenized = [_tokenize_for_bm25(c) for c in _clinician_chunks]
+            _clinician_bm25 = BM25Okapi(tokenized)
+            with open(cache_path, "wb") as f:
+                pickle.dump(_clinician_bm25, f, protocol=pickle.HIGHEST_PROTOCOL)
+            print(f"✅ BM25 index built and cached — {len(_clinician_chunks):,} documents")
+        except ImportError:
+            print("⬜ rank_bm25 not installed — FAISS-only retrieval")
+        except Exception as e:
+            print(f"⬜ BM25 build failed: {e} — FAISS-only retrieval")
+
+    t = threading.Thread(target=_build, daemon=True, name="bm25-builder")
+    t.start()
+
+
 def load_index() -> None:
     """Load clinician FAISS index and build a BM25 index from the same chunks."""
     global _clinician_index, _clinician_chunks, _clinician_metadata
@@ -116,16 +150,12 @@ def load_index() -> None:
         print("   Run ingestion.build_index() first, then re-call load_index().")
         return
 
-    # Build BM25 with stemmed tokens — same tokeniser used at query time
-    try:
-        from rank_bm25 import BM25Okapi
-        tokenized   = [_tokenize_for_bm25(c) for c in _clinician_chunks]
-        _clinician_bm25 = BM25Okapi(tokenized)
-        print(f"✅ BM25 index built (stemmed) — {len(_clinician_chunks):,} documents")
-    except ImportError:
-        print("⬜ rank_bm25 not installed — falling back to FAISS-only retrieval.")
-    except Exception as e:
-        print(f"⬜ BM25 index build failed: {e} — falling back to FAISS-only.")
+    # Build BM25 in a background thread so the Flask app starts accepting
+    # requests immediately after FAISS loads. BM25 enhances retrieval but
+    # FAISS-only search is still usable while it builds.
+    # The finished index (or a cache pkl) is used on the next RAG call.
+    bm25_cache_path = os.path.join(index_dir, "clinician_bm25.pkl")
+    _start_bm25_background(bm25_cache_path)
 
 
 # ── MedCPT reranker (Stage 2) ─────────────────────────────────────────────────

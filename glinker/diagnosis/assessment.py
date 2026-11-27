@@ -59,19 +59,19 @@ def _fmt_medications(medication_info: dict) -> str:
 def _fmt_candidates(ranked_diseases: list[dict]) -> str:
     if not ranked_diseases:
         return (
-            "No disease candidates retrieved from the knowledge base. "
+            "No disease candidates were identified during the interview checkpoints. "
             "Generate likely/possible conditions from the verified entities "
             "using your clinical knowledge — see JOB 1 instructions."
         )
     parts = []
     for i, d in enumerate(ranked_diseases[:10], 1):
         icd    = f" [{d['icd_code']}]" if d.get("icd_code") else ""
-        conf   = f"(similarity {d.get('confidence', 0):.1f}%)"
+        conf   = f"(confidence {d.get('confidence', 0):.1f}%)"
         detail = d.get("paragraph") or d.get("disease", "Unknown")
         parts.append(f"Candidate {i}{icd} {conf}:\n{detail}")
     return (
-        "Semantic search retrieved the following disease candidates from the "
-        "HPO + ICD-10 knowledge base:\n\n" + "\n\n".join(parts)
+        "The following disease candidates were identified during the clinical interview:\n\n"
+        + "\n\n".join(parts)
     )
 
 

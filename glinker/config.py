@@ -37,13 +37,17 @@ def get_embed_model():
         print(f"Embedding model ({EMBEDDING_MODEL}) loaded on {device}")
     return embedding_model
 
-# ── File-system paths (Kaggle working directory) ──────────────────────────────
-RAG_INDEX_DIR = '/kaggle/working/rag_index'
+# ── File-system paths (overridable via env var for EC2 deployment) ───────────
+import os as _os
+RAG_INDEX_DIR = _os.environ.get(
+    'RAG_INDEX_DIR',
+    '/kaggle/working/rag_index'   # default: Kaggle; set env var on EC2
+)
 
 # ── LLM settings ─────────────────────────────────────────────────────────────
 LLM_CONFIG = {
     "model"                    : "gpt-5.6-luna",
-    "reasoning_effort"         : "low",
+    "reasoning_effort"         : "medium",
     "interview_turn_max_tokens": 1000,   # reasoning tokens count toward this cap; 500 truncated replies
     "finalize_max_tokens"      : 1200,
     "diagnose_max_tokens"      : 2000,

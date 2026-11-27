@@ -32,8 +32,8 @@ import requests
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-OUTPUT_DIR      = "/kaggle/working/disease_index"
-EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"    # must match glinker/config.py
+OUTPUT_DIR      = os.environ.get('DISEASE_INDEX_DIR', '/kaggle/working/disease_index')
+from glinker.config import EMBEDDING_MODEL   # must match the RAG index — both use bge-large-en-v1.5
 
 HPO_FREQ = {
     "HP:0040281": "very frequent",

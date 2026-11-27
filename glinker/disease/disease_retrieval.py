@@ -16,7 +16,8 @@ import faiss
 
 from glinker import config
 
-DISEASE_INDEX_DIR   = "/kaggle/working/disease_index"
+import os as _os
+DISEASE_INDEX_DIR   = _os.environ.get('DISEASE_INDEX_DIR', '/kaggle/working/disease_index')
 SIMILARITY_THRESHOLD = 0.65   # bge cosine scores for symptom query vs disease paragraph rarely pass 0.80
 TOP_K               = 5       # number of disease candidates to return to the LLM
 # bge-v1.5 retrieval: queries carry this instruction, indexed passages do not
