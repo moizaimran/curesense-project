@@ -6,6 +6,7 @@ const Session          = require("../models/Session");
 const Report           = require("../models/Report");
 const Patient          = require("../models/Patient");
 const { SPECIALTIES }  = require("../constants/specialties");
+const { OpenAI, toFile } = require("openai");
 
 const ABANDONED_AFTER_HOURS = 48;
 
@@ -109,7 +110,7 @@ async function processTurn(sessionId, body, user) {
     patient_text,
     // The title comes from the first turn's own LLM call (retried on turn 2 if it came back empty)
     request_session_name: !session.session_name && session.turn_count < 2,
-    // Inject checkpoint diseases from turn 6 onwards so Flask can ask differential questions
+    // Inject checkpoint diseases from turn 5 onwards so Flask can ask differential questions
     ...(session.interview_diseases.length > 0 && { differential_diseases: session.interview_diseases }),
   };
 
@@ -134,14 +135,14 @@ async function processTurn(sessionId, body, user) {
   });
   session.turn_count += 1;
 
-  // ── Checkpoint at turn 5 and turn 10 ────────────────────────────────────────
+  // ── Checkpoint at turn 4 and turn 8 ────────────────────────────────────────
   // Calls Flask /interview/checkpoint with the full history so far.
   // Result is stored in session.interview_diseases and passed to Flask on
   // subsequent turns to guide differential and closing questions.
   // On failure: logs the full error clearly and sets session.checkpoint_error
   // so both developers and monitoring can see what went wrong. The interview
   // turn is NOT aborted — the session continues without intermediate ranking.
-  if (session.turn_count === 5 || session.turn_count === 10) {
+  if (session.turn_count === 4 || session.turn_count === 8) {
     const checkpointHistory = session.transcript.flatMap((t) => [
       { role: "user",      content: t.patient_corrected },
       { role: "assistant", content: t.assistant_message },
@@ -168,7 +169,9 @@ async function processTurn(sessionId, body, user) {
   }
 
   if (status === "complete") {
-    const fullTranscript = session.transcript.map((t) => t.patient_corrected).join(" ");
+    const fullTranscript = session.transcript
+      .flatMap((t) => [`Patient: ${t.patient_corrected}`, `Doctor: ${t.assistant_message}`])
+      .join("\n");
 
     // Saved profile history — the AI treats it like information the patient reported
     let profile = { medications: [], allergies: [], conditions: [] };
@@ -254,19 +257,22 @@ async function transcribeAudio(sessionId, body, user) {
   const { patient_audio_base64, mime_type } = body;
   if (!patient_audio_base64) throw new AppError("patient_audio_base64 is required", 400);
 
-  const uploadResult = await cloudinary.uploader.upload(
-    `data:${mime_type || "audio/m4a"};base64,${patient_audio_base64}`,
-    { resource_type: "video" }
-  );
-  const audioUrl = uploadResult.secure_url;
+  const mimeType = mime_type || "audio/m4a";
+  const buffer   = Buffer.from(patient_audio_base64, "base64");
 
-  const aiResp = await callAI(
-    `${process.env.AI_SERVICE_URL}/audio/transcribe`,
-    { audio_url: audioUrl },
-    60_000
-  );
+  const [uploadResult, transcription] = await Promise.all([
+    cloudinary.uploader.upload(
+      `data:${mimeType};base64,${patient_audio_base64}`,
+      { resource_type: "video" }
+    ),
+    (async () => {
+      const openai    = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const audioFile = await toFile(buffer, "audio.m4a", { type: mimeType });
+      return openai.audio.transcriptions.create({ file: audioFile, model: "whisper-1" });
+    })(),
+  ]);
 
-  return { transcribedText: aiResp.data.transcribed_text, audioUrl };
+  return { transcribedText: transcription.text, audioUrl: uploadResult.secure_url };
 }
 
 // ── GET /api/sessions/:id ─────────────────────────────────────────────────────
