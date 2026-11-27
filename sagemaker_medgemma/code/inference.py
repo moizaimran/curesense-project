@@ -16,8 +16,18 @@ import gc
 import io
 import json
 import os
+import subprocess
+import sys
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+# The base DLC image ships transformers 4.37 which lacks AutoModelForImageTextToText.
+# Force-upgrade before importing so the correct version is active.
+subprocess.check_call([
+    sys.executable, "-m", "pip", "install",
+    "transformers>=4.47.0", "accelerate>=0.26.0",
+    "--quiet", "--no-cache-dir",
+])
 
 import torch
 import torch._dynamo
